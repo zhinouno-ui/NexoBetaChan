@@ -25,6 +25,8 @@ npm-debug.log*
 .env.local
 .env.*
 !.env.example
+env
+/env
 config.json
 
 # Datos de runtime de Electron (sesiones, logins de Chunior/agentes)

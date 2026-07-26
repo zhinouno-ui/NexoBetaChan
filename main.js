@@ -7,11 +7,49 @@ const { createClient } = require('@supabase/supabase-js');
 // autoDownload=false: solo busca y avisa; el operador decide bajar/instalar
 // desde el botón del panel. Así ninguna oficina se actualiza sola mientras
 // seguimos iterando el código.
+// ── Canales de actualización ─────────────────────────────────────────────────
+// ALPHA = repo OFICIAL (de la encargada) → releases estables.
+// BETA  = repo propio (pruebas) → lo que subo yo antes de pasarlo a oficial.
+// Cada uno elige su canal en el panel; el chequeo lee SOLO el repo del canal elegido
+// (no hay cruce automático: alpha y beta son fuentes distintas a propósito).
+// Override por .env: UPDATER_ALPHA="owner/repo" · UPDATER_BETA="owner/repo"
+const UPDATE_CHANNELS = {
+  alpha: { owner: 'admimaster26-collab', repo: 'nodo-panel',  label: 'Alpha · oficial' },
+  beta:  { owner: 'zhinouno-ui',         repo: 'NexoBetaChan', label: 'Beta · pruebas' }
+};
+(function(){
+  const parse = s => { const p = String(s||'').split('/'); return (p[0] && p[1]) ? { owner:p[0], repo:p[1] } : null; };
+  const a = parse(process.env.UPDATER_ALPHA), b = parse(process.env.UPDATER_BETA);
+  if (a) { UPDATE_CHANNELS.alpha.owner = a.owner; UPDATE_CHANNELS.alpha.repo = a.repo; }
+  if (b) { UPDATE_CHANNELS.beta.owner  = b.owner; UPDATE_CHANNELS.beta.repo  = b.repo; }
+})();
+let _updaterChannel = 'alpha'; // canal activo (lo fija el renderer en cada check)
+
 let autoUpdater = null;
 try {
   autoUpdater = require('electron-updater').autoUpdater;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+
+  // ── BETA: "instalar SIEMPRE, sin depender de la versión" ────────────────────
+  // Por defecto electron-updater SOLO considera "disponible" una versión MAYOR:
+  // isUpdateAvailable() devuelve false si la remota es IGUAL, y solo acepta una
+  // MENOR con allowDowngrade. Además, cuando no hay update disponible NO setea
+  // updateInfoAndProvider, así que un downloadUpdate() posterior tira
+  // "Please check update first". Para el canal beta queremos bajar e instalar lo
+  // que haya en el repo aunque la versión sea igual o menor.
+  // Parche: cuando __forceInstall está activo, cualquier release con versión
+  // válida cuenta como disponible → se emite 'update-available', se setea
+  // updateInfoAndProvider (downloadUpdate funciona) y quitAndInstall corre el
+  // instalador (NSIS no bloquea reinstalar la misma versión). El path de
+  // instalación no tiene comparación de versión, así que este es el único gate.
+  const _origIsUpdateAvailable = autoUpdater.isUpdateAvailable.bind(autoUpdater);
+  autoUpdater.isUpdateAvailable = function (updateInfo) {
+    if (autoUpdater.__forceInstall) {
+      return Promise.resolve(!!(updateInfo && updateInfo.version));
+    }
+    return _origIsUpdateAvailable(updateInfo);
+  };
 } catch (_e) { console.warn('[updater] electron-updater no disponible:', _e && _e.message); }
 
 
@@ -33,16 +71,27 @@ function cargarEnvLocalV15() {
     // viejas que todavía tienen el .env ahí — pero OJO, ese se pierde en cada update porque el
     // desinstalador de la versión previa borra toda la carpeta de instalación). (3) __dirname (dev).
     const dirs = [];
+    // (1) Carpeta de datos de usuario de la app (sobrevive updates; el instalador NUNCA la toca).
     try { dirs.push(app.getPath('userData')); } catch (_e) {}
+    // (1b) Variantes por si getName() difiere de la carpeta real (productName con "·" vs name):
+    try { const ad = app.getPath('appData'); dirs.push(path.join(ad, 'nodo-operativo'), path.join(ad, 'NODO · OPERATIVO'), path.join(ad, 'Nexo'), path.join(ad, 'NexoBetaChan')); } catch (_e) {}
+    // (2) Documentos del usuario (por si el operador deja el env a mano en una carpeta cómoda).
+    try { dirs.push(path.join(app.getPath('documents'), 'NODO'), app.getPath('documents')); } catch (_e) {}
+    // (3) Junto al ejecutable instalado (instalaciones viejas). (4) __dirname (dev / repo).
     try { dirs.push(path.dirname(process.execPath)); } catch (_e) {}
     dirs.push(__dirname);
+    // Nombres aceptados: office-specific (.env.p4), .env, y "env" SIN punto (así se guarda ahora).
+    const names = [envName, ".env", "env"];
     let envPath = "";
     for (const d of dirs) {
-      const p1 = path.join(d, envName), p2 = path.join(d, ".env");
-      if (fs.existsSync(p1)) { envPath = p1; break; }
-      if (fs.existsSync(p2)) { envPath = p2; break; }
+      if (!d) continue;
+      for (const nm of names) {
+        const pth = path.join(d, nm);
+        try { if (fs.existsSync(pth)) { envPath = pth; break; } } catch (_e) {}
+      }
+      if (envPath) break;
     }
-    if (!envPath) return;
+    if (!envPath) { console.log("[env] no se encontró .env/env en", dirs.filter(Boolean)); return; }
     console.log("[env] usando", envPath);
     const raw = fs.readFileSync(envPath, "utf8");
     raw.split(/\r?\n/).forEach(line => {
@@ -214,8 +263,32 @@ function getPanelSupabaseV15() {
   return panelSupabaseV15;
 }
 
-const AGENT_URL    = 'https://bo.casinodrex.com/agents/user_search';
-const NEW_USER_URL = 'https://bo.casinodrex.com/agents/new_user';
+// ── Backend de Agentes SWITCHEABLE (bet300 por defecto · Drex al relanzar) ───
+// bet300 (agentesbet.io/.net) es un SPA Vuetify: la búsqueda es IN-PAGE (spa:true → NO se
+// re-navega antes de cada buscarUsuario, así no se recarga el bundle = evita el 403/lentitud
+// que teníamos con Drex). Drex (casinodrex) navega por URL (spa:false). Mismo contrato de preload.
+const AGENT_BACKENDS = {
+  bet300: { url: 'https://agentesbet.io/',                          newUserUrl: 'https://agentesbet.io/',                      preload: 'agent-preload-bet300.js', spa: true,  label: 'bet300 (.io/.net)' },
+  drex:   { url: 'https://bo.casinodrex.com/agents/user_search',    newUserUrl: 'https://bo.casinodrex.com/agents/new_user',    preload: 'agent-preload.js',        spa: false, label: 'Drex (casinodrex)' }
+};
+// Elección persistida en userData (sobrevive updates). Default: bet300.
+function _agentBackendFile(){ try { return path.join(app.getPath('userData'), 'nodo-agent-backend'); } catch(_e){ return ''; } }
+function _leerBackendGuardado(){
+  try { const f=_agentBackendFile(); if(f && fs.existsSync(f)){ const v=String(fs.readFileSync(f,'utf8')).trim(); if(AGENT_BACKENDS[v]) return v; } } catch(_e){}
+  const env = String(process.env.AGENT_BACKEND||'').trim().toLowerCase();
+  return AGENT_BACKENDS[env] ? env : 'bet300';
+}
+let _agentBackend = _leerBackendGuardado();
+let AGENT_URL, NEW_USER_URL, AGENT_PRELOAD;
+function _aplicarBackend(b){
+  if(!AGENT_BACKENDS[b]) b = 'bet300';
+  _agentBackend = b;
+  const c = AGENT_BACKENDS[b];
+  AGENT_URL = c.url; NEW_USER_URL = c.newUserUrl; AGENT_PRELOAD = c.preload;
+}
+function _agentEsSpa(){ return !!(AGENT_BACKENDS[_agentBackend] && AGENT_BACKENDS[_agentBackend].spa); }
+_aplicarBackend(_agentBackend);
+
 const CHUNIOR_URL  = 'https://bo.chunior.com/transacciones/';
 
 let mainWindow    = null;
@@ -337,7 +410,7 @@ function createAgentWindow(url = AGENT_URL) {
     title:  'Agentes — Cargas automáticas',
     show:   false,
     webPreferences: {
-      preload:              path.join(__dirname, 'agent-preload.js'),
+      preload:              path.join(__dirname, AGENT_PRELOAD), // preload según backend elegido
       partition:            AGENT_PARTITION, // sesión dedicada → el proxy solo afecta a Agentes
       contextIsolation:     true,
       nodeIntegration:      false,
@@ -458,10 +531,53 @@ async function agentWaitReadyDrex(win, timeoutMs = 9000) {
   return false;
 }
 
+// PATCH 02 · evita la recarga si Agentes YA está en la ruta objetivo y operable.
+// Cada loadURL baja el bundle completo del SPA desde el CDN; con 2-4 búsquedas por
+// operación el WAF (CloudFront) lo lee como bot y devuelve 403. El preload sabe operar
+// sobre una página "usada": pisa el input de búsqueda, ignora resultados viejos y
+// cierra el modal de sesión — no necesita página recién cargada.
+async function agentPageIsOperableDrex(win, url) {
+  try {
+    const norm = u => String(u || '').split(/[?#]/)[0].replace(/\/+$/, '');
+    if (norm(win.webContents.getURL()) !== norm(url)) return false;
+    if (win.webContents.isLoading()) return false;
+    return await win.webContents.executeJavaScript(`(function(){
+      try {
+        function vis(el){ if(!el) return false; var s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.visibility!=='hidden' && s.display!=='none' && r.width>0 && r.height>0; }
+        var esNewUser = /\\/new_user/i.test(location.href);
+        // Modal de carga/retiro abierto (operación a medias) → mejor página limpia.
+        if (vis(document.querySelector('input[name="amount"]'))) return false;
+        // Login visible → que el flujo normal (recarga + needsLogin) lo maneje.
+        if (!esNewUser && vis(document.querySelector('input[type="password"]'))) return false;
+        // En new_user CUALQUIER modal visible invalida el skip: un "Guardar" colgado de un
+        // alta anterior haría que crearUsuario confirme un alta rancia. En user_search los
+        // modales colgados los limpia el preload (recuperarFlujoPendiente) sin recargar.
+        if (esNewUser) {
+          var dlg = document.querySelectorAll('.ReactModal__Content, [role="dialog"], .MuiDialog-root');
+          for (var i = 0; i < dlg.length; i++) { if (vis(dlg[i])) return false; }
+        }
+        var app = document.querySelector('#searchButton')
+               || document.querySelector('[data-agenttree-user-type]')
+               || (esNewUser && document.querySelector('input[name="alias"]'));
+        if (!app) return false;
+        var body = (document.body && (document.body.innerText || document.body.textContent) || '').slice(0,2000).toLowerCase();
+        if (/(40[0-9]|50[0-9])\\s*error|request blocked|request could not be satisfied|generated by cloudfront|service unavailable|bad gateway|gateway timeout|access denied|forbidden|algo sali|cannot read properties|errorboundary/.test(body)) return false;
+        return true;
+      } catch(e) { return false; }
+    })()`, true);
+  } catch (_e) { return false; }
+}
+
 // ⛔ FLUJO BLINDADO — NO MODIFICAR (core de carga/retiro estable).
 // PATCH 01: mantiene el mismo flujo, solo agrega espera real + reintento si Agentes carga bloqueado.
+// PATCH 02: si la página ya está operable en la ruta pedida, NO recarga (evita 403 por rate-limit
+// del CDN). Si no lo está, el flujo de recarga queda EXACTAMENTE igual que antes.
 async function navigateAgentTo(url = AGENT_URL) {
   const win = getAgentWindow();
+  if (await agentPageIsOperableDrex(win, url)) {
+    console.log('[main] Agentes ya operable en la ruta pedida → sin recarga');
+    return;
+  }
   navEsperadaDrex = true;
   try {
     const MAX = 3;
@@ -483,8 +599,10 @@ async function navigateAgentTo(url = AGENT_URL) {
       const blocked = await agentPageIsBlockedDrex(win);
       if (!blocked) return;
       if (intento < MAX) {
+        // Backoff escalonado: un 403 suele ser rate-limit del CDN → volver a pegarle
+        // a los 1.2s lo empeora. Esperas: 2.5s, luego 5s.
         console.warn('[main] Agentes devolvió pantalla de error/bloqueo. Reintento ' + intento + '/' + MAX);
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 2500 * intento));
       }
     }
   } finally {
@@ -496,20 +614,28 @@ function automationTimeoutFor(method) {
   const envTimeout = Number(process.env.DREX_AUTOMATION_TIMEOUT_MS || 0);
   if (envTimeout > 0) return envTimeout;
   // Timeouts ajustados para que un CUELGUE se resuelva rápido y libere al operador (demanda alta).
-  // Una carga normal tarda ~10-15s; si pasa de 45s está colgada → abortar y reintentar.
-  if (method === 'cargarSaldo' || method === 'retirarSaldo') return 45000;   // antes 180s
+  // Una carga normal tarda ~10-15s; si pasa del tope está colgada → abortar y reintentar.
+  // +5-12s de margen vs. antes: la lectura del saldo PRE ahora POLLEA hasta 7s (con proxy
+  // el campo tarda en pintar y el pre tiene que salir perfecto para la verificación de fondo).
+  if (method === 'cargarSaldo' || method === 'retirarSaldo') return 50000;   // antes 45s
   if (method === 'crearUsuario' || method === 'cambiarClave') return 55000;  // antes 90s
-  if (method === 'buscarUsuario' || method === 'obtenerSaldoAgente') return 28000; // antes 45s
+  if (method === 'buscarUsuario') return 40000;                              // antes 28s
+  if (method === 'obtenerSaldoAgente') return 28000;
   return 40000; // antes 60s
 }
 
 function sendAutomation(method, ...args) {
   const win = getAgentWindow();
-  // Algunos métodos requieren estar en una URL específica → navegamos primero
+  // Algunos métodos requieren estar en una URL específica → navegamos primero.
+  // ⚠ SPA (bet300): la búsqueda y el "Crear jugador" son IN-PAGE → NO re-navegamos (recargar el
+  // bundle era la causa del 403/lentitud de Drex). Solo esperamos que el SPA esté montado.
   let preNav;
-  if      (method === 'buscarUsuario')       preNav = navigateAgentTo(AGENT_URL);
-  else if (method === 'crearUsuario')        preNav = navigateAgentTo(NEW_USER_URL);
-  else if (method === 'obtenerSaldoAgente')  preNav = navigateAgentTo(AGENT_URL);
+  if      (method === 'buscarUsuario')       preNav = _agentEsSpa() ? whenAgentReady(win) : navigateAgentTo(AGENT_URL);
+  else if (method === 'crearUsuario')        preNav = _agentEsSpa() ? whenAgentReady(win) : navigateAgentTo(NEW_USER_URL);
+  // obtenerSaldoAgente es LECTURA PASIVA: el saldo del agente (span.hideUserBalance)
+  // está en el header de TODAS las páginas internas del SPA. Navegar para leerlo hacía
+  // que cada refresh del saldo recargara la página → tráfico → 403 del CDN.
+  else if (method === 'obtenerSaldoAgente')  preNav = whenAgentReady(win);
   else                                       preNav = whenAgentReady(win);
   return preNav.then(() => {
     const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -538,7 +664,7 @@ function createVerifyWindow() {
     title:  'Verificación — Login usuarios',
     show:   false,
     webPreferences: {
-      preload:          path.join(__dirname, 'agent-preload.js'),
+      preload:          path.join(__dirname, AGENT_PRELOAD), // preload según backend elegido
       partition:        AGENT_PARTITION, // misma sesión que Agentes (comparte login + proxy)
       contextIsolation: true,
       nodeIntegration:  false,
@@ -663,6 +789,8 @@ async function panelRpcRestFetchV154Plus(fn, params = {}) {
 // Igual que ALLOWED_AUTOMATION_METHODS: evita que un bug/XSS en el renderer llame RPCs no previstas.
 const PANEL_RPC_ALLOW = new Set([
   'landing_crear_chat_v2',
+  'landing_retiro_registrar_parcial', // progreso del retiro parcial → el portal se lo muestra al usuario
+  'landing_retiro_progreso',          // lectura del progreso del parcial
   'panel_nodo_send_chat_message',
   'panel_v15_5_listar_solicitudes_portal',
   'panel_v15_5_actualizar_solicitud_portal',
@@ -714,6 +842,41 @@ ipcMain.handle('panel:get-context', async () => ({
   // propio cliente con la anon key PÚBLICA). Lo ideal es migrar más lecturas a panelAPI.rpc.
 }));
 
+// ── Nexo: integración por ARCHIVO (OPCIONAL, no estricta) ────────────────────
+// Contrato (verificado contra el código de Nexo): nodo es DUEÑO de
+//   %APPDATA%\nexo-desktop\shared\nodo-datos.json
+// Lo escribe atómico (tmp+rename); Nexo lo LEE al abrir y fusiona (una dirección, un dueño → cero
+// corrupción). NUNCA tocar el shard nexo-db-<pid>.json de Nexo. No estricto: si nexo-desktop NO
+// está instalado (no existe la carpeta), no se escribe nada y no es error.
+function _nexoDatosPath() {
+  return path.join(app.getPath('appData'), 'nexo-desktop', 'shared', 'nodo-datos.json');
+}
+function _nexoInstalado() {
+  try { return fs.existsSync(path.join(app.getPath('appData'), 'nexo-desktop')); } catch (_e) { return false; }
+}
+ipcMain.handle('nexo:estado', async () => {
+  try {
+    const p = _nexoDatosPath();
+    const instalado = _nexoInstalado();
+    let existeArchivo = false, bytes = 0, mtime = null;
+    try { if (fs.existsSync(p)) { const st = fs.statSync(p); existeArchivo = true; bytes = st.size; mtime = st.mtime.toISOString(); } } catch (_e) {}
+    return { ok:true, instalado, path:p, existeArchivo, bytes, mtime };
+  } catch (e) { return { ok:false, error: e.message || String(e) }; }
+});
+ipcMain.handle('nexo:write', async (_e, arg = {}) => {
+  try {
+    if (!_nexoInstalado()) return { ok:false, instalado:false }; // Nexo no está → no escribimos (no estricto)
+    const p = _nexoDatosPath();
+    const dir = path.dirname(p);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_e) {} // nodo crea su carpeta shared/
+    const content = String(arg && arg.content != null ? arg.content : '');
+    const tmp = p + '.tmp-nodo';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, p); // atómico en el mismo volumen
+    return { ok:true, instalado:true, path:p, bytes: Buffer.byteLength(content, 'utf8') };
+  } catch (e) { return { ok:false, error: e.message || String(e) }; }
+});
+
 // ── Auto-actualización: chequeo/descarga/instalación MANUAL desde el botón del panel ──
 function _sendUpdaterStatus(event, payload) {
   try {
@@ -724,21 +887,36 @@ function _sendUpdaterStatus(event, payload) {
 
 ipcMain.handle('updater:version', () => ({ ok: true, version: app.getVersion() }));
 
-ipcMain.handle('updater:check', async (event) => {
+ipcMain.handle('updater:check', async (event, arg) => {
   if (!autoUpdater) return { ok: false, reason: 'no-updater' };
   if (!app.isPackaged) return { ok: false, reason: 'dev-mode' };
+  // Canal elegido por el renderer (persistido en el panel). Default: el último usado.
+  const canal = (arg && arg.channel && UPDATE_CHANNELS[arg.channel]) ? arg.channel : _updaterChannel;
+  _updaterChannel = canal;
+  const repo = UPDATE_CHANNELS[canal];
+
+  // BETA instala siempre lo que haya en el repo, sin comparar versiones (ver el
+  // parche de isUpdateAvailable arriba). allowDowngrade cubre además el caso de
+  // que la beta haya quedado en una versión menor que la instalada.
+  const forzar = (canal === 'beta');
+  autoUpdater.__forceInstall = forzar;
+  autoUpdater.allowDowngrade  = forzar;
+
+  autoUpdater.removeAllListeners();
+  autoUpdater.on('checking-for-update', () => _sendUpdaterStatus(event, { state: 'checking', channel: canal }));
+  autoUpdater.on('update-available',    (info) => _sendUpdaterStatus(event, { state: 'available', version: info && info.version, channel: canal, forced: forzar }));
+  autoUpdater.on('update-not-available',() => _sendUpdaterStatus(event, { state: 'not-available', channel: canal }));
+  autoUpdater.on('error', (err) => _sendUpdaterStatus(event, { state: 'error', message: String(err && err.message || err), channel: canal }));
+  autoUpdater.on('download-progress', (p) => _sendUpdaterStatus(event, { state: 'downloading', percent: Math.round(p && p.percent || 0) }));
+  autoUpdater.on('update-downloaded', (info) => _sendUpdaterStatus(event, { state: 'downloaded', version: info && info.version, channel: canal }));
   try {
-    autoUpdater.removeAllListeners();
-    autoUpdater.on('checking-for-update', () => _sendUpdaterStatus(event, { state: 'checking' }));
-    autoUpdater.on('update-available',    (info) => _sendUpdaterStatus(event, { state: 'available', version: info && info.version }));
-    autoUpdater.on('update-not-available',() => _sendUpdaterStatus(event, { state: 'not-available' }));
-    autoUpdater.on('error', (err) => _sendUpdaterStatus(event, { state: 'error', message: String(err && err.message || err) }));
-    autoUpdater.on('download-progress', (p) => _sendUpdaterStatus(event, { state: 'downloading', percent: Math.round(p && p.percent || 0) }));
-    autoUpdater.on('update-downloaded', (info) => _sendUpdaterStatus(event, { state: 'downloaded', version: info && info.version }));
+    // Cada canal es una FUENTE distinta (repo distinto). Sin cruce automático.
+    autoUpdater.setFeedURL({ provider: 'github', owner: repo.owner, repo: repo.repo });
     const r = await autoUpdater.checkForUpdates();
-    return { ok: true, version: r && r.updateInfo && r.updateInfo.version };
+    return { ok: true, version: r && r.updateInfo && r.updateInfo.version, channel: canal, repo: repo.owner + '/' + repo.repo, forced: forzar };
   } catch (e) {
-    return { ok: false, reason: 'error', message: String(e && e.message || e) };
+    console.warn('[updater] check falló · canal', canal, '(' + repo.owner + '/' + repo.repo + ') ·', e && e.message);
+    return { ok: false, reason: 'error', channel: canal, message: String(e && e.message || e) };
   }
 });
 
@@ -757,10 +935,16 @@ ipcMain.handle('updater:install', () => {
 // "Volver a la versión anterior": abre la página de releases en el navegador, donde la oficina
 // puede bajar cualquier instalador previo si esta versión falla. Es la salida de emergencia
 // más confiable (un downgrade automático de electron-updater es frágil).
-ipcMain.handle('updater:open-releases', async () => {
-  try { await shell.openExternal('https://github.com/admimaster26-collab/nodo-panel/releases'); return { ok: true }; }
+ipcMain.handle('updater:open-releases', async (_event, arg) => {
+  // Abre las releases del canal elegido (para bajar un instalador a mano).
+  const canal = (arg && arg.channel && UPDATE_CHANNELS[arg.channel]) ? arg.channel : _updaterChannel;
+  const repo = UPDATE_CHANNELS[canal] || UPDATE_CHANNELS.alpha;
+  try { await shell.openExternal('https://github.com/' + repo.owner + '/' + repo.repo + '/releases'); return { ok: true }; }
   catch (e) { return { ok: false, message: String(e && e.message || e) }; }
 });
+
+// Devuelve la config de canales (para que el panel muestre los nombres/repos reales).
+ipcMain.handle('updater:channels', () => ({ ok: true, channels: UPDATE_CHANNELS, active: _updaterChannel }));
 
 // Abre/enfoca la ventana del backoffice
 // Navega la ventana del backoffice a la URL de búsqueda y espera a que cargue
@@ -789,6 +973,32 @@ ipcMain.handle('drex:show-agent-window', (_event, url) => {
 // Ejecuta un método de automatización en el backoffice
 ipcMain.handle('drex:automation', async (_event, { method, args = [] } = {}) => {
   return sendAutomation(method, ...args);
+});
+
+// ── Switch de backend de Agentes (bet300 ⇄ Drex) ────────────────────────────
+// Devuelve el backend actual + las opciones (para el toggle del panel).
+ipcMain.handle('agent:get-backend', () => ({
+  ok: true,
+  backend: _agentBackend,
+  label: (AGENT_BACKENDS[_agentBackend] || {}).label || _agentBackend,
+  url: AGENT_URL,
+  opciones: Object.keys(AGENT_BACKENDS).map(k => ({ id: k, label: AGENT_BACKENDS[k].label }))
+}));
+// Cambia el backend, lo PERSISTE y RELANZA la ventana de agentes con el preload/URL nuevos.
+ipcMain.handle('agent:set-backend', (_event, { backend } = {}) => {
+  if (!AGENT_BACKENDS[backend]) return { ok: false, error: 'backend desconocido: ' + backend };
+  if (backend === _agentBackend) return { ok: true, backend, sinCambio: true };
+  _aplicarBackend(backend);
+  try { const f = _agentBackendFile(); if (f) fs.writeFileSync(f, backend, 'utf8'); } catch (_e) {}
+  // Cerrar las ventanas de agente/verificación existentes → se recrean con el preload nuevo.
+  try { if (agentWindow && !agentWindow.isDestroyed()) { agentWindow.destroy(); } } catch (_e) {}
+  agentWindow = null;
+  try { if (verifyWindow && !verifyWindow.isDestroyed()) { verifyWindow.destroy(); } } catch (_e) {}
+  verifyWindow = null;
+  // Relanzar la ventana (hidden) ya cargando la URL del backend nuevo.
+  try { const w = getAgentWindow(); w.show(); w.focus(); } catch (_e) {}
+  console.log('[agent-backend] cambiado a', backend, '→', AGENT_URL, '·', AGENT_PRELOAD);
+  return { ok: true, backend, label: AGENT_BACKENDS[backend].label, url: AGENT_URL };
 });
 
 // Auto-login del agente con credenciales BLINDADAS: la clave se trae acá (proceso main)
@@ -899,6 +1109,16 @@ ipcMain.handle('chunior:reload', async () => {
   const win = getChuniorWindow();
   win.reload();
   await whenChuniorReady(win);
+  return { ok: true };
+});
+
+// Recupera el foco de TECLADO del panel tras un confirm() nativo. Bug de Electron
+// (#19977): después de un diálogo nativo la ventana queda sin input de teclado en
+// TODOS los campos, y ni el refresh lo arregla — solo blur+focus de la BrowserWindow.
+ipcMain.handle('panel:refocus', () => {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.blur(); mainWindow.focus(); }
+  } catch (_e) {}
   return { ok: true };
 });
 

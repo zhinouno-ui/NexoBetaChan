@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "1.0.78",
+  "version": "1.0.86",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
@@ -24,14 +24,15 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "admimaster26-collab",
-        "repo": "nodo-panel"
+        "owner": "zhinouno-ui",
+        "repo": "NexoBetaChan"
       }
     ],
     "files": [
       "main.js",
       "app-preload.js",
       "agent-preload.js",
+      "agent-preload-bet300.js",
       "chunior-bridge.js",
       "config.json",
       "services/**/*",
@@ -43,7 +44,7 @@
       "node_modules/**/*"
     ],
     "win": {
-      "icon": "icons/icon-512.png",
+      "icon": "icons/icon-beta.png",
       "target": [
         {
           "target": "nsis",

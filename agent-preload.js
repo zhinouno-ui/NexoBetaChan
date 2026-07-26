@@ -17,6 +17,16 @@ function delay(ms = STEP_DELAY) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ── Freno REAL de operación ───────────────────────────────────────────────────
+// El ⛔ Cancelar del panel setea este flag (via abortarOperacion). Toda espera
+// (waitFor) lo chequea y corta, y applyAmount frena en el último punto seguro:
+// ANTES del click en Aplicar. Después de Aplicar se ignora (hay que leer el
+// resultado sí o sí — la plata ya pudo haberse movido).
+let _abortOperacion = false;
+function _chequearFreno(donde) {
+  if (_abortOperacion) throw new Error('⛔ Operación frenada por el operador' + (donde ? ' (' + donde + ')' : '') + '. No se aplicó plata.');
+}
+
 function now() {
   return Date.now();
 }
@@ -39,6 +49,7 @@ function firstVisible(selector, root = document) {
 async function waitFor(predicate, timeout = DEFAULT_TIMEOUT, interval = 120) {
   const started = now();
   while (now() - started < timeout) {
+    _chequearFreno(); // el ⛔ Cancelar corta cualquier espera en curso
     const value = typeof predicate === 'function' ? predicate() : document.querySelector(predicate);
     if (value) return value;
     await delay(interval);
@@ -335,7 +346,30 @@ function _leerBalancesEnModalDeposito() {
 async function abrirModalDepositoYLeerSaldo() {
   clickButtonByIcon('circle-plus');
   await delay(800);
-  const balances = _leerBalancesEnModalDeposito();
+  // SELLO propio en el modal recién abierto: sabemos con certeza que es de DEPÓSITO
+  // (lo abrimos nosotros). openMovementModal lo lee para REUSAR el modal en la carga
+  // sin cerrarlo y reabrirlo.
+  try {
+    const inp = firstVisible(SELECTORS.amountInput);
+    const modal = inp && inp.closest('.ReactModal__Content, .MuiDialog-root, .MuiModal-root, [role="dialog"]');
+    if (modal) modal.setAttribute('data-nodo-tipo', 'deposito');
+  } catch (_) {}
+  // Saldo PRE exacto, sin demorar de más:
+  //  - valor REAL (>0) pintado → se toma al INSTANTE
+  //  - 0 PINTADO (el campo muestra "0") → se acepta a los 3s (casi siempre es un 0 real:
+  //    la mayoría carga estando en cero; 3s alcanzan para descartar el 0 transitorio)
+  //  - campo VACÍO (sin pintar, proxy lento) → hasta 7s
+  let balances = _leerBalancesEnModalDeposito();
+  const tCero = now() + 3000;
+  const tFin  = now() + 7000;
+  while (now() < tFin) {
+    const pre = balances.pre;
+    const pintado = pre && /\d/.test(pre.raw || '');
+    if (pintado && pre.value > 0) break;
+    if (pintado && pre.value === 0 && now() > tCero) break;
+    await delay(250);
+    balances = _leerBalancesEnModalDeposito();
+  }
   return balances.pre || _leerSaldoJugadorEnModalAbierto();
 }
 
@@ -505,6 +539,141 @@ async function cerrarModalSesionInvalida() {
   return true;
 }
 
+// ── Detección de estado del flujo ─────────────────────────────────────────────
+// Overlays/backdrops colgados: el modal ya no muestra contenido pero el fondo sigue
+// tapando la página (pasa cuando un cierre falla a mitad de animación). Click en el
+// backdrop + Escape — las dos vías estándar de cierre de react-modal/MUI.
+async function cerrarOverlaysColgados() {
+  const overlays = visibleElements('.ReactModal__Overlay, .MuiBackdrop-root, .modal-backdrop, .MuiModal-backdrop');
+  for (const ov of overlays) { try { ov.click(); } catch (_) {} }
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+  if (overlays.length) await delay(300);
+  return overlays.length > 0;
+}
+
+// ¿Hay un MODAL tapando el elemento? Prueba real de "¿puedo escribir acá?": mira qué
+// elemento recibe el punto central. Solo cuenta como tapado si lo que está encima es
+// un modal/backdrop (no un artefacto de estilos tipo label/fieldset de MUI).
+function tapadoPorModal(el) {
+  try {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+    const top = document.elementFromPoint(x, y);
+    if (!top || top === el || el.contains(top) || top.contains(el)) return false;
+    return !!top.closest('.ReactModal__Overlay, .ReactModal__Content, .MuiBackdrop-root, .MuiModal-root, .modal-backdrop, [role="dialog"]');
+  } catch (_) { return false; }
+}
+
+// Lee los CARTELES visibles (alerts, toasts, títulos de modal) — lo mismo que ve el
+// operador en pantalla — para que el script y el panel sepan qué está mostrando la página.
+function leerCartelesVisibles() {
+  const sels = '.card-alert, .card-title-alert, [role="alert"], .alert, .Toastify__toast, .MuiAlert-root, ' +
+               '.ReactModal__Content h1, .ReactModal__Content h2, .ReactModal__Content h3, .ReactModal__Content h4, .ReactModal__Content h5, .modal-title';
+  const textos = [];
+  for (const el of visibleElements(sels)) {
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    if (t && !textos.includes(t)) textos.push(t);
+    if (textos.length >= 4) break;
+  }
+  return textos;
+}
+
+// Identifica si el modal de monto abierto es de CARGA o de RETIRO leyendo sus carteles.
+// Devuelve un tipo SOLO si es inequívoco — ante la duda, null (el caller cierra y reabre;
+// aplicar un retiro en el modal de carga sería plata al revés).
+function tipoDeModalMonto() {
+  const input = firstVisible(SELECTORS.amountInput);
+  if (!input) return null;
+  const modal = input.closest('.ReactModal__Content, .MuiDialog-root, .MuiModal-root, [role="dialog"]');
+  if (!modal) return null;
+  // 1º nuestro SELLO (data-nodo-tipo, lo pone abrirModalDepositoYLeerSaldo) — certeza total.
+  const sello = modal.getAttribute('data-nodo-tipo');
+  if (sello === 'deposito' || sello === 'retiro') return sello;
+  // 2º los carteles del modal (título primero, texto completo como fallback).
+  const titulo = modal.querySelector('h1, h2, h3, h4, h5, .modal-title, .card-title, .card-title-alert');
+  const texto = ((titulo && titulo.textContent) || modal.textContent || '').toLowerCase();
+  const esRetiro   = /retir|withdraw|extraer|d[eé]bito/.test(texto);
+  const esDeposito = /dep[oó]sit|carga|cr[eé]dito/.test(texto) || !!modal.querySelector('#btn_deposit');
+  if (esRetiro && !esDeposito) return 'retiro';
+  if (esDeposito && !esRetiro) return 'deposito';
+  return null;
+}
+
+// La misma información que se le muestra al operador, pero para el SCRIPT: mira el
+// DOM y clasifica dónde quedó parado, así las operaciones pueden RETOMAR desde ahí
+// sin refrescar la página (cada refresh suma tráfico que el CDN castiga con 403).
+//   'error'           → página de error del servidor/CDN (403/404/CloudFront)
+//   'sesion-invalida' → modal "invalid session" abierto
+//   'modal-resultado' → quedó abierto el "Resultado de la operación" de una op anterior
+//   'modal-monto'     → modal de carga/retiro a medias (input de monto visible)
+//   'login'           → pantalla de login del backoffice
+//   'alta-usuario'    → formulario de /new_user visible
+//   'busqueda'        → búsqueda de usuarios lista para operar
+//   'desconocido'     → ninguna señal reconocible (dejar que el flujo normal decida)
+function detectarEstadoFlujo() {
+  if (pageIsBlocked()) return 'error';
+  if (detectarModalSesionInvalida()) return 'sesion-invalida';
+  if (_detectarModalResultado()) return 'modal-resultado';
+  if (firstVisible(SELECTORS.amountInput)) return 'modal-monto';
+  if (pageNeedsLogin()) return 'login';
+  if (/\/new_user/i.test(window.location.href) && firstVisible('input[name="alias"]')) return 'alta-usuario';
+  if (document.querySelector(SELECTORS.searchButton) || findSearchInput()) return 'busqueda';
+  return 'desconocido';
+}
+
+// Retoma el flujo sobre la página YA cargada: cierra lo que haya quedado colgado de
+// una operación anterior (modal de resultado con su "Aceptar", modal de carga/retiro
+// a medias, modal de sesión inválida) en vez de exigir página recién refrescada.
+// Si un cierre "amable" no alcanza (mismo estado dos vueltas seguidas), ESCALA:
+// Escape + Cancelar + click en el backdrop. Al llegar a 'busqueda' hace la prueba
+// real de "¿puedo ingresar el usuario?" (¿hay un modal fantasma tapando el input?).
+// Devuelve el estado final después de la limpieza.
+async function recuperarFlujoPendiente() {
+  let anterior = null;
+  for (let i = 0; i < 4; i++) {
+    const estado = detectarEstadoFlujo();
+    const insistiendo = estado === anterior; // el intento previo no cambió nada → escalar
+    anterior = estado;
+    if (estado === 'modal-resultado') {
+      const res = _detectarModalResultado();
+      try {
+        const btn = Array.from(res.querySelectorAll('button, [role="button"]'))
+          .find(b => /^\s*aceptar\s*$/i.test((b.textContent || '').trim()));
+        if (btn) clickElement(btn);
+      } catch (_) {}
+      if (insistiendo) { await cerrarModalActual(); await cerrarOverlaysColgados(); }
+      await delay(400);
+      continue;
+    }
+    if (estado === 'modal-monto') {
+      await cerrarModalActual();
+      if (insistiendo) await cerrarOverlaysColgados();
+      await delay(200);
+      continue;
+    }
+    if (estado === 'sesion-invalida') {
+      await cerrarModalSesionInvalida();
+      continue;
+    }
+    if (estado === 'busqueda') {
+      // Prueba activa: el input existe, pero ¿algo lo tapa? Un backdrop huérfano no
+      // aparece en detectarEstadoFlujo (no tiene input de monto ni texto de resultado).
+      const input = findSearchInput();
+      if (input && tapadoPorModal(input)) {
+        if (await cerrarOverlaysColgados()) continue;
+        // No se pudo destapar: seguimos igual (los eventos sintéticos operan por
+        // debajo del overlay), pero dejamos registrado qué carteles hay en pantalla.
+        console.warn('[agent] input de búsqueda tapado por overlay no cerrable · carteles:', leerCartelesVisibles().join(' | '));
+      }
+      return estado;
+    }
+    return estado;
+  }
+  return detectarEstadoFlujo();
+}
+
 function status(extra = {}) {
   const pageError = pageIsBlocked();
   const needsLogin = !pageError && pageNeedsLogin();
@@ -512,6 +681,8 @@ function status(extra = {}) {
     ok: !needsLogin && !pageError,
     needsLogin,
     pageError,
+    flujo: detectarEstadoFlujo(),
+    carteles: leerCartelesVisibles(),
     url: window.location.href,
     message: pageError
       ? 'La página de agentes respondió con un error del servidor (403/404/CDN). No se operó. Reintentá.'
@@ -525,8 +696,10 @@ function status(extra = {}) {
 async function ensureUserSearchReady() {
   // Página de error del servidor/CDN → abortar antes de operar (no correr el script contra basura)
   if (pageIsBlocked()) return status();
-  // Cierra el modal de sesión inválida antes de evaluar el estado
-  await cerrarModalSesionInvalida();
+  // RETOMA sobre la página cargada: cierra modales colgados de una operación anterior
+  // (resultado viejo, carga/retiro a medias, sesión inválida) en vez de depender de
+  // que alguien refresque. Una operación perdida ya no obliga a recargar la página.
+  await recuperarFlujoPendiente();
   if (pageNeedsLogin()) return status();
   try {
     await waitFor(() => document.querySelector(SELECTORS.searchButton) || firstVisible(SELECTORS.playerAlias));
@@ -612,6 +785,19 @@ async function buscarUsuario(usuario, options = {}) {
 }
 
 async function openMovementModal(iconName, options = {}) {
+  // RETOMA: si el modal de monto YA quedó abierto (p.ej. buscarUsuario lo abrió para
+  // leer el saldo y el cierre falló, o una operación anterior murió a mitad de camino)
+  // y sus carteles dicen inequívocamente que es del TIPO correcto (carga vs retiro),
+  // lo reusamos en vez de cerrarlo y reabrirlo. Ante CUALQUIER duda sobre el tipo, NO
+  // se reusa: ensureUserSearchReady lo cierra y se abre uno nuevo.
+  const inputPrevio = firstVisible(SELECTORS.amountInput);
+  if (inputPrevio) {
+    const esperado = /plus|deposit|carga/i.test(iconName) ? 'deposito' : 'retiro';
+    if (tipoDeModalMonto() === esperado) {
+      return { ok: true, amountInput: inputPrevio, balance: readVisibleBalance(), reutilizado: true };
+    }
+  }
+
   const ready = await ensureUserSearchReady();
   if (ready.needsLogin || ready.pageError) return ready;
 
@@ -630,6 +816,7 @@ async function openMovementModal(iconName, options = {}) {
     throw new Error(`El botón de ${iconName === 'circle-plus' ? 'carga' : 'retiro'} no apareció (¿el perfil del jugador no cargó?).`);
   }
   const btnCarga = icono.closest('button, [role="button"], a') || icono.parentElement;
+  _chequearFreno('antes de abrir el modal'); // freno: todavía no se abrió nada
   clickElement(btnCarga);
 
   await delay(350);
@@ -665,12 +852,18 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
 
   // El modal tiene DOS inputs disabled del jugador: pre y post.
   // Leemos ambos por orden DOM. El primero es el saldo actual (PRE).
-  // Reintenta hasta ~2s (PCs lentas/con proxy tardan más en pintar el input) antes de
-  // rendirse — un solo intento a los 500ms dejaba "pre" sin leer más seguido de lo debido,
-  // y el panel terminaba mostrando saldo "—" (o, en versiones viejas, un negativo falso).
+  // Escalas: valor real (>0) → instante · 0 PINTADO → 3s · campo vacío → 7s.
+  // Modal REUTILIZADO (portal): el PRE ya se estabilizó durante buscarUsuario con esta
+  // misma escala → acá solo un tope corto de cortesía (evita pagar la espera DOS veces,
+  // que era lo que hacía lenta cada carga de jugadores en $0).
   let balancesAntes = _leerBalancesEnModalDeposito();
-  const _tPreFin = now() + 2000;
-  while (!balancesAntes.pre && now() < _tPreFin) {
+  const _tPreCero = now() + (opened.reutilizado ? 1000 : 3000);
+  const _tPreFin  = now() + (opened.reutilizado ? 1500 : 7000);
+  while (now() < _tPreFin) {
+    const _p = balancesAntes.pre;
+    const _pintado = _p && /\d/.test(_p.raw || '');
+    if (_pintado && _p.value > 0) break;
+    if (_pintado && _p.value === 0 && now() > _tPreCero) break;
     await delay(200);
     balancesAntes = _leerBalancesEnModalDeposito();
   }
@@ -720,6 +913,13 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
     } catch (_) {}
   }
 
+  // PATCH 03 · freno REAL: último punto seguro. Si el operador tocó ⛔ Cancelar,
+  // cortamos ACÁ (no se aplicó plata) y cerramos el modal. Pasado este punto el
+  // freno se ignora: el resultado hay que leerlo sí o sí.
+  if (_abortOperacion) {
+    await cerrarModalActual();
+    throw new Error('⛔ Operación frenada por el operador antes de Aplicar. No se tocó plata.');
+  }
   clickElement(applyButton);
 
   // Tras Aplicar, el casino muestra el modal "Resultado de la operación" con el Balance
@@ -1008,10 +1208,22 @@ const api = {
   obtenerSaldoAgente,
   irABusquedaUsuarios,
   iniciarSesion,
-  estadoPagina: status
+  estadoPagina: status,
+  // Re-sincroniza el script con la página SIN refrescar: cierra modales colgados,
+  // destapa overlays y devuelve dónde quedó parado el flujo (mismos datos que status).
+  recuperarFlujo: async () => { const flujo = await recuperarFlujoPendiente(); return status({ flujo }); },
+  // Freno REAL: lo dispara el ⛔ Cancelar del panel. La operación en vuelo corta en el
+  // próximo punto seguro (cualquier waitFor, o justo antes del click en Aplicar).
+  abortarOperacion: () => { _abortOperacion = true; return { ok: true, message: 'Freno solicitado.' }; }
 };
 
 contextBridge.exposeInMainWorld('drexAutomation', api);
+
+// Métodos que son OPERACIONES del operador: al arrancar una nueva se limpia el freno
+// (un ⛔ viejo no debe matar la operación siguiente). Las lecturas pasivas
+// (obtenerSaldoAgente, estadoPagina, recuperarFlujo) NO lo limpian — pueden correr en
+// paralelo (watchdog) mientras el freno de una operación real sigue vigente.
+const METODOS_OPERACION = new Set(['buscarUsuario', 'cargarSaldo', 'retirarSaldo', 'crearUsuario', 'cambiarClave', 'iniciarSesion']);
 
 ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
   const { requestId, method, args = [] } = request;
@@ -1019,6 +1231,7 @@ ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
     if (!Object.prototype.hasOwnProperty.call(api, method)) {
       throw new Error(`Método no permitido: ${method}`);
     }
+    if (METODOS_OPERACION.has(method)) _abortOperacion = false;
     const result = await api[method](...args);
     ipcRenderer.send('drex:automation:result', { requestId, ok: true, result });
   } catch (error) {

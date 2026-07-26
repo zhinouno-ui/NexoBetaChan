@@ -9,7 +9,9 @@ const ALLOWED_AUTOMATION_METHODS = new Set([
   'cambiarClave',
   'crearUsuario',
   'obtenerSaldoAgente',
-  'iniciarSesion'
+  'iniciarSesion',
+  'recuperarFlujo',     // re-sincroniza el script con la página sin refrescar
+  'abortarOperacion'    // freno real del ⛔ Cancelar (sin esto el botón era rechazado acá)
 ]);
 
 contextBridge.exposeInMainWorld('ctrlElectron', {
@@ -26,7 +28,13 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
   drexAutoLogin: (pcCodigo) => ipcRenderer.invoke('drex:auto-login', { pcCodigo }),
   verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario }),
   // Aplica el proxy de la oficina (la config/clave se resuelve en main, no acá).
-  proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo })
+  proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo }),
+  // Recupera el foco de teclado del panel tras un confirm() nativo (bug de Electron:
+  // después de un diálogo la ventana queda sin input hasta hacer blur+focus).
+  refocus: () => ipcRenderer.invoke('panel:refocus'),
+  // Switch de backend de Agentes (bet300 ⇄ Drex) — el toggle del apartado de Agentes.
+  getAgentBackend: () => ipcRenderer.invoke('agent:get-backend'),
+  setAgentBackend: (backend) => ipcRenderer.invoke('agent:set-backend', { backend })
 });
 
 // Acceso a la ventana separada de Chunior (visible, backoffice secundario)
@@ -52,13 +60,23 @@ contextBridge.exposeInMainWorld('panelAPI', {
 });
 
 // ============================================================
+// Nexo · puente de archivo (integración OPCIONAL con la otra herramienta del autor)
+// El renderer no puede tocar el disco; esto lee/escribe SOLO el path que el operador configura.
+// ============================================================
+contextBridge.exposeInMainWorld('nexoFile', {
+  estado: () => ipcRenderer.invoke('nexo:estado'),
+  write:  (content) => ipcRenderer.invoke('nexo:write', { content })
+});
+
+// ============================================================
 // Auto-actualización · chequeo/descarga/instalación MANUAL
 // ============================================================
 contextBridge.exposeInMainWorld('updaterAPI', {
   getVersion: () => ipcRenderer.invoke('updater:version'),
-  check:      () => ipcRenderer.invoke('updater:check'),
+  check:      (channel) => ipcRenderer.invoke('updater:check', { channel }),
   download:   () => ipcRenderer.invoke('updater:download'),
   install:    () => ipcRenderer.invoke('updater:install'),
-  openReleases: () => ipcRenderer.invoke('updater:open-releases'),
+  openReleases: (channel) => ipcRenderer.invoke('updater:open-releases', { channel }),
+  channels:   () => ipcRenderer.invoke('updater:channels'),
   onStatus:   (cb) => ipcRenderer.on('updater:status', (_event, payload) => cb(payload))
 });
