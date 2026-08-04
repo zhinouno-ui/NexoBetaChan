@@ -4999,7 +4999,16 @@ window._retiroParcialInfo = function(s){
     let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
     if(typeof m==='string'){ try{ m=JSON.parse(m); }catch(_e){ m={}; } }
     const rp = (m&&(m.retiro_parcial||m.retiro_progreso||m.progreso))||{};
-    pagado = Math.abs(Number((rp.pagado!=null?rp.pagado:(rp.acumulado!=null?rp.acumulado:(m.pagado_parcial!=null?m.pagado_parcial:0))))||0);
+    // OJO: _rv2Finalizar escribe el progreso PLANO (monto_pagado/monto_restante), no anidado bajo
+    // retiro_parcial. El lector solo miraba las formas anidadas → pagado quedaba en 0 y la tarjeta
+    // de la solicitud pendiente seguía mostrando el TOTAL original después de pagar un parcial.
+    pagado = Math.abs(Number(
+      rp.pagado!=null      ? rp.pagado
+      : rp.acumulado!=null ? rp.acumulado
+      : m.monto_pagado!=null   ? m.monto_pagado
+      : m.pagado_parcial!=null ? m.pagado_parcial
+      : 0
+    )||0);
   }catch(_e){}
   if(total>0 && pagado>total) pagado=total;
   return { total:total, pagado:pagado, restante:Math.max(0,total-pagado), hasProg:pagado>0.5 };
@@ -7732,7 +7741,14 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     lista.forEach(function(c){
       (c.telefonos||[]).forEach(function(t){
         const tn=_altaNormTel(t); if(!tn) return;
-        if(tn===tD){ if(!out.telefono.exacto) out.telefono.exacto=Object.assign({_tel:tn}, c); return; }
+        // Desempate: si el usuario DECLARADO también tiene este teléfono, gana él. Antes ganaba el
+        // primero de la lista, así que tras reasignar un teléfono de un usuario a otro el cotejo
+        // seguía nombrando al dueño viejo (el índice local conserva las dos fichas).
+        if(tn===tD){
+          const esDeclarado = _altaNormU(c.usuario)===uD;
+          if(!out.telefono.exacto || esDeclarado) out.telefono.exacto=Object.assign({_tel:tn}, c);
+          return;
+        }
         // mismos últimos 8 dígitos (prefijo/0/15 distinto) o ≤2 dígitos cambiados
         const cola = tn.length>=8 && tD.length>=8 && tn.slice(-8)===tD.slice(-8);
         const d=_altaDist(tn,tD);
@@ -7790,6 +7806,8 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     try{ if(window._nexoTrigger) window._nexoTrigger(); }catch(_e){}
     // Modal de RESULTADO (antes solo había feedback cuando fallaba): simple, para ver y agendar.
     try{ _altaModalResultado(usuario, telefono); }catch(_e){}
+    // Repintar el cotejo con el vínculo YA guardado (si no, se queda en "NO COINCIDEN" por caché).
+    try{ window._altaCotejoRefrescar && window._altaCotejoRefrescar(); }catch(_e){}
     // Aviso al usuario por el chat del portal con su info de ingreso + botón "Ingresar" (background).
     try{
       if(typeof window.nodoEnviarMensajePortal==="function"){
@@ -8025,6 +8043,7 @@ window._altaCotejoConsulta = async function(ticket){
   if(!uDecl && _altaNormTel(tDecl).length<6){ cont.innerHTML=''; return; }
   // Cache por ticket: no re-cotejar en cada repintado del chat (que ocurre en cada poll)
   const key=_altaNormU(uDecl)+'|'+_altaNormTel(tDecl);
+  window.__altaCotejoTicket=ticket;   // para poder re-cotejar tras vincular (ver _altaCotejoRefrescar)
   if(cont.dataset.key===key) return;
   cont.dataset.key=key;
   cont.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando usuario y teléfono en la base…</div>';
@@ -8032,6 +8051,18 @@ window._altaCotejoConsulta = async function(ticket){
   if(cont.dataset.key!==key) return;  // llegó otro ticket mientras tanto
   const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular', 'declaró el cliente');
   cont.innerHTML='<div style="margin-top:6px">'+out.html+'</div>';
+};
+// Re-cotejar DESPUÉS de vincular. El cotejo se cachea por usuario|teléfono declarados, y esos dos
+// datos NO cambian al vincular: sin invalidar la caché la tarjeta se quedaba clavada en
+// "🚨 NO COINCIDEN" para siempre, aunque el vínculo ya estuviera guardado y el cliente ya hubiera
+// recibido el "Ya validamos tu cuenta". Parecía que no se guardaba nada; se guardaba, no se repintaba.
+window._altaCotejoRefrescar=function(){
+  try{
+    const cont=document.getElementById('altaCotejoConsulta');
+    if(cont) cont.dataset.key='';
+    const t=window.__altaCotejoTicket;
+    if(t && window._altaCotejoConsulta) window._altaCotejoConsulta(t);
+  }catch(_e){}
 };
 // Chip del cotejo de la consulta → abre "Validar y vincular" ya cargado con esos datos.
 window._altaAbrirVincular=function(usuario, telefono){ try{ abrirModalVincular(usuario, telefono, true, true); }catch(_e){} };
@@ -11281,7 +11312,14 @@ async function verificarSaldoRetiroOcioso(){
       // Retiro YA en curso / parcial en progreso → lo maneja el operador; NO re-escanear
       // (si no, mientras un parcial queda EN_PROCESO el scanner re-entraba al agente y lo trababa).
       if(/EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase())) return false;
-      try{ const m=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{}; if(m.retiro_parcial && Number(m.retiro_parcial.pagado||0)>0) return false; }catch(_e){}
+      // Mismo detalle que en _retiroParcialInfo: el progreso puede venir anidado (retiro_parcial)
+      // o plano (monto_pagado, que es lo que escribe _rv2Finalizar). Si solo mirábamos el anidado,
+      // el scanner volvía a entrarle a un retiro que YA tenía un parcial pago.
+      try{
+        const m=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{};
+        const pag = Number((m.retiro_parcial&&m.retiro_parcial.pagado) || m.monto_pagado || 0);
+        if(pag>0) return false;
+      }catch(_e){}
       return true;
     });
     const objetivo = pend.find(function(s){
