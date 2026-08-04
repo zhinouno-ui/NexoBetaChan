@@ -11998,8 +11998,10 @@ if(window.ctrlElectron){
       // del CRM y lo que se le manda a Nexo.
       TELEFONO: s.telefono || meta.telefono || "",
       PC: s.pc_codigo || s.PC || "",
-      MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),
-      MONTO_REAL: Number(s.monto || s.MONTO || 0),
+      MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),   // lo que tecleó el cliente, no se pisa
+      // MONTO_REAL = lo que realmente se va a pagar. Si el operador corrigió un cero de más
+      // (_retiroAjustarASaldo), ese monto manda: de acá lo toman la tarjeta, el modal y el historial.
+      MONTO_REAL: Number(meta.monto_corregido != null ? meta.monto_corregido : (s.monto || s.MONTO || 0)),
       ESTADO: s.estado || s.ESTADO || "",
       BILLETERA_NOMBRE: meta.billetera_nombre || meta.billetera || meta.destino || "",
       ID_BILLETERA: meta.billetera_id || "",
@@ -12520,6 +12522,24 @@ window._retiroAjustarASaldo = function(id){
     ? ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nLe sobra'+(sug.ceros>1?'n':'')+' '+sug.ceros+' cero'+(sug.ceros>1?'s':'')+': quiso retirar '+money(sug.monto)+'.\n\n¿Abrir el retiro por '+money(sug.monto)+'?')
     : ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nNo es cuestión de ceros.\n\n¿Abrir el retiro por todo lo que tiene ('+money(sug.monto)+')?');
   if(!confirm(txt)) return;
+  // El monto corregido se escribe EN LA SOLICITUD, que es el único lugar donde tiene que cambiar:
+  // de ahí sale MONTO_REAL y con eso quedan bien la tarjeta del pendiente, el modal, el historial
+  // y lo que se le avisa al cliente. Antes el ajuste vivía solo dentro del modal (st.objetivo), así
+  // que la solicitud seguía pidiendo los $200.000 que el cliente tecleó con el cero de más.
+  try{
+    const S=(window.V154P&&V154P.solicitudes)||[];
+    const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    if(s){
+      s.MONTO_REAL = sug.monto;                       // en memoria, para que repinte ya
+      if(s.metadata) s.metadata.monto_corregido = sug.monto;
+      window.actualizarSolicitudPortal(String(id), String(s.ESTADO||'PENDIENTE'), {
+        monto_corregido: sug.monto,
+        monto_declarado_original: declarado,
+        motivo_correccion: sug.motivo,                 // 'ceros' | 'todo'
+        operador: (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+      }).catch(function(){});
+    }
+  }catch(_e){}
   if(typeof abrirModalRetiroV2!=='function'){ toast('Modal de retiro no disponible.','red'); return; }
   abrirModalRetiroV2(id);
   // Cuando el modal terminó de montar, fijamos el objetivo al monto sugerido.
