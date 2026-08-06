@@ -12501,7 +12501,6 @@ function _rv2TotalSel(){
 // `falta` daba 0 (JS trata 0 como falsy) → tildabas una billetera de más y te "pasabas" solo.
 window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= window._montoRedondo?window._montoRedondo(Math.min(Number(b&&b.SALDO||0), falta)):Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
-window._rv2SetParcialOk = function(v){ if(window._retiroV2) window._retiroV2.parcialAceptado = !!v; };
 // Fija el retiro al SALDO REAL del usuario (declaró de más). Al mover el objetivo, `montoTotal`
 // del cierre pasa a ser ese monto → el retiro cierra COMPLETO, sin dejar un parcial fantasma por
 // la diferencia mal declarada. Re-sugiere las billeteras para el monto nuevo.
@@ -12577,15 +12576,35 @@ function _rv2ActualizarTotal(){
   const ok = tot>0 && !paso;
   let html = 'Seleccionado: <b style="color:'+(ok?'#22c55e':'#f87171')+'">'+money(tot)+'</b> / '+money(st.objetivo)
     + (parcial?' · <span style="color:#f5c518">parcial</span>':(paso?' · <span style="color:#f87171">¡te pasaste!</span>':' ✓'));
-  // Retiro PARCIAL → tilde de aceptación (sin él, no deja aprobar). El tilde no pregunta "¿es
-  // parcial?" (obvio, ya lo estás armando así) — confirma que quedan $X SIN pagar y la solicitud
-  // sigue abierta para el resto (no se cierra como terminada).
+  // Sin tilde de "confirmo parcial": el operador YA eligió los montos, pedirle que además tilde
+  // que quiso hacer lo que acaba de hacer es una confirmación de trámite — de las que se tildan
+  // sin leer. En su lugar se dice en texto qué va a pasar, y el botón de abajo lo repite.
   if(parcial){
-    html += '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700;cursor:pointer">'
-      + '<input type="checkbox" '+(st.parcialAceptado?'checked':'')+' onchange="_rv2SetParcialOk(this.checked)" style="width:16px;height:16px">'
-      + 'Sí, transfiero solo esto ahora — quedan '+money(st.objetivo-tot)+' PENDIENTES (la solicitud sigue abierta para pagarlos después)</label>';
+    html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700">'
+      + '↩ Quedan '+money(st.objetivo-tot)+' sin pagar · la solicitud sigue abierta para el resto</div>';
   }
   el.innerHTML = html;
+  _rv2ActualizarBotonAprobar();
+  try{
+    const nSel=Object.keys(st.sel||{}).filter(function(k){ return st.sel[k] && Number(st.montos[k])>0; }).length;
+    const modo=document.getElementById('rv2ModoCada');
+    if(modo) modo.style.display = nSel>1 ? 'block' : 'none';
+  }catch(_e){}
+}
+// El botón dice exactamente lo que va a hacer. Antes decía siempre "Aprobar" y la diferencia
+// entre pagar todo y pagar una parte quedaba escondida en un tilde.
+function _rv2ActualizarBotonAprobar(){
+  const st=window._retiroV2; if(!st) return;
+  const btn=document.getElementById('rv2BtnAprobar'); if(!btn) return;
+  const tot=_rv2TotalSel();
+  const parcial = tot < st.objetivo-0.5;
+  const paso    = tot > st.objetivo+0.5;
+  if(tot<=0){ btn.textContent='Elegí de qué billetera pagar'; btn.disabled=true; btn.style.opacity=.55; return; }
+  if(paso){ btn.textContent='Te pasaste de '+money(st.objetivo); btn.disabled=true; btn.style.opacity=.55; return; }
+  btn.disabled=false; btn.style.opacity=1;
+  btn.textContent = parcial
+    ? ('Pagar '+money(tot)+' ahora · quedan '+money(st.objetivo-tot))
+    : ('Pagar el retiro completo · '+money(tot));
 }
 
 function _rv2Render(){
@@ -12633,10 +12652,12 @@ function _rv2Render(){
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
-    + '<label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" id="rv2ConfCada" style="width:15px;height:15px"> Ir transfiriendo billetera por billetera (tildá esto si vas a hacer las transferencias una por una, no todas de un saque)</label>'
+    // Modo "una por una": es una forma de trabajar, no una confirmación, y sólo tiene sentido si
+    // vas a pagar desde más de una billetera. Con una sola no se muestra (no cambia nada).
+    + '<div id="rv2ModoCada" style="display:none"><label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" id="rv2ConfCada" style="width:15px;height:15px"> Voy a transferir de a una billetera por vez (confirmo cada transferencia)</label></div>'
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">'
     +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9" onclick="cerrarRetiroV2()">Cancelar</button>'
-    +   '<button class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'
+    +   '<button id="rv2BtnAprobar" class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'
     + '</div></div>';
   el.style.display='block';
   _rv2ActualizarTotal();
@@ -12690,14 +12711,9 @@ window._rv2Aprobar = async function(){
   st.obs = (document.getElementById('rv2Obs')?document.getElementById('rv2Obs').value:'').trim();
   st.pagar = seleccionadas; st.totalPagar = total;
 
-  // PARCIAL vs COMPLETO: si es parcial exige el TILDE "Confirmo retiro parcial" (sin popup).
-  // El completo va directo (el botón Aprobar ya es la confirmación).
+  // El botón ya dice "Pagar $X ahora · quedan $Y": esa ES la confirmación. Antes había además un
+  // tilde "confirmo retiro parcial" que sólo repetía lo que el operador acababa de armar a mano.
   const esParcial = total < st.objetivo - 0.5;
-  if(esParcial && !st.parcialAceptado){
-    toast('Tildá "Confirmo retiro PARCIAL" para continuar (o completá el monto).','yellow');
-    try{ const t=document.getElementById('rv2Total'); if(t){ t.style.outline='2px solid #f5c518'; setTimeout(function(){ t.style.outline=''; },1500); t.scrollIntoView({block:'center'}); } }catch(_e){}
-    return;
-  }
   const confirmarCada = !!(document.getElementById('rv2ConfCada') && document.getElementById('rv2ConfCada').checked);
 
   // 1) Extraer las fichas del usuario (Agentes) — con lock. Se libera enseguida.
@@ -12785,7 +12801,9 @@ window._rv2Finalizar = async function(){
     await registrarEnHistorial({
       usuario:st.usuario, tipo:'RETIRO', monto:total,
       billetera_id: st.pagar[0]?st.pagar[0].id:null, billetera_nombre: listaBil,
-      origen:'LANDING', estado:'OK',
+      // El historial mostraba un RETIRO común de $X y no se veía que era una CUOTA de un retiro
+      // más grande: había que leer las notas. El origen lo deja a la vista en la columna.
+      origen: completo?'LANDING':'LANDING·PARCIAL', estado:'OK',
       notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+money(total)+' desde: '+listaBil+(completo?'':(' · restan '+money(restante)))+(st.obs?(' · Obs: '+st.obs):''),
       saldo_post: st.saldoPost, solicitud_id: st.id
     });
