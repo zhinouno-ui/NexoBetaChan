@@ -4839,13 +4839,28 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
   // buscamos en la solicitud del portal (V154P) por usuario + tipo RETIRO → SIEMPRE aparece.
   let cbuVal = String(mov.cbu||mov.destino||'').trim();
   let titularDecl = String(mov.titular||'').trim();
+  let cbuDudoso = false;   // true = el CBU no salió del retiro exacto, sino del más reciente
   if (esRetiro && (!cbuVal || !titularDecl)) {
     try {
       const _sols = (window.V154P && window.V154P.solicitudes) || [];
-      const _sol = _sols.find(function(s){
-        return String(s.USUARIO||s.USUARIO_JUGADOR||'').toLowerCase()===String(usuario).toLowerCase()
-          && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
-      });
+      const _sid = String(mov.solicitud_id||mov.SOLICITUD_ID||mov.solicitudId||mov.ID_SOLICITUD||'').trim();
+      let _sol = null;
+      // 1) Por ID de solicitud: es el único cruce que no se puede equivocar de retiro.
+      if(_sid) _sol = _sols.find(function(s){ return String(s.ID||s.SOLICITUD_ID||'')===_sid; }) || null;
+      if(!_sol){
+        // 2) Sin ID hay que adivinar. Antes esto era un .find() por usuario+RETIRO a secas: con
+        //    DOS retiros del mismo usuario en la lista agarraba el primero del array — el VIEJO —
+        //    y mostraba (y copiaba) el CBU de un retiro anterior. O sea, pagarle al CBU equivocado.
+        //    Ahora se toma el más NUEVO y, si había más de uno, queda marcado como a verificar.
+        const _cands = _sols.filter(function(s){
+          return String(s.USUARIO||s.USUARIO_JUGADOR||'').toLowerCase()===String(usuario).toLowerCase()
+            && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
+        }).sort(function(a,b){
+          return new Date(b.FECHA_CREACION||b.FECHA||0) - new Date(a.FECHA_CREACION||a.FECHA||0);
+        });
+        _sol = _cands[0] || null;
+        if(_cands.length>1) cbuDudoso = true;
+      }
       if (_sol) {
         if (!cbuVal)      cbuVal      = String(_sol.DESTINO||_sol.CBU||_sol.RETIRO_ALIAS_CBU||_sol.ALIAS_CBU||'').trim();
         if (!titularDecl) titularDecl = String(_sol.TITULAR||_sol.RETIRO_TITULAR||'').trim();
@@ -4853,7 +4868,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
     } catch(_e){}
   }
   const cbuHtml = (esRetiro && cbuVal)
-    ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
+    ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba('+(cbuDudoso?'245,197,24,.6':'251,146,60,.45')+');border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:'+(cbuDudoso?'#f5c518':'#8b949e')+'">'+(cbuDudoso?'⚠ CBU del retiro MÁS RECIENTE · verificalo contra la solicitud':'CBU / Alias destino · tocá para copiar')+'</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
     : '';
   // Cruce antifraude con la base local de jugadores: ¿destino conocido? ¿titular habitual?
   let cbuWarnHtml = '';
