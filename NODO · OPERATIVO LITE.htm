@@ -5091,15 +5091,44 @@ window._retiroParcialSigueAbierto = function(s){
   }catch(_e){ return false; }
 };
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
+// Copiar el CBU/alias. El bug que tenía: navigator.clipboard.writeText() falla en Electron sobre
+// file:// (no es contexto seguro), el .catch() se comía el error EN SILENCIO, y aun así pintaba
+// el ✅ y toasteaba "Copiado". El operador pegaba y no había nada — o peor, quedaba lo anterior
+// del portapapeles, que puede ser el alias de OTRO retiro. Ahora: si el modo moderno falla, cae
+// al textarea + execCommand, y sólo se canta "copiado" cuando de verdad se copió.
 function portalCopiarCbu(btn){
+  const val = (btn && btn.getAttribute('data-valor')) || '';
+  if(!val){ if(typeof toast==='function') toast('No hay alias/CBU para copiar','red'); return; }
+  const ok = function(){
+    try{
+      const ico = btn.querySelector('.pcopy-ico');
+      if(ico){ const prev=ico.textContent; ico.textContent='✅'; setTimeout(function(){ ico.textContent=prev; }, 1200); }
+    }catch(_e){}
+    if(typeof toast==='function') toast('Copiado: '+val,'green');
+  };
+  const fallo = function(){
+    // El alias va en el aviso: si no se pudo copiar, al menos se puede leer y tipear.
+    if(typeof toast==='function') toast('No se pudo copiar — copialo a mano: '+val,'red');
+  };
+  const porTextarea = function(){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=val;
+      // Fuera de pantalla pero SELECCIONABLE: un textarea display:none no se puede copiar.
+      ta.setAttribute('readonly','');
+      ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;padding:0;border:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select(); ta.setSelectionRange(0, val.length);
+      let r=false; try{ r=document.execCommand('copy'); }catch(_e){}
+      document.body.removeChild(ta);
+      r ? ok() : fallo();
+    }catch(_e){ fallo(); }
+  };
   try{
-    const val = (btn && btn.getAttribute('data-valor')) || '';
-    if(!val) return;
-    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).catch(function(){}); }
-    else { const ta=document.createElement('textarea'); ta.value=val; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_e){} document.body.removeChild(ta); }
-    const ico = btn.querySelector('.pcopy-ico'); if(ico){ const prev=ico.textContent; ico.textContent='✅'; setTimeout(function(){ ico.textContent=prev; }, 1200); }
-    if(typeof toast==='function') toast('Copiado','green');
-  }catch(_e){}
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(val).then(ok).catch(porTextarea);
+    } else porTextarea();
+  }catch(_e){ porTextarea(); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
