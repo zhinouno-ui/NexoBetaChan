@@ -4413,6 +4413,42 @@ function _jugStoreSave(map){
 }
 // Normaliza un CBU/CVU/alias para comparar (case/espacios/puntos no cambian el destino).
 function _jugNormCbu(v){ return String(v||'').toLowerCase().replace(/[\s.\-]/g,'').trim(); }
+
+// ── ¿Este dato es NUESTRO? ────────────────────────────────────────────────────────────────
+// Hay clientes que declaran como "titular que transfiere" el titular de NUESTRA propia billetera
+// (ej: "Juan Carlos Matrelo", "Pablo Leonel Giordano"), que es justo el nombre que el portal les
+// muestra al pedirles la transferencia. Copiarlo y pegarlo es gratis, y el panel se lo guardaba
+// en la ficha como si fuera un titular real del jugador — le ensuciaba la identidad y de paso le
+// daba una coartada. Nada de esto va hardcodeado: sale de las billeteras vivas, que son los MISMOS
+// datos que se le mandan al portal. Si mañana cambia una billetera, esto se entera solo.
+function _normNombre(v){
+  return String(v||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+window.esDatoPropioBilletera = function(valor){
+  const v = _normNombre(valor);
+  const vCbu = _jugNormCbu(valor);
+  if(v.length<4 && vCbu.length<6) return null;    // muy corto para afirmar nada
+  let hit = null;
+  try{
+    (window.billeteras||[]).forEach(function(b){
+      if(hit) return;
+      const campos = [
+        ['titular', b.TITULAR],
+        ['nombre',  b.NOMBRE_VISIBLE || b.NOMBRE_CHUNIOR || b.BILLETERA_NOMBRE],
+        ['alias',   b.CBU_ALIAS || b.CBU_CVU]
+      ];
+      campos.forEach(function(par){
+        if(hit || !par[1]) return;
+        const propioN = _normNombre(par[1]), propioC = _jugNormCbu(par[1]);
+        if((propioN.length>=4 && propioN===v) || (propioC.length>=6 && propioC===vCbu)){
+          hit = { billetera: String(b.NOMBRE_VISIBLE||b.NOMBRE_CHUNIOR||'—'), campo: par[0], valor: String(par[1]) };
+        }
+      });
+    });
+  }catch(_e){}
+  return hit;
+};
 window.jugadorRegistrarDato = function(usuario, dato){
   const u = String(usuario||'').toLowerCase().trim();
   if(!u || !dato) return;
@@ -4423,6 +4459,20 @@ window.jugadorRegistrarDato = function(usuario, dato){
     if(dato.telefono){
       const t = String(dato.telefono).replace(/\D/g,'');
       if(t){ const p = j.telefonos[t]||{veces:0,primera:fecha}; p.veces++; p.ultima=fecha; if(dato.verificado) p.verificado=true; j.telefonos[t]=p; }
+    }
+    // No guardamos en la ficha del jugador datos que son NUESTROS (titular/alias de una billetera
+    // propia). Antes entraban como un titular más y la identidad quedaba con "Juan Carlos Matrelo
+    // ×4" colgando de un cliente cualquiera.
+    const _propioTit = dato.titular ? window.esDatoPropioBilletera(dato.titular) : null;
+    const _propioCbu = dato.cbu     ? window.esDatoPropioBilletera(dato.cbu)     : null;
+    if(_propioTit || _propioCbu){
+      const p = _propioTit || _propioCbu;
+      try{ console.warn('[jugadores] '+u+' declaró un dato NUESTRO ('+p.campo+' de '+p.billetera+'): "'+p.valor+'" — no se registra en su ficha'); }catch(_e){}
+      j.datosPropios = Array.isArray(j.datosPropios) ? j.datosPropios : [];
+      j.datosPropios.push({ campo:p.campo, billetera:p.billetera, valor:String(dato.titular||dato.cbu||''), fecha:fecha });
+      if(j.datosPropios.length>20) j.datosPropios = j.datosPropios.slice(-20);
+      if(_propioTit) dato = Object.assign({}, dato, { titular:'' });
+      if(_propioCbu) dato = Object.assign({}, dato, { cbu:'' });
     }
     const cbuN = _jugNormCbu(dato.cbu);
     if(cbuN){
