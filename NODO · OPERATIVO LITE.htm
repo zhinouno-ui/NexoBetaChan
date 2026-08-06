@@ -12589,6 +12589,9 @@ function _rv2ActualizarTotal(){
     const nSel=Object.keys(st.sel||{}).filter(function(k){ return st.sel[k] && Number(st.montos[k])>0; }).length;
     const modo=document.getElementById('rv2ModoCada');
     if(modo) modo.style.display = nSel>1 ? 'block' : 'none';
+    // El veredicto y el resumen de arriba tienen que seguir a lo que se toca abajo.
+    const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml();
+    const r=document.getElementById('rv2Resumen');  if(r) r.innerHTML=_rv2ResumenPago();
   }catch(_e){}
 }
 // El botón dice exactamente lo que va a hacer. Antes decía siempre "Aprobar" y la diferencia
@@ -12607,6 +12610,65 @@ function _rv2ActualizarBotonAprobar(){
     : ('Pagar el retiro completo · '+money(tot));
 }
 
+// ── Veredicto: lo PRIMERO que se lee, antes de cualquier planilla ──────────────────────────
+// El modal mostraba nueve bloques del mismo peso y el dato que decide todo — si el usuario tiene
+// las fichas — era un subtítulo gris que además cargaba tarde. Acá se resuelve en una línea.
+function _rv2Veredicto(){
+  const st=window._retiroV2; if(!st) return null;
+  const tot=_rv2TotalSel(), falta=Math.max(0, st.objetivo-tot);
+  if(st.saldoReal==null && st.saldoFallo)
+    return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
+      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
+                                     : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
+  if(st.saldoReal==null)
+    return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
+  if(st.saldoReal<=0.5)
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'NO TIENE FICHAS', det:'El saldo en Agentes es '+money(0)+'. No hay nada para retirar.'};
+  if(st.saldoReal < st.objetivo-0.5){
+    const sug = window._retiroMontoSugerido ? window._retiroMontoSugerido(st.objetivo, st.saldoReal) : null;
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'NO TIENE LAS FICHAS',
+      det:'Pidió '+money(st.objetivo)+' y tiene '+money(st.saldoReal)+'.', sug:sug};
+  }
+  if(falta<=0.5)
+    return {n:'ok', c:'#22c55e', ico:'✅',
+      tit: st.yaPagado>0 ? 'SE PUEDE CERRAR EL RETIRO' : 'SE PUEDE PAGAR COMPLETO',
+      det: st.yaPagado>0 ? ('Pagando '+money(tot)+' queda saldado. Tiene '+money(st.saldoReal)+' en fichas.')
+                         : ('Tiene '+money(st.saldoReal)+' en fichas.')};
+  return {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LAS BILLETERAS NO CUBREN EL TOTAL',
+    det:'Se puede pagar '+money(tot)+' ahora · quedan '+money(falta)+' para después.'};
+}
+function _rv2VeredictoHtml(){
+  const v=_rv2Veredicto(); if(!v) return '';
+  const st=window._retiroV2;
+  return '<div style="border-radius:12px;padding:12px 14px;border:1.5px solid '+v.c+'55;background:'+v.c+'12">'
+    + '<div style="font-size:14px;font-weight:900;color:'+v.c+';letter-spacing:.02em">'+v.ico+' '+v.tit+'</div>'
+    + '<div style="font-size:13px;color:#e6edf3;margin-top:3px">'+v.det+'</div>'
+    + (v.sug ? '<button class="mini-btn" style="margin-top:8px;background:#ea580c;color:#fff;font-weight:800;font-size:12px" onclick="_rv2AjustarASaldo('+v.sug.monto+')">'
+        + (v.sug.motivo==='ceros' ? ('✔ Le sobró un cero — pagar '+money(v.sug.monto)) : ('✔ Pagarle todo lo que tiene · '+money(v.sug.monto)))
+        + '</button>' : '')
+    + (st.yaPagado>0 ? '<div style="margin-top:8px;padding-top:7px;border-top:1px solid '+v.c+'33;font-size:12px;color:#f5c518;font-weight:700">'
+        + '🔄 Segunda cuota · ya le transferiste '+money(st.yaPagado)+(st._metaTotal!=null?(' de '+money(st._metaTotal)):'')
+        + ' — abajo va lo que FALTA, no el total</div>' : '')
+    + '</div>';
+}
+// Resumen de UNA línea de con qué se paga. El detalle (elegir/editar) va plegado.
+function _rv2ResumenPago(){
+  const st=window._retiroV2; if(!st) return '';
+  const sel=_rv2BilsUsables().filter(function(b){ return st.sel[String(b.ID_BILLETERA)] && Number(st.montos[String(b.ID_BILLETERA)])>0; });
+  if(!sel.length) return '<div class="small" style="color:#f87171;margin-top:2px">Ninguna billetera elegida — abrí "cambiar" acá abajo.</div>';
+  return sel.map(function(b){
+    return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0">'
+      + '<span style="color:#c9d1d9">💳 '+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
+      + '<b style="color:#e6edf3">'+money(Number(st.montos[String(b.ID_BILLETERA)])||0)+'</b></div>';
+  }).join('');
+}
+window._rv2ToggleDetalle=function(){
+  const d=document.getElementById('rv2Detalle'), t=document.getElementById('rv2DetalleTog');
+  if(!d) return;
+  const abierto = d.style.display!=='none';
+  d.style.display = abierto ? 'none' : 'block';
+  if(t) t.textContent = abierto ? '▸ Cambiar billeteras, monto o pagar sólo una parte' : '▾ Ocultar el detalle';
+};
 function _rv2Render(){
   const st = window._retiroV2; if(!st) return;
   const el = _rv2Modal();
@@ -12630,69 +12692,56 @@ function _rv2Render(){
     +     '<div class="small" style="color:#8b949e">#'+escapeHtml(String(st.id))+' · '+escapeHtml(st.usuario)+'</div></div>'
     +   '<button class="mini-btn" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:7px 10px" onclick="cerrarRetiroV2()">Cerrar</button>'
     + '</div>'
-    // Banner GRANDE si ya se pagó una parte antes: antes era un subtítulo chico y gris que
-    // pasaba desapercibido ("no se entiende, no cambia el monto") — ahora no se puede no ver.
-    + (st.yaPagado>0
-      ? '<div style="border-radius:11px;padding:10px 12px;margin-bottom:10px;background:rgba(245,197,24,.1);border:1.5px solid rgba(245,197,24,.5);text-align:center">'
-        +   '<div style="font-size:12px;font-weight:900;color:#f5c518;text-transform:uppercase;letter-spacing:.03em">🔄 Retiro parcial en curso</div>'
-        +   '<div style="font-size:13px;color:#e6edf3;margin-top:3px">Ya le transferiste <b style="color:#22c55e">'+money(st.yaPagado)+'</b>'+(st._metaTotal!=null?(' de '+money(st._metaTotal)):'')+' · el monto de abajo es lo que <b>FALTA</b>, no el total original</div>'
-        + '</div>'
-      : '')
-    + '<div style="border-radius:11px;padding:11px;text-align:center;border:1px solid rgba(251,146,60,.35);background:rgba(251,146,60,.06)">'
+    // 1) VEREDICTO
+    + '<div id="rv2Veredicto">'+_rv2VeredictoHtml()+'</div>'
+    // 2) A QUIÉN y CON QUÉ se paga — sin pedir nada, ya viene resuelto
+    + '<div style="margin-top:10px;border-radius:11px;padding:11px 12px;border:1px solid #30363d;background:#12161d">'
     +   '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e">Transferir a</div>'
-    +   '<div style="font-size:22px;font-weight:900;color:#f0f6fc">'+escapeHtml(st.titular||st.usuario)+'</div>'
-    +   '<div id="rv2SaldoReal" class="small" style="color:#8b949e;margin-top:2px">💰 leyendo saldo real…</div>'
+    +   '<div style="font-size:19px;font-weight:900;color:#f0f6fc;line-height:1.2">'+escapeHtml(st.titular||st.usuario)+'</div>'
+    +   cbuHtml
+    +   '<div style="margin-top:9px;padding-top:8px;border-top:1px solid #262d3a">'
+    +     '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e;margin-bottom:2px">Sale de</div>'
+    +     '<div id="rv2Resumen">'+_rv2ResumenPago()+'</div>'
+    +   '</div>'
     + '</div>'
-    + cbuHtml
-    + '<div style="margin-top:12px"><label style="font-weight:800">MONTO REAL A RETIRAR</label>'
-    +   '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'
-    + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">Pagar con estas billeteras <span class="small" style="color:#8b949e;font-weight:400">(tildá, editá el monto o ✕)</span></div>'
-    + filasBil
-    + (function(){ var tot=(billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0)>0; }).length; var oc=tot-bils.length; return oc>0?('<div class="small" style="color:#8b949e;margin-top:5px;text-align:center">+'+oc+' billetera(s) chica(s) ocultas (no aportan al total)</div>'):''; })()
-    + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
-    + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
-    +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
+    // 3) UNA acción: el botón dice exactamente lo que va a pasar
+    + '<div style="margin-top:12px"><button id="rv2BtnAprobar" class="mini-btn" style="width:100%;background:#ea580c;color:#fff;font-weight:900;font-size:14px;padding:12px" onclick="_rv2Aprobar()">Aprobar y transferir</button></div>'
+    // 4) Todo lo demás, PLEGADO. El operador sólo lo abre si quiere cambiar algo.
+    + '<div style="margin-top:10px"><button id="rv2DetalleTog" type="button" onclick="_rv2ToggleDetalle()" style="background:transparent;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:4px 0;text-align:left;width:100%">▸ Cambiar billeteras, monto o pagar sólo una parte</button></div>'
+    + '<div id="rv2Detalle" style="display:none;border-top:1px solid #262d3a;margin-top:4px;padding-top:10px">'
+    +   '<label style="font-weight:800;font-size:12px">Monto a retirar</label>'
+    +   '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:40px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:18px;padding:0 12px;margin-top:4px">'
+    +   '<div style="margin-top:10px;font-weight:800;color:#c9d1d9;font-size:12px">Billeteras <span class="small" style="color:#8b949e;font-weight:400">(tildá, editá el monto o ✕)</span></div>'
+    +   filasBil
+    +   (function(){ var tot=(billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0)>0; }).length; var oc=tot-bils.length; return oc>0?('<div class="small" style="color:#8b949e;margin-top:5px;text-align:center">+'+oc+' billetera(s) chica(s) ocultas (no aportan al total)</div>'):''; })()
+    +   '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
+    +   '<div style="margin-top:10px"><label style="font-size:12px">💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
+    +     '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
     // Modo "una por una": es una forma de trabajar, no una confirmación, y sólo tiene sentido si
     // vas a pagar desde más de una billetera. Con una sola no se muestra (no cambia nada).
-    + '<div id="rv2ModoCada" style="display:none"><label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" id="rv2ConfCada" style="width:15px;height:15px"> Voy a transferir de a una billetera por vez (confirmo cada transferencia)</label></div>'
-    + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">'
-    +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9" onclick="cerrarRetiroV2()">Cancelar</button>'
-    +   '<button id="rv2BtnAprobar" class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'
+    +   '<div id="rv2ModoCada" style="display:none"><label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" id="rv2ConfCada" style="width:15px;height:15px"> Voy a transferir de a una billetera por vez (confirmo cada transferencia)</label></div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:flex-end;margin-top:10px">'
+    +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#8b949e;font-size:12px" onclick="cerrarRetiroV2()">Cancelar</button>'
     + '</div></div>';
   el.style.display='block';
   _rv2ActualizarTotal();
 }
 
+// Sólo LEE el saldo y refresca el veredicto. Antes armaba acá adentro su propio cartel con su
+// propio botón de ajuste, en paralelo al de la tarjeta del pendiente: dos lugares distintos
+// diciendo lo mismo con textos distintos. Ahora hay un solo veredicto y él decide qué mostrar.
 async function _rv2LeerSaldo(){
   const st = window._retiroV2; if(!st || !window.ctrlElectron) return;
-  if(!_drexGlobalLock('rv2-saldo')){ const e=document.getElementById('rv2SaldoReal'); if(e) e.innerHTML='⏸ hay una operación en curso · saldo no leído'; return; }
+  const pintar=function(){ try{ const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml(); _rv2ActualizarBotonAprobar(); }catch(_e){} };
+  if(!_drexGlobalLock('rv2-saldo')){ st.saldoFallo='ocupado'; pintar(); return; }
   _wdLock();
   try{
     const b = await callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    const e=document.getElementById('rv2SaldoReal');
-    if(b && b.exists && typeof b.balance?.value==='number'){
-      st.saldoReal = b.balance.value;
-      if(e){
-        if(st.saldoReal<=0.5) e.innerHTML='<b style="color:#f87171">⚠ Sin fichas para retirar (saldo '+escapeHtml((b.balance.raw||money(0)).trim())+')</b>';
-        else {
-          const _alcanza = st.saldoReal+0.5>=st.objetivo;
-          e.innerHTML='💰 Saldo real: <b style="color:'+(_alcanza?'#22c55e':'#f5c518')+'">'+escapeHtml((b.balance.raw||money(st.saldoReal)).trim())+'</b>';
-          // AUTO-AJUSTE: el usuario declaró MÁS de lo que tiene (típico: un cero de más). Si igual
-          // tiene fichas retirables (≥ RV2_MIN_RETIRABLE), ofrecemos fijar el retiro a lo que HAY:
-          // se respeta su intención de retirar, y como el objetivo pasa a ser el total real, el
-          // retiro cierra COMPLETO (no queda un "parcial" fantasma por la diferencia declarada).
-          const _sug = !_alcanza ? window._retiroMontoSugerido(st.objetivo, st.saldoReal) : null;
-          if(_sug){
-            e.innerHTML += '<div style="margin-top:6px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.1);border:1px solid rgba(245,197,24,.45);text-align:left">'
-              + '<div style="font-size:11px;color:#fde68a;font-weight:700">⚠ Declaró '+money(st.objetivo)+' y tiene '+money(st.saldoReal)
-              +   (_sug.motivo==='ceros' ? (' — le sobra'+(_sug.ceros>1?'n':'')+' '+_sug.ceros+' cero'+(_sug.ceros>1?'s':'')+': quiso '+money(_sug.monto)) : ' — no es cuestión de ceros')+'</div>'
-              + '<button type="button" class="mini-btn" style="margin-top:5px;background:#ea580c;color:#fff;font-weight:800;font-size:11px" onclick="_rv2AjustarASaldo('+_sug.monto+')">✔ Retirar '+money(_sug.monto)+(_sug.motivo==='todo'?' (todo lo que tiene)':'')+'</button></div>';
-          }
-        }
-      }
-    } else if(e){ e.innerHTML='No se pudo leer el saldo del usuario.'; }
-  }catch(_e){}
-  finally{ _wdUnlock(); _drexGlobalUnlock(); }
+    if(b && b.exists && typeof b.balance?.value==='number') st.saldoReal = b.balance.value;
+    else st.saldoFallo='ilegible';
+  }catch(_e){ st.saldoFallo='ilegible'; }
+  finally{ _wdUnlock(); _drexGlobalUnlock(); pintar(); }
 }
 
 // APROBAR: valida, extrae las fichas UPFRONT (para que no se las jueguen) y pasa a
