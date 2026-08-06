@@ -11151,6 +11151,30 @@ async function _anularMovimientoChunior(tipoUrl, movId){
   return conf || { ok:false, error:'Sin respuesta' };
 }
 async function anularPropinaChunior(movId){ return _anularMovimientoChunior('propina', movId); }
+// Deshacer = abrir el movimiento por su N° y dejarlo en 0,1. No se anota una contrapartida:
+// Chunior deja EDITAR el movimiento, así que el original queda neutralizado y no aparece una
+// segunda fila fantasma. El segmento de URL es el mismo que usa el /add/ de cada tipo.
+async function anularTransferenciaChunior(movId){ return _anularMovimientoChunior('movimientointerno', movId); }
+async function anularDepoSinReclamarChunior(movId){ return _anularMovimientoChunior('depositossinreclamar', movId); }
+window.anularTransferenciaChunior = anularTransferenciaChunior;
+window.anularDepoSinReclamarChunior = anularDepoSinReclamarChunior;
+// Un solo punto de entrada para el botón Deshacer del historial.
+window._CHUNIOR_ANULABLE = { MOV_BILLETERA:'movimientointerno', PROPINA:'propina', DEPO_SR:'depositossinreclamar' };
+window.deshacerMovimientoChunior = async function(tipo, movId){
+  const seg = window._CHUNIOR_ANULABLE[String(tipo||'').toUpperCase()];
+  if(!seg) return { ok:false, error:'Ese tipo de movimiento no se puede deshacer desde acá' };
+  return _anularMovimientoChunior(seg, movId);
+};
+// Deshacer sólo dentro del turno en curso: un turno no toca la plata de otro (regla del negocio).
+// Pasado el cierre, el movimiento queda como está y se escala al superior.
+window._movimientoEsDelTurno = function(fechaIso){
+  try{
+    if(!fechaIso) return false;
+    const t = new Date(fechaIso).getTime();
+    if(isNaN(t)) return false;
+    return t >= _cotejoInicioTurnoMs();
+  }catch(_e){ return false; }
+};
 
 // ── Depósitos sin reclamar + reclamo + anular propina (portado de NexoBetaChan 1.0.85) ──
 // Todo por el BRIDGE de Chunior (window.chunior), sin escrituras nuevas a la DB salvo el
@@ -11526,6 +11550,20 @@ function abrirModalTransferirBilleteras(){
           // Ajustar saldos locales: -monto del origen, +monto al destino
           if(bilOrigen.ID_BILLETERA)  await ajustarSaldoBilletera(bilOrigen.ID_BILLETERA, -monto);
           if(bilDestino.ID_BILLETERA) await ajustarSaldoBilletera(bilDestino.ID_BILLETERA,  monto);
+          // Este movimiento NO dejaba rastro: se hacía en Chunior, salía el toast y listo. No
+          // quedaba quién lo hizo, cuándo ni por qué, y el N° de Chunior (lo único que permite
+          // deshacerlo) se tiraba. Los movimientos del cotejo sí se registraban — o sea que la
+          // parte automática estaba mejor auditada que la manual.
+          try{
+            await registrarEnHistorial({
+              usuario:'MOV. BILLETERA', tipo:'MOV_BILLETERA', monto:monto,
+              billetera_id: bilOrigen.ID_BILLETERA||null,
+              billetera_nombre: (bilOrigen.NOMBRE_VISIBLE||'—')+' → '+(bilDestino.NOMBRE_VISIBLE||'—'),
+              origen:'MANUAL', estado:'OK',
+              notas:'Transferencia entre billeteras'+(notas?(' · '+notas):''),
+              chunior_movimiento_id: r.movimientoId||null
+            });
+          }catch(_e){}
           toast("✅ Transferencia OK · " + money(monto) + " · " + bilOrigen.NOMBRE_VISIBLE + " → " + bilDestino.NOMBRE_VISIBLE, "green");
           cerrarModal();
           renderBillerasInicio();
