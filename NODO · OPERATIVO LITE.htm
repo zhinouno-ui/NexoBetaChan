@@ -12752,8 +12752,18 @@ window.abrirModalRetiroV2 = function(id){
   window._retiroV2 = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
-    declarado:declarado, objetivo:objetivo, yaPagado:Number(meta.monto_pagado||0)||0,
-    _metaTotal:(meta.monto_total!=null?Number(meta.monto_total):null), // total real de un parcial previo
+    declarado:declarado, objetivo:objetivo,
+    // El progreso se escribe en las dos formas (plana y anidada) y hay oficinas con builds
+    // distintos: acá se leen las dos, si no un parcial hecho por la otra versión arranca en 0.
+    yaPagado: Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0,
+    _metaTotal: (meta.monto_total!=null ? Number(meta.monto_total)
+                : (meta.retiro_parcial && meta.retiro_parcial.total!=null ? Number(meta.retiro_parcial.total) : null)),
+    // Historial de pagos del retiro. Cada transferencia es un evento visible para el cliente, no
+    // sólo un acumulado: quiere ver QUÉ le pagaron y CUÁNDO, no un número que se mueve solo.
+    _pagos: (function(){
+      try{ const p = meta.retiro_parcial && meta.retiro_parcial.pagos; return Array.isArray(p) ? p.slice() : []; }
+      catch(_e){ return []; }
+    })(),
     fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{}
   };
   // Pre-seleccionar el reparto sugerido (montos ya redondeados).
@@ -13215,7 +13225,18 @@ window._rv2Finalizar = async function(){
       // además hay oficinas corriendo builds distintos. Duplicar el dato es barato; que una
       // versión no vea el progreso y muestre el total original como si no se hubiera pagado nada,
       // no lo es.
-      retiro_parcial: { pagado:pagadoAcum, total:montoTotal, restante:restante },
+      retiro_parcial: {
+        pagado:pagadoAcum, total:montoTotal, restante:restante,
+        // Cada pago es un evento propio. El acumulado solo no le sirve al cliente: quiere ver QUÉ
+        // le transfirieron y CUÁNDO. Se APPENDEA al historial que ya venía, nunca se pisa.
+        pagos: (st._pagos||[]).concat([{
+          ts: Date.now(),
+          monto: total,
+          restante: restante,
+          billeteras: st.pagar.map(function(b){ return b.nombre; }),
+          operador: (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+        }])
+      },
       operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
     });
   }catch(_e){}
