@@ -12809,17 +12809,22 @@ window.abrirModalRetiroV2 = function(id){
   const _real = (function(){ try{ return window._retiroPagadoDelHistorial(id); }catch(_e){ return null; } })();
   const _yaPagado = _real ? _real.pagado
     : (Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0);
-  const _total = Math.max(
-    Number(meta.monto_total || (meta.retiro_parcial && meta.retiro_parcial.total) || 0) || 0,
-    declarado
-  );
-  let restante = _total - _yaPagado;
-  if(!(restante > 0)) restante = declarado;                    // sin progreso previo → el total
+  // ── DOS COSAS DISTINTAS, DOS CAMPOS ────────────────────────────────────────────────────────
+  //   totalReal → la DEUDA. Cuánto hay que pagarle en total. Arranca de lo que pidió el cliente
+  //               (o del total ya fijado si es una cuota siguiente) y el OPERADOR la edita: su
+  //               palabra pesa más que lo declarado. Es lo único que decide si el retiro cierra.
+  //   objetivo  → lo que se paga AHORA. Por defecto, lo que falta.
+  // Tenerlas juntas en un solo campo fue el origen de todo: en la primera cuota ese campo era el
+  // total, en la segunda era lo que faltaba, y el cierre no sabía cuál de las dos estaba leyendo
+  // — cerraba retiros con la mitad paga, o no cerraba los que el operador había bajado a propósito.
+  const _totalReal = Number(meta.monto_total || (meta.retiro_parcial && meta.retiro_parcial.total) || 0) || declarado;
+  let restante = _totalReal - _yaPagado;
+  if(!(restante > 0)) restante = _totalReal;                   // sin progreso previo → todo
   const objetivo = (window._montoRedondo ? window._montoRedondo(restante) : restante);
   window._retiroV2 = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
-    declarado:declarado, objetivo:objetivo,
+    declarado:declarado, objetivo:objetivo, totalReal:_totalReal,
     // El progreso se escribe en las dos formas (plana y anidada) y hay oficinas con builds
     // distintos: acá se leen las dos, si no un parcial hecho por la otra versión arranca en 0.
     yaPagado: _yaPagado,          // del libro (ver arriba), no del contador guardado
@@ -12949,6 +12954,25 @@ window._rv2AjustarASaldo = function(montoFijo){
   _rv2Render();
   try{ toast('Retiro ajustado a '+money(nuevo)+' (lo que el usuario tiene)','blue'); }catch(_e){}
   _rv2LeerSaldo();
+};
+// Línea derivada del total: ya pagado / falta pagar. No se edita, se calcula.
+function _rv2DeudaTxt(){
+  const st=window._retiroV2; if(!st) return '';
+  const ya=Number(st.yaPagado||0), tot=Number(st.totalReal||0);
+  const falta=Math.max(0, tot-ya);
+  if(ya<=0.5) return 'Sin pagos todavía · falta pagar <b style="color:#e6edf3">'+money(falta)+'</b>';
+  return 'Ya pagado <b style="color:#22c55e">'+money(ya)+'</b> · falta pagar <b style="color:#f5c518">'+money(falta)+'</b>';
+}
+// Editar el TOTAL cambia la deuda: se recalcula lo que falta y, con eso, lo que se paga ahora.
+window._rv2InputTotal = function(el){
+  const st=window._retiroV2; if(!st) return;
+  const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0);
+  st.totalReal=raw;
+  el.value=_rv2FmtMiles(raw);
+  const falta=Math.max(0, raw-Number(st.yaPagado||0));
+  st.objetivo=falta;                                   // lo que se paga ahora sigue a la deuda
+  try{ const d=document.getElementById('rv2Deuda'); if(d) d.innerHTML=_rv2DeudaTxt(); }catch(_e){}
+  _rv2ActualizarTotal();
 };
 window._rv2SetObjetivo = function(val){ const st=window._retiroV2; if(!st) return; st.objetivo = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 // Formato de miles en vivo (5.000.000) para que no marean los ceros. Parsea solo dígitos.
@@ -13124,8 +13148,11 @@ function _rv2Render(){
     // 4) Todo lo demás, PLEGADO. El operador sólo lo abre si quiere cambiar algo.
     + '<div style="margin-top:10px"><button id="rv2DetalleTog" type="button" onclick="_rv2ToggleDetalle()" style="background:transparent;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:4px 0;text-align:left;width:100%">▸ Cambiar billeteras, monto o pagar sólo una parte</button></div>'
     + '<div id="rv2Detalle" style="display:none;border-top:1px solid #262d3a;margin-top:4px;padding-top:10px">'
-    +   '<label style="font-weight:800;font-size:12px">Monto a retirar</label>'
-    +   '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:40px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:18px;padding:0 12px;margin-top:4px">'
+    // TOTAL DEL RETIRO = la deuda. La edita el operador y es lo único que decide si el retiro
+    // cierra. Debajo, derivados: cuánto se pagó y cuánto falta.
+    +   '<label style="font-weight:800;font-size:12px">Total del retiro <span class="small" style="color:#8b949e;font-weight:400">(la deuda · el cliente pidió '+money(st.declarado)+')</span></label>'
+    +   '<input id="rv2TotalReal" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.totalReal)+'" oninput="_rv2InputTotal(this)" style="width:100%;height:40px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:18px;padding:0 12px;margin-top:4px">'
+    +   '<div id="rv2Deuda" style="font-size:11.5px;color:#8b949e;margin-top:5px">'+_rv2DeudaTxt()+'</div>'
     +   '<div style="margin-top:10px;font-weight:800;color:#c9d1d9;font-size:12px">Billeteras <span class="small" style="color:#8b949e;font-weight:400">(tildá, editá el monto o ✕)</span></div>'
     +   filasBil
     +   (function(){ var tot=(billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0)>0; }).length; var oc=tot-bils.length; return oc>0?('<div class="small" style="color:#8b949e;margin-top:5px;text-align:center">+'+oc+' billetera(s) chica(s) ocultas (no aportan al total)</div>'):''; })()
@@ -13278,9 +13305,10 @@ window._rv2Finalizar = async function(){
   //   · Cuotas siguientes → el total YA fijado (_metaTotal). Acá el campo "Monto a retirar" es lo
   //     que FALTA, no el total: si lo tomáramos como total, el retiro se cerraba con la primera
   //     cuota paga y el resto quedaba colgado.
-  const montoTotal = (st._metaTotal != null && Number(st._metaTotal) > 0)
-    ? Number(st._metaTotal)
-    : (Number(st.objetivo||0) || Number(st.declarado||0) || 0);
+  // La DEUDA sale de st.totalReal — el campo "Total del retiro", que edita el operador. NUNCA de
+  // st.objetivo, que es lo que se paga AHORA: tomarlo como deuda cerraba el retiro con una parte
+  // abonada (en la segunda cuota el objetivo vale lo que falta, no el total).
+  const montoTotal = Number(st.totalReal||0) || Number(st._metaTotal||0) || Number(st.declarado||0) || 0;
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
