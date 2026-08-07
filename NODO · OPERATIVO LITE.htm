@@ -12321,6 +12321,7 @@ async function cargarSolicitudesPortal(silencioso=false){
       }
 
       V154P.solicitudes = normArr(r.data).map(mapSolicitudPortal);
+      try{ _portalAutoRechazar(V154P.solicitudes); }catch(_e){}
       window.solicitudes = V154P.solicitudes.slice();
       try{ solicitudes = V154P.solicitudes.slice(); }catch(_e){}
       // Cosecha pasiva → base LOCAL de jugadores (portado de NexoBetaChan): cada solicitud del portal
@@ -12380,6 +12381,89 @@ async function cargarSolicitudesPortal(silencioso=false){
       }
     }
   }
+
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  // AUTO-RECHAZO de tickets del portal con titular basura
+  // Sólo se rechaza solo por criterios DUROS y verificables. Nada de heurísticas ni de "me
+  // parece": si hay la menor duda, la solicitud entra normal y decide el operador.
+  //   1. El titular declarado es un dato NUESTRO (titular/alias/nombre de una billetera propia).
+  //      El portal se lo muestra al cliente para que transfiera; copiarlo y pegarlo es gratis.
+  //   2. El titular son SOLO números (o basura sin una sola letra): no es el nombre de nadie.
+  //   3. Ese titular ya fue rechazado antes para ese usuario → no lo mandes de nuevo.
+  // Sólo aplica a solicitudes que declaran titular (CARGA/RETIRO) y que están PENDIENTES.
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  const _RECH_KEY = 'nodo_titulares_rechazados';
+  function _rechStore(){ try{ return JSON.parse(localStorage.getItem(_RECH_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+  function _rechSave(m){ try{ localStorage.setItem(_RECH_KEY, JSON.stringify(m)); }catch(_e){} }
+  function _rechClave(usuario, titular){
+    return String(usuario||'').toLowerCase().trim() + '|' +
+      String(titular||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+  }
+  window.titularYaRechazado = function(usuario, titular){ return !!_rechStore()[_rechClave(usuario,titular)]; };
+  window.marcarTitularRechazado = function(usuario, titular, motivo){
+    const m=_rechStore(); m[_rechClave(usuario,titular)]={ motivo:motivo||'', fecha:new Date().toISOString(), titular:String(titular||'') };
+    const ks=Object.keys(m); if(ks.length>500) delete m[ks[0]];   // tope, no crece para siempre
+    _rechSave(m);
+  };
+  // Devuelve el motivo (texto para el cliente) o null si la solicitud es legítima.
+  window._portalMotivoRechazo = function(s){
+    const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
+    if(tipo!=='CARGA' && tipo!=='RETIRO') return null;             // soporte/clave no declaran titular
+    const est = String(s.ESTADO||'').toUpperCase();
+    if(est && !/PENDIENTE|NUEVA|EN_ESPERA/.test(est)) return null;  // ya la tocó alguien
+    const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
+    if(!titular) return null;                                       // sin titular no inventamos nada
+    const usuario = String(s.USUARIO||'').trim();
+    // 1) Datos nuestros
+    const propio = window.esDatoPropioBilletera ? window.esDatoPropioBilletera(titular) : null;
+    if(propio) return { motivo:'DATO_PROPIO',
+      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferís.' };
+    // 2) Sin una sola letra → no es el nombre de una persona
+    if(!/[a-záéíóúñü]/i.test(titular)) return { motivo:'SOLO_NUMEROS',
+      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular de la cuenta desde la que transferís.' };
+    // 3) Reincidencia
+    if(window.titularYaRechazado(usuario, titular)) return { motivo:'REINCIDENTE',
+      texto:'Ya te rechazamos ese mismo titular ("'+titular+'"). Poné el nombre completo real del titular de la cuenta, o escribinos por soporte.' };
+    return null;
+  };
+  // Interruptor de apagado. Esto rechaza SOLO y le escribe al cliente: si alguna vez se equivoca,
+  // tiene que poder frenarse en el momento y no esperar a una release.
+  //   apagar  → window.autoRechazoPortal(false)      (queda apagado también al reiniciar)
+  //   prender → window.autoRechazoPortal(true)
+  window.autoRechazoPortal = function(on){
+    try{ localStorage.setItem('nodo_auto_rechazo', on===false?'0':'1'); }catch(_e){}
+    toast(on===false?'⛔ Auto-rechazo APAGADO':'✅ Auto-rechazo prendido', on===false?'yellow':'green');
+  };
+  function _autoRechazoActivo(){ try{ return localStorage.getItem('nodo_auto_rechazo')!=='0'; }catch(_e){ return true; } }
+
+  async function _portalAutoRechazar(lista){
+    if(!_autoRechazoActivo()) return;
+    if(!Array.isArray(lista) || !lista.length) return;
+    // Sin billeteras cargadas no se puede decidir el criterio 1 → no rechazamos nada a ciegas.
+    if(!(window.billeteras||[]).length) return;
+    for(const s of lista){
+      let r=null; try{ r=window._portalMotivoRechazo(s); }catch(_e){ continue; }
+      if(!r) continue;
+      const id = s.ID||s.SOLICITUD_ID; if(!id) continue;
+      if(window.__autoRechDone && window.__autoRechDone[String(id)]) continue;
+      window.__autoRechDone = window.__autoRechDone || {};
+      window.__autoRechDone[String(id)] = true;
+      const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
+      try{
+        await actualizarSolicitudPortal(String(id), 'RECHAZADA', {
+          etapa:'AUTO_RECHAZO', motivo_rechazo:r.motivo, observacion:r.texto, operador:'AUTO'
+        });
+        window.marcarTitularRechazado(s.USUARIO, titular, r.motivo);
+        s.ESTADO='RECHAZADA';
+        try{ if(typeof notificarUsuarioEnChat==='function') await notificarUsuarioEnChat(s.USUARIO, '❌ '+r.texto, id, 'RECHAZADA'); }catch(_e){}
+        try{ await registrarEnHistorial({ usuario:s.USUARIO, tipo:String(s.TIPO||'CARGA'), monto:Number(s.MONTO_DECLARADO||0),
+          origen:'PORTAL', estado:'RECHAZADA', notas:'Auto-rechazo ('+r.motivo+') · titular declarado: '+titular, solicitud_id:id }); }catch(_e){}
+        try{ toast('⛔ Auto-rechazo · '+s.USUARIO+' · '+r.motivo,'yellow'); }catch(_e){}
+        console.warn('[auto-rechazo] #'+id+' '+s.USUARIO+' · '+r.motivo+' · titular: "'+titular+'"');
+      }catch(e){ console.warn('[auto-rechazo] falló #'+id, e); }
+    }
+  }
+  window._portalAutoRechazar = _portalAutoRechazar;
 
   async function actualizarSolicitudPortal(id, estado, extra){
     const payload = {
