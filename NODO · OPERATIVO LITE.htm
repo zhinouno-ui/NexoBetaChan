@@ -4353,7 +4353,18 @@ function _nexoBuildPayload(opsExtra){
   const usuarios = Object.values(porUsuario).filter(function(u){
     return u.operaciones.length || (u.bonos&&u.bonos.length) || u.telefono || u.titular;
   });
-  return { schemaVersion:1, generatedAt:new Date().toISOString(), usuarios:usuarios };
+  // pc_codigo = la LLAVE de oficina. Nexo no debe tener ninguna oficina configurada a mano: le
+  // pregunta a NODO (leyendo este archivo) de qué oficina es esta PC. NODO es el único que lo sabe
+  // de verdad — lo detecta de Chunior al loguear, no sale de la ruta de instalación ni de un
+  // config. Así el mismo instalador de Nexo sirve en cualquier máquina. Ver NEXO_INTEGRACION.md.
+  const _pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim();
+  return {
+    schemaVersion:2,
+    generatedAt:new Date().toISOString(),
+    pc_codigo:_pc || null,                 // null = NODO todavía no sabe la oficina → Nexo NO asume ninguna
+    operador:(window.operador && (window.operador.usuario||window.operador.nombre)) || '',
+    usuarios:usuarios
+  };
 }
 let _nexoSyncing=false; window._nexoLastOk=0;
 async function nexoSync(verbose){
