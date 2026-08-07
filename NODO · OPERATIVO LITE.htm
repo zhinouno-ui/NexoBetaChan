@@ -5068,9 +5068,43 @@ function _arbolResumenHtml(usuario){
 }
 // Progreso de un retiro PARCIAL: cuánto se pagó ya (metadata.retiro_parcial.pagado) y cuánto resta.
 // Se usa para que la tarjeta y el modal muestren el RESTANTE (no el total original) a medida que se paga.
+// ── Cuánto se pagó REALMENTE de un retiro ────────────────────────────────────────────────────
+// Se SUMA DEL HISTORIAL, no se lee de un contador. Cada transferencia real escribe su fila con
+// solicitud_id, monto y billetera: ese es el libro, y es el único registro que existe porque
+// hubo plata moviéndose. metadata.monto_pagado es un acumulado que se le suma a ciegas en cada
+// pago — se conto doble una vez y quedaron solicitudes diciendo "pagado 450.000" cuando habian
+// salido 250.000, sin forma de corregirlo desde el panel (la RPC solo suma, no fija).
+// Derivarlo del historial lo hace AUTOCORREGIBLE: si el numero guardado esta podrido, el proximo
+// pago lo pisa con la suma real. Mismo criterio que con Chunior y el saldo de las billeteras:
+// la verdad es el registro de los movimientos, no un contador paralelo.
+window._retiroPagadoDelHistorial = function(solicitudId){
+  const sid = String(solicitudId||''); if(!sid) return null;
+  let filas = [];
+  try{ filas = (typeof _historialData!=='undefined' && Array.isArray(_historialData)) ? _historialData
+             : (Array.isArray(window._historialData) ? window._historialData : []); }catch(_e){ return null; }
+  if(!filas.length) return null;                       // historial no cargado → no afirmamos nada
+  let suma = 0, n = 0;
+  filas.forEach(function(h){
+    if(!h || String(h.solicitud_id||'')!==sid) return;
+    if(normalizar(h.tipo)!=='RETIRO') return;
+    if(normalizar(h.estado)!=='OK') return;            // sólo las efectivas
+    suma += Math.abs(Number(h.monto||0)) || 0; n++;
+  });
+  return n ? { pagado:suma, filas:n } : null;          // sin filas → todavía no se pagó nada
+};
+
 window._retiroParcialInfo = function(s){
   const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   let pagado = 0;
+  // 1) La verdad: lo que dice el libro.
+  try{
+    const real = window._retiroPagadoDelHistorial(s&&(s.ID||s.SOLICITUD_ID));
+    if(real){
+      const p = Math.min(real.pagado, total>0?total:real.pagado);
+      return { total:total, pagado:p, restante:Math.max(0,total-p), hasProg:p>0.5, fuente:'historial' };
+    }
+  }catch(_e){}
+  // 2) Si el historial no está cargado, se cae al contador guardado (mejor que nada).
   try{
     let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
     if(typeof m==='string'){ try{ m=JSON.parse(m); }catch(_e){ m={}; } }
@@ -12770,7 +12804,11 @@ window.abrirModalRetiroV2 = function(id){
   // mal: con el doble conteo del progreso quedaron solicitudes con un restante que no cerraba, y
   // el campo mostraba cualquier cosa — hasta el saldo del jugador). Total y pagado son los dos
   // datos duros; la resta siempre da bien aunque el restante guardado esté podrido.
-  const _yaPagado = Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0;
+  // Lo ya pagado sale del LIBRO (filas de historial de esta solicitud), no del contador guardado.
+  // Ver _retiroPagadoDelHistorial: el contador se acumula a ciegas y quedó podrido más de una vez.
+  const _real = (function(){ try{ return window._retiroPagadoDelHistorial(id); }catch(_e){ return null; } })();
+  const _yaPagado = _real ? _real.pagado
+    : (Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0);
   const _total = Math.max(
     Number(meta.monto_total || (meta.retiro_parcial && meta.retiro_parcial.total) || 0) || 0,
     declarado
@@ -12784,7 +12822,7 @@ window.abrirModalRetiroV2 = function(id){
     declarado:declarado, objetivo:objetivo,
     // El progreso se escribe en las dos formas (plana y anidada) y hay oficinas con builds
     // distintos: acá se leen las dos, si no un parcial hecho por la otra versión arranca en 0.
-    yaPagado: Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0,
+    yaPagado: _yaPagado,          // del libro (ver arriba), no del contador guardado
     _metaTotal: (meta.monto_total!=null ? Number(meta.monto_total)
                 : (meta.retiro_parcial && meta.retiro_parcial.total!=null ? Number(meta.retiro_parcial.total) : null)),
     // Historial de pagos del retiro. Cada transferencia es un evento visible para el cliente, no
