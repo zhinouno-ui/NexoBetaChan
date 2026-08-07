@@ -13240,39 +13240,14 @@ window._rv2Finalizar = async function(){
       });
     }catch(_e){}
   }
-  try{
-    await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_PROCESO', {
-      etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
-      parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
-      // Se escriben LAS DOS formas del progreso, plana y anidada. Los lectores del panel están
-      // repartidos: unos miran metadata.monto_pagado y otros metadata.retiro_parcial.pagado, y
-      // además hay oficinas corriendo builds distintos. Duplicar el dato es barato; que una
-      // versión no vea el progreso y muestre el total original como si no se hubiera pagado nada,
-      // no lo es.
-      retiro_parcial: {
-        pagado:pagadoAcum, total:montoTotal, restante:restante,
-        // Cada pago es un evento propio. El acumulado solo no le sirve al cliente: quiere ver QUÉ
-        // le transfirieron y CUÁNDO. Se APPENDEA al historial que ya venía, nunca se pisa.
-        // OJO con los nombres: el portal (cargarProgresoRetiro en Panel.html) lee `monto` y `fecha`
-        // — hace new Date(p.fecha). Si mandamos sólo `ts` la fecha le queda Invalid Date y el pago
-        // aparece sin cuándo. Van los dos: `fecha` ISO para el portal, `ts` para las cuentas de acá.
-        pagos: (st._pagos||[]).concat([{
-          ts: Date.now(),
-          fecha: new Date().toISOString(),
-          monto: total,
-          restante: restante,
-          billeteras: st.pagar.map(function(b){ return b.nombre; }),
-          operador: (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
-        }])
-      },
-      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
-    });
-  }catch(_e){}
-  // Progreso NATIVO del parcial en el portal. NO es best-effort silencioso: si esto falla, el
-  // cliente ya cobró pero el portal le sigue mostrando la deuda entera. El operador tiene que
-  // enterarse EN EL MOMENTO para anotarlo a mano.
+  // ── ORDEN: PRIMERO la RPC, DESPUÉS el estado. No es cosmético ──────────────────────────────
+  // metadata.retiro_parcial la escribe SOLO landing_retiro_registrar_parcial, que ACUMULA sobre lo
+  // que ya haya. Cuando el panel TAMBIÉN la escribía, el pago se contaba DOS VECES: pagabas 250k
+  // de 500k y quedaba pagado=500k, la RPC lo daba por completo y el retiro se cerraba con la mitad
+  // abonada — con el cliente viendo "Confirmada" en el portal y la plata sin salir de la billetera.
+  // El panel sólo la escribe como RESPALDO, si la RPC no pudo registrar.
+  let _rp = null;
   if(!completo){
-    let _rp=null;
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
     catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
     if(!_rp || !_rp.ok){
@@ -13281,6 +13256,29 @@ window._rv2Finalizar = async function(){
         + ((_rp&&_rp.detail)||'') + '\n\nEl usuario no va a ver el descuento hasta que se registre. Anotalo a mano.'); }catch(_e){}
     }
   }
+  try{
+    const _extra = {
+      etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
+      parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
+      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+    };
+    // RESPALDO sólo si la RPC falló — si no, duplicamos el progreso.
+    if(!completo && (!_rp || !_rp.ok)){
+      _extra.retiro_parcial = {
+        pagado:pagadoAcum, total:montoTotal, restante:restante,
+        // El portal (cargarProgresoRetiro en Panel.html) lee `monto` y `fecha` de cada pago — hace
+        // new Date(p.fecha). Con sólo `ts` la fecha le queda Invalid Date. Van los dos.
+        pagos: (st._pagos||[]).concat([{
+          ts: Date.now(), fecha: new Date().toISOString(),
+          monto: total, restante: restante,
+          billeteras: st.pagar.map(function(b){ return b.nombre; }),
+          operador: (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+        }])
+      };
+    }
+    // DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya dado por completo.
+    await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_PROCESO', _extra);
+  }catch(_e){}
   try{
     const msg = completo
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
