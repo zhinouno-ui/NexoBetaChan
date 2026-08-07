@@ -13059,8 +13059,10 @@ function _rv2RenderConfirmar(){
     + '<div class="small" style="color:#8b949e;margin-bottom:8px">Las fichas ('+money(st.totalPagar)+') YA se extrajeron. Transferí desde cada billetera al CBU <b>'+escapeHtml(st.cbu||'—')+'</b> y confirmá cada una.</div>'
     + filas
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">'
+    // Con todas confirmadas el cierre ya salió solo (ver _rv2Confirmar). El botón queda como
+    // reintento manual por si ese cierre automático falló, no como paso obligatorio.
     +   (faltan===0
-         ? '<button class="mini-btn green" style="font-weight:800" onclick="_rv2Finalizar()">Finalizar retiro</button>'
+         ? '<button class="mini-btn green" style="font-weight:800" onclick="_rv2Finalizar()">Cerrar el retiro</button>'
          : '<span class="small" style="color:#8b949e;align-self:center">Faltan '+faltan+' transferencia(s)</span>')
     + '</div></div>';
   el.style.display='block';
@@ -13081,6 +13083,17 @@ window._rv2Confirmar = async function(bid){
     toast('✓ '+b.nombre+': '+money(b.monto),'green');
   }catch(e){ st.hechas[bid]=false; toast('Error en '+b.nombre+': '+(e.message||''),'red'); }
   _rv2RenderConfirmar();
+  // CIERRE AUTOMÁTICO. Con la última billetera confirmada ya está TODO hecho: las fichas salieron,
+  // los movimientos están anotados en Chunior y la plata se transfirió. Lo único que faltaba era
+  // apretar "Finalizar retiro", que no decide nada — sólo registra. Y si el operador cerraba el
+  // modal ahí (o se le colgaba la ventana), la plata YA se había movido pero no quedaba ni la fila
+  // en el historial ni la solicitud actualizada: el retiro existía en Chunior y en ningún lado más.
+  // Pasó de verdad con un parcial. Ahora cierra solo.
+  if(st.pagar.every(function(x){ return st.hechas[x.id]===true; })){
+    try{ await _rv2Finalizar(); }catch(e){
+      try{ toast('⚠ Se transfirió todo pero falló el cierre: '+(e.message||'')+' — revisá el historial','red'); }catch(_e){}
+    }
+  }
 };
 
 // Finaliza: marca la solicitud (parcial/completa), avisa al usuario y registra el historial.
