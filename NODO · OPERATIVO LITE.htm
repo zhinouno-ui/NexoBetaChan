@@ -12747,8 +12747,19 @@ window.abrirModalRetiroV2 = function(id){
   if(!s){ toast('Solicitud no encontrada','red'); return; }
   let meta={}; try{ meta=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{}; }catch(_e){}
   const declarado = Math.abs(Number(String(s.MONTO_REAL||s.MONTO_DECLARADO||0).toString().replace(/[^\d.-]/g,''))||0);
-  const restante = (meta.monto_restante!=null) ? Number(meta.monto_restante) : declarado;
-  const objetivo = (window._montoRedondo?window._montoRedondo(restante>0?restante:declarado):(restante>0?restante:declarado));
+  // El "Monto a retirar" ES LO QUE FALTA PAGAR, y se CALCULA: total − ya pagado. No se lee de
+  // meta.monto_restante, que es un número guardado y por lo tanto puede venir mal (de hecho vino
+  // mal: con el doble conteo del progreso quedaron solicitudes con un restante que no cerraba, y
+  // el campo mostraba cualquier cosa — hasta el saldo del jugador). Total y pagado son los dos
+  // datos duros; la resta siempre da bien aunque el restante guardado esté podrido.
+  const _yaPagado = Number(meta.monto_pagado || (meta.retiro_parcial && meta.retiro_parcial.pagado) || 0) || 0;
+  const _total = Math.max(
+    Number(meta.monto_total || (meta.retiro_parcial && meta.retiro_parcial.total) || 0) || 0,
+    declarado
+  );
+  let restante = _total - _yaPagado;
+  if(!(restante > 0)) restante = declarado;                    // sin progreso previo → el total
+  const objetivo = (window._montoRedondo ? window._montoRedondo(restante) : restante);
   window._retiroV2 = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
