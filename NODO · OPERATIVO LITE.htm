@@ -7904,12 +7904,17 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     lista.forEach(function(c){
       (c.telefonos||[]).forEach(function(t){
         const tn=_altaNormTel(t); if(!tn) return;
-        // Desempate: si el usuario DECLARADO también tiene este teléfono, gana él. Antes ganaba el
-        // primero de la lista, así que tras reasignar un teléfono de un usuario a otro el cotejo
-        // seguía nombrando al dueño viejo (el índice local conserva las dos fichas).
+        // OJO: NO preferir al usuario declarado acá. Lo intenté (para que tras reasignar un
+        // teléfono no siguiera nombrando al dueño viejo) y rompí lo importante: si el declarado
+        // aparece en el índice con ese teléfono, gana él y el cotejo dice "✓ mismo dueño" aunque
+        // en la base el teléfono sea de OTRO. El conflicto quedaba tapado con un verde, el
+        // operador validaba confiado, y recién ahí saltaba "ese teléfono es de natta473" — con el
+        // aviso al cliente ya enviado con el usuario equivocado.
+        // Este campo responde UNA pregunta: de quién es este teléfono. No se negocia con el
+        // declarado; para eso está el cruce del pie, que compara los dos y muestra el conflicto.
         if(tn===tD){
-          const esDeclarado = _altaNormU(c.usuario)===uD;
-          if(!out.telefono.exacto || esDeclarado) out.telefono.exacto=Object.assign({_tel:tn}, c);
+          if(!out.telefono.exacto) out.telefono.exacto=Object.assign({_tel:tn}, c);
+          else if(_altaNormU(out.telefono.exacto.usuario)!==_altaNormU(c.usuario)) out.telefono.varios=true;
           return;
         }
         // mismos últimos 8 dígitos (prefijo/0/15 distinto) o ≤2 dígitos cambiados
@@ -7953,7 +7958,18 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
       // eso además deja el nombre limpio y arregla el cotejo del portal para ese usuario.
       if(d.conflicto_tel){
         const otro=d.usuario_actual||"otro usuario";
-        if(!confirm("Ese teléfono ya figura vinculado a «"+otro+"».\n\n¿Es la MISMA persona (dato viejo o mal escrito) y querés reasignar el teléfono al usuario «"+usuario+"»?")) return;
+        // El confirm dice EXPLÍCITO qué cuenta va a quedar y qué mensaje le llega al cliente. Sin
+        // eso el operador aceptaba pensando "sí, es la misma persona" y terminaba mandándole al
+        // cliente el usuario del OTRO — o sea, acceso a una cuenta ajena.
+        if(!confirm(
+          "⚠ CONFLICTO DE TELÉFONO\n\n"+
+          "El teléfono "+telefono+" hoy figura de «"+otro+"».\n"+
+          "Vos estás validando a «"+usuario+"».\n\n"+
+          "Si aceptás:\n"+
+          "  · el teléfono pasa a «"+usuario+"»\n"+
+          "  · «"+otro+"» queda SIN ese teléfono\n"+
+          "  · al cliente se le avisa que entre como «"+usuario+"»\n\n"+
+          "¿Son la misma persona?")) return;
         r=await _vinc(true); d=(r&&r.data)||{};
         if(r.error || !d.ok){ toast("No se pudo reasignar: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
       } else {
@@ -8075,7 +8091,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
   if(tN.length>=6){
     if(tOk){
-      const mismoDueno = duenoTel===uReal || duenoTel===uDeclN;
+      // Si el teléfono figura en MÁS DE UN usuario, no hay "mismo dueño" posible: es ambiguo y
+      // tiene que decidirlo el operador. Nunca en verde.
+      const mismoDueno = !r.telefono.varios && (duenoTel===uReal || duenoTel===uDeclN);
       if(mismoDueno){
         filas+=fila('Teléfono', esc(tN), '✓ mismo dueño', '#3fb950', '');
       } else {
