@@ -12389,7 +12389,26 @@ async function cargarSolicitudesPortal(silencioso=false){
         return r;
       }
 
-      V154P.solicitudes = normArr(r.data).map(mapSolicitudPortal);
+      const _nuevas = normArr(r.data).map(mapSolicitudPortal);
+      // Un retiro a medio pagar NO puede desaparecer de la lista. La RPC filtra por estado, así que
+      // al pasar el parcial a EN_PROCESO deja de devolverlo y el retiro se esfumaba del panel con
+      // plata todavía debida — no había forma de terminar de pagarlo. Los que tienen progreso
+      // parcial y ya no vienen del server se conservan del ciclo anterior, marcados, hasta que se
+      // salden o los cierre alguien a mano.
+      try{
+        const _ids = new Set(_nuevas.map(function(x){ return String(x.ID||x.SOLICITUD_ID||''); }));
+        (V154P.solicitudes||[]).forEach(function(v){
+          const id = String(v.ID||v.SOLICITUD_ID||'');
+          if(!id || _ids.has(id)) return;
+          const pp = window._retiroParcialInfo ? window._retiroParcialInfo(v) : null;
+          if(pp && pp.hasProg && pp.restante > 0.5){
+            v.__soloLocal = true;                       // ya no viene del server, lo sostenemos acá
+            _nuevas.push(v);
+            console.warn('[portal] retiro #'+id+' con '+money(pp.restante)+' sin pagar dejó de venir de la RPC — se conserva local');
+          }
+        });
+      }catch(_e){}
+      V154P.solicitudes = _nuevas;
       try{ _portalAutoRechazar(V154P.solicitudes); }catch(_e){}
       window.solicitudes = V154P.solicitudes.slice();
       try{ solicitudes = V154P.solicitudes.slice(); }catch(_e){}
