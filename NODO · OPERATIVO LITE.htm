@@ -7377,6 +7377,60 @@ const _watchdog = {
 };
 
 // Helpers para que las operaciones se anuncien al watchdog
+// ── Relevo watchdog → revisión de fichas de retiros ──────────────────────────────────────────
+// Cuando el watchdog termina de leer, avisa acá: "ya terminé, empezá lo tuyo". Es un RELEVO, no
+// paralelismo — corre después del ciclo, nunca encimado. Y sólo si el agente está libre: si hay
+// otra solicitud en proceso, esto se saltea y espera al próximo ciclo (pasa cada pocos minutos,
+// no hay apuro). Objetivo: confirmar que las fichas del retiro salieron de verdad de Agentes.
+let _revFichasUltimo = 0;
+function _revisarFichasRetirosTrasWatchdog(){
+  if(Date.now() - _revFichasUltimo < 60000) return;          // como mucho una vez por minuto
+  if(_watchdog.busy > 0) return;                             // el agente sigue tomado
+  if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0)) return;
+  if(window._v154pParcialBusy) return;                       // hay un parcial en curso
+  if(window._cotejoDeclarando) return;
+  if(window._retiroV2) return;                               // hay un modal de retiro abierto
+  const sols = (window.V154P && V154P.solicitudes) || [];
+  const pend = sols.filter(function(s){
+    if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase() !== 'RETIRO') return false;
+    return /EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase());
+  });
+  if(!pend.length) return;                                   // no hay retiro que revisar
+  _revFichasUltimo = Date.now();
+  try{ window._revisarFichasRetiros && window._revisarFichasRetiros(pend); }catch(_e){}
+}
+window._revisarFichasRetirosTrasWatchdog = _revisarFichasRetirosTrasWatchdog;
+
+// Confirma contra Agentes que las fichas del retiro salieron de verdad. Es SOLO LECTURA: lee el
+// saldo del jugador y avisa. No aprueba, no anota, no toca plata — si algo no cuadra decide el
+// operador. Revisa de a UN retiro por ciclo para no acaparar el agente.
+window._revisarFichasRetiros = async function(pendientes){
+  if(!Array.isArray(pendientes) || !pendientes.length) return;
+  if(!window.ctrlElectron) return;
+  const s = pendientes[0];
+  const usuario = String(s.USUARIO||'').trim(); if(!usuario) return;
+  if(!_drexGlobalLock('rev-fichas-retiro')) return;   // alguien lo tomó entre medio → al próximo ciclo
+  _wdLock();
+  try{
+    const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
+    if(!b || !b.exists || typeof b.balance?.value !== 'number') return;
+    const saldo = b.balance.value;
+    const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+    const falta = pp ? pp.restante : Number(s.MONTO_REAL||s.MONTO_DECLARADO||0);
+    // Lo único que importa acá: ¿le quedaron fichas como para cubrir lo que todavía se le debe?
+    // Si NO le alcanzan, el retiro no se puede terminar y el operador tiene que saberlo antes de
+    // sentarse a transferir.
+    if(falta > 0 && saldo + 0.5 < falta){
+      try{ toast('⚠ '+usuario+': quedan '+money(falta)+' por pagar pero tiene '+money(saldo)+' en fichas','yellow'); }catch(_e){}
+      console.warn('[rev-fichas] '+usuario+' · restan '+falta+' · fichas '+saldo);
+    } else {
+      console.log('[rev-fichas] '+usuario+' OK · restan '+falta+' · fichas '+saldo);
+    }
+    s.__fichasRevisadas = { saldo:saldo, ts:Date.now() };
+  }catch(e){ console.warn('[rev-fichas] falló:', e.message||e); }
+  finally{ _wdUnlock(); _drexGlobalUnlock(); }
+};
+
 function _wdLock(){   _watchdog.busy++; }
 function _wdUnlock(){ if(_watchdog.busy > 0) _watchdog.busy--; }
 // Reset duro a 0 — para los puntos de limpieza GARANTIZADA al final de una operación (o su
@@ -7553,6 +7607,10 @@ async function _watchdogPoll(){
   _watchdog.drexFichas    = ahora.drexFichas;
   _watchdog.chuniorFichas = ahora.chuniorFichas;
   _watchdog.lastCheck     = Date.now();
+  // El watchdog terminó su lectura y suelta el agente. Le pasa la posta a la revisión de fichas
+  // de los retiros: DESPUÉS de este, nunca encimado. El watchdog sólo lee, así que no hay riesgo
+  // de que dos cosas escriban plata — pero igual va en relevo, no en paralelo.
+  try{ _revisarFichasRetirosTrasWatchdog(); }catch(_e){}
 
   const horaCheck = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
   const fmt = function(v){ return money(v).replace('$ ','$'); };
