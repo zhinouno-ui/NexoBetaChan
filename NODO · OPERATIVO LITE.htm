@@ -13187,7 +13187,16 @@ window._rv2Confirmar = async function(bid){
 window._rv2Finalizar = async function(){
   const st = window._retiroV2; if(!st) return;
   const total = st.totalPagar;
-  const montoTotal = (st._metaTotal!=null ? st._metaTotal : st.objetivo); // total real del retiro
+  // El TOTAL del retiro es lo que pidió el cliente (st.declarado), NO el campo "monto" del modal
+  // (st.objetivo), que el operador edita. Acá estaba el "el parcial desaparece": si bajabas el
+  // monto a la parte que ibas a pagar —lo intuitivo— el total pasaba a ser esa parte, restante
+  // daba 0, completo daba true y la solicitud se cerraba como PAGADA con plata todavía debida.
+  // Se toma el mayor de los tres por si el operador tuvo que subirlo por encima de lo declarado.
+  const montoTotal = Math.max(
+    Number(st._metaTotal!=null ? st._metaTotal : 0) || 0,
+    Number(st.declarado||0) || 0,
+    Number(st.objetivo||0) || 0
+  );
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
