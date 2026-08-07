@@ -13213,16 +13213,18 @@ window._rv2Confirmar = async function(bid){
 window._rv2Finalizar = async function(){
   const st = window._retiroV2; if(!st) return;
   const total = st.totalPagar;
-  // El TOTAL del retiro es lo que pidió el cliente (st.declarado), NO el campo "monto" del modal
-  // (st.objetivo), que el operador edita. Acá estaba el "el parcial desaparece": si bajabas el
-  // monto a la parte que ibas a pagar —lo intuitivo— el total pasaba a ser esa parte, restante
-  // daba 0, completo daba true y la solicitud se cerraba como PAGADA con plata todavía debida.
-  // Se toma el mayor de los tres por si el operador tuvo que subirlo por encima de lo declarado.
-  const montoTotal = Math.max(
-    Number(st._metaTotal!=null ? st._metaTotal : 0) || 0,
-    Number(st.declarado||0) || 0,
-    Number(st.objetivo||0) || 0
-  );
+  // ── El TOTAL de la deuda ────────────────────────────────────────────────────────────────
+  // Se fija UNA VEZ, en el primer pago, y de ahí no se mueve más:
+  //   · Primera vez  → lo que escribió el operador en "Monto a retirar" (st.objetivo). Si no lo
+  //     tocó, ese campo ya viene con lo declarado por el cliente. O sea: manda el operador, y con
+  //     eso puede cerrar un retiro por menos de lo pedido (el cliente tiene menos fichas, se
+  //     acordó otra cifra, etc.) — paga eso y queda PAGADA.
+  //   · Cuotas siguientes → el total YA fijado (_metaTotal). Acá el campo "Monto a retirar" es lo
+  //     que FALTA, no el total: si lo tomáramos como total, el retiro se cerraba con la primera
+  //     cuota paga y el resto quedaba colgado.
+  const montoTotal = (st._metaTotal != null && Number(st._metaTotal) > 0)
+    ? Number(st._metaTotal)
+    : (Number(st.objetivo||0) || Number(st.declarado||0) || 0);
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
