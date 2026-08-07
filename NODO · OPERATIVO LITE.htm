@@ -13229,8 +13229,12 @@ window._rv2Finalizar = async function(){
         pagado:pagadoAcum, total:montoTotal, restante:restante,
         // Cada pago es un evento propio. El acumulado solo no le sirve al cliente: quiere ver QUÉ
         // le transfirieron y CUÁNDO. Se APPENDEA al historial que ya venía, nunca se pisa.
+        // OJO con los nombres: el portal (cargarProgresoRetiro en Panel.html) lee `monto` y `fecha`
+        // — hace new Date(p.fecha). Si mandamos sólo `ts` la fecha le queda Invalid Date y el pago
+        // aparece sin cuándo. Van los dos: `fecha` ISO para el portal, `ts` para las cuentas de acá.
         pagos: (st._pagos||[]).concat([{
           ts: Date.now(),
+          fecha: new Date().toISOString(),
           monto: total,
           restante: restante,
           billeteras: st.pagar.map(function(b){ return b.nombre; }),
