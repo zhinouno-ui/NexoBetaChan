@@ -13028,14 +13028,25 @@ function _rv2ActualizarBotonAprobar(){
   const st=window._retiroV2; if(!st) return;
   const btn=document.getElementById('rv2BtnAprobar'); if(!btn) return;
   const tot=_rv2TotalSel();
-  const parcial = tot < st.objetivo-0.5;
-  const paso    = tot > st.objetivo+0.5;
+  // Lo único que TRABA es no haber elegido de dónde pagar. Antes se bloqueaba cuando el monto
+  // superaba "lo que falta", y eso dejaba el botón muerto en "Te pasaste de $0" —sin salida—
+  // cuando el progreso guardado venía mal o el operador todavía no había corregido la deuda.
+  // Pagar de más SÍ importa, pero es un aviso: el que sabe cuánto se debe es el operador.
   if(tot<=0){ btn.textContent='Elegí de qué billetera pagar'; btn.disabled=true; btn.style.opacity=.55; return; }
-  if(paso){ btn.textContent='Te pasaste de '+money(st.objetivo); btn.disabled=true; btn.style.opacity=.55; return; }
   btn.disabled=false; btn.style.opacity=1;
-  btn.textContent = parcial
-    ? ('Pagar '+money(tot)+' ahora · quedan '+money(st.objetivo-tot))
-    : ('Pagar el retiro completo · '+money(tot));
+  const falta = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  const deMas = tot - falta;
+  if(deMas > 0.5){
+    btn.textContent = 'Pagar '+money(tot)+' · ' + (falta<=0.5
+      ? 'el retiro ya figura saldado — corregí el total arriba'
+      : money(deMas)+' MÁS de lo que falta');
+    btn.style.background = '#b45309';
+    return;
+  }
+  btn.style.background = '#ea580c';
+  btn.textContent = (falta - tot > 0.5)
+    ? ('Pagar '+money(tot)+' ahora · quedan '+money(falta-tot))
+    : ('Pagar y cerrar el retiro · '+money(tot));
 }
 
 // ── Veredicto: lo PRIMERO que se lee, antes de cualquier planilla ──────────────────────────
@@ -13173,10 +13184,21 @@ function _rv2Render(){
 // Sólo LEE el saldo y refresca el veredicto. Antes armaba acá adentro su propio cartel con su
 // propio botón de ajuste, en paralelo al de la tarjeta del pendiente: dos lugares distintos
 // diciendo lo mismo con textos distintos. Ahora hay un solo veredicto y él decide qué mostrar.
-async function _rv2LeerSaldo(){
+async function _rv2LeerSaldo(intento){
   const st = window._retiroV2; if(!st || !window.ctrlElectron) return;
   const pintar=function(){ try{ const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml(); _rv2ActualizarBotonAprobar(); }catch(_e){} };
-  if(!_drexGlobalLock('rv2-saldo')){ st.saldoFallo='ocupado'; pintar(); return; }
+  // El agente puede estar tomado por otra operación justo cuando abrís el modal. Antes se
+  // intentaba UNA vez, quedaba en "no pudimos leer sus fichas" y ahí moría — y como _rv2Aprobar
+  // sólo valida el saldo si pudo leerlo, el retiro salía SIN chequear las fichas. Ahora reintenta.
+  intento = Number(intento||0);
+  if(!_drexGlobalLock('rv2-saldo')){
+    if(intento < 6 && window._retiroV2===st){
+      st.saldoFallo='ocupado'; pintar();
+      setTimeout(function(){ if(window._retiroV2===st) _rv2LeerSaldo(intento+1); }, 2500);
+      return;
+    }
+    st.saldoFallo='ocupado'; pintar(); return;
+  }
   _wdLock();
   try{
     const b = await callDrex('buscarUsuario', st.usuario, { skipBalance:false });
@@ -13198,7 +13220,17 @@ window._rv2Aprobar = async function(){
   if(total<=0){ toast('El total a pagar es 0.','red'); return; }
   if(total > st.objetivo+0.5){ toast('El total ('+money(total)+') supera el monto real ('+money(st.objetivo)+').','red'); return; }
   for(const b of seleccionadas){ if(b.monto > b.saldo+0.5){ toast(b.nombre+' no tiene '+money(b.monto)+' (saldo '+money(b.saldo)+').','red'); return; } }
-  if(st.saldoReal!=null && total > st.saldoReal+0.5){ if(!confirm('El usuario tiene '+money(st.saldoReal)+' de fichas pero vas a retirar '+money(total)+'. ¿Seguir igual?')) return; }
+  // Chequeo de fichas. Si no se pudo leer al abrir el modal, se intenta AHORA — antes se salteaba
+  // en silencio (la condición pedía saldoReal!=null) y el retiro salía sin verificar nada.
+  if(st.saldoReal==null){
+    toast('Leyendo las fichas de '+st.usuario+' antes de pagar…','blue');
+    try{ await _rv2LeerSaldo(99); }catch(_e){}          // 99 = sin reintentos, es el último tiro
+  }
+  if(st.saldoReal==null){
+    if(!confirm('No se pudieron leer las fichas de '+st.usuario+'.\n\nSi seguís, el retiro sale A CIEGAS: no sabemos si tiene el saldo.\n\n¿Continuar igual?')) return;
+  } else if(total > st.saldoReal+0.5){
+    if(!confirm('El usuario tiene '+money(st.saldoReal)+' de fichas pero vas a retirar '+money(total)+'. ¿Seguir igual?')) return;
+  }
   st.obs = (document.getElementById('rv2Obs')?document.getElementById('rv2Obs').value:'').trim();
   st.pagar = seleccionadas; st.totalPagar = total;
 
