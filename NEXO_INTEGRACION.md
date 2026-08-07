@@ -7,12 +7,17 @@ datos. Todo lo que dice "hoy" está verificado contra el código, no es de memor
 
 ## 1. La idea en una línea
 
-**Nexo no debe tener ninguna oficina configurada a mano.** Le pregunta a NODO de qué oficina es esta
-PC, y NODO se lo dice. Así el mismo instalador de Nexo funciona en cualquier máquina sin que nadie
-toque un config — que es el objetivo de la actualización general.
+**NODO le pasa a Nexo el código de oficina, en toda PC donde Nexo esté instalado.**
+
+Esto corre en las 9 oficinas y en todas funciona igual: cada NODO manda el código de SU oficina.
+No hay nada configurado a mano ni atado a una máquina en particular — el mismo instalador de Nexo
+sirve en cualquier lado, y se entera de dónde está preguntándole al NODO que tiene al lado.
 
 NODO es el único que sabe la oficina de verdad: la detecta de Chunior cuando el operador se loguea
 y elige puesto. No sale de la ruta de instalación ni de un archivo de configuración.
+
+No es una credencial ni un permiso: es un **dato de ruteo**. Sirve para que Nexo sepa a qué oficina
+pertenece lo que está mostrando, nada más.
 
 ---
 
@@ -35,24 +40,26 @@ IPC: si el archivo está, NODO corrió en esta PC y dejó su oficina ahí.
 
 ## 3. Lo que Nexo tiene que leer
 
-### 3.1 La llave de oficina — lo nuevo, y lo más importante
+### 3.1 El código de oficina — lo nuevo
 
 ```jsonc
 {
-  "pc_codigo": "P4",                          // ← la llave. De acá sale TODO el scope de Nexo
-  "generado": "2026-08-07T09:31:00.000Z",     // cuándo lo escribió NODO
-  "operador": "juanjulian"                    // quién estaba logueado (referencia)
+  "schemaVersion": 2,
+  "pc_codigo": "P4",                            // ← de qué oficina son estos datos
+  "generatedAt": "2026-08-07T09:31:00.000Z",    // cuándo lo escribió NODO
+  "operador": "juanjulian"                      // quién estaba logueado (referencia)
 }
 ```
 
-**Reglas de uso, no opcionales:**
+En cada oficina llega el suyo: P1, P2, P4… Nexo no tiene que elegir nada ni tener nada precargado,
+sólo leer el que le dejó el NODO de esa PC.
 
-1. **Sin `pc_codigo`, Nexo no muestra datos de ninguna oficina.** Ni una por defecto, ni la última
-   que vio. Mostrarle a un operador los datos de otra oficina es peor que no mostrarle nada.
-2. **El `pc_codigo` cambia en caliente.** Si el operador cambia de puesto a mitad de turno, NODO
-   reescribe el archivo. Nexo tiene que releerlo, no cachearlo al abrir y olvidarse.
-3. **Mirá `generado`.** Si es viejo (por ejemplo más de un turno), tratalo como sospechoso: puede
-   ser que NODO no esté corriendo. Mejor avisar "sin conexión con NODO" que mostrar datos rancios.
+Dos detalles prácticos:
+
+1. **Puede cambiar mientras Nexo está abierto.** Si el operador cambia de puesto a mitad de turno,
+   NODO reescribe el archivo con el código nuevo. Conviene releerlo en vez de cachearlo al abrir.
+2. **Puede venir `null`** si NODO todavía no terminó de loguear. No es un error: es "todavía no sé".
+   Lo razonable ahí es esperar al próximo refresco, no asumir una oficina.
 
 ### 3.2 Jugadores y operaciones (esto ya lo manda hoy)
 
@@ -149,9 +156,10 @@ tiene que saber que hoy puede haber duplicados.
 
 ## 6. Resumen de lo que se le pide a Nexo
 
-1. Leer `pc_codigo` de `nodo-datos.json` y usarlo como scope de todo. **Nunca** una oficina por
-   defecto.
-2. Releer el archivo periódicamente (el `pc_codigo` cambia en caliente) y mirar `generado`.
+1. Leer `pc_codigo` de `nodo-datos.json` y usarlo como scope. Llega solo, en cada una de las 9
+   oficinas — no hay que configurarlo en ningún lado.
+2. Releerlo cada tanto: puede cambiar mientras Nexo está abierto (cambio de puesto).
 3. Separar `portal` de `manual` en toda métrica y permitir filtrar por canal.
 4. Join por `alias`, dedup por `ts` + `monto`, bonos aparte.
-5. Si no hay archivo o no hay `pc_codigo`: estado "sin conexión con NODO", sin datos.
+5. Si viene `null` o todavía no hay archivo, esperar al próximo refresco (NODO puede no haber
+   terminado de loguear).
