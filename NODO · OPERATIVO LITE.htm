@@ -12713,8 +12713,13 @@ window._retiroMontoSugerido = function(declarado, saldo){
 const _RV2_EXCL = /error|promo|referid/i;
 const _RV2_MIN_SALDO = 200000; // billeteras con menos de $200k no se usan para retiros
 function _rv2BilsUsables(objetivo){
-  let bils = (billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0) >= _RV2_MIN_SALDO; })
+  const _base = (billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')); })
     .sort(function(a,b){ return Number(b.SALDO||0)-Number(a.SALDO||0); });
+  let bils = _base.filter(function(b){ return Number(b.SALDO||0) >= _RV2_MIN_SALDO; });
+  // El corte por $200k es para no llenar la lista de billeteras que no aportan. Pero si NINGUNA
+  // llega a ese piso, el filtro dejaba la lista VACÍA y el operador no podía pagar nada — sin
+  // ningún cartel que explicara por qué. Ante lista vacía se muestran todas las que tengan saldo.
+  if(!bils.length) bils = _base.filter(function(b){ return Number(b.SALDO||0) > 0; });
   const obj = Math.abs(Number(objetivo)||0);
   if(obj > 0 && bils.length > 4){
     const umbral = obj * 0.05;
@@ -13112,7 +13117,7 @@ window._rv2Finalizar = async function(){
     }catch(_e){}
   }
   try{
-    await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_REVISION', {
+    await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_PROCESO', {
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
       // Se escriben LAS DOS formas del progreso, plana y anidada. Los lectores del panel están
@@ -13142,7 +13147,7 @@ window._rv2Finalizar = async function(){
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
       : '💸 Te transferimos '+money(total)+' de tu retiro · restan '+money(restante)+'. El resto en cuanto se libere otra billetera.';
     // La solicitud ya está en su estado final (PAGADA/EN_REVISION) → se lo pasamos explícito.
-    await notificarUsuarioEnChat(st.usuario, (st.obs?st.obs+'\n':'')+msg, st.id, completo?'PAGADA':'EN_REVISION');
+    await notificarUsuarioEnChat(st.usuario, (st.obs?st.obs+'\n':'')+msg, st.id, completo?'PAGADA':'EN_PROCESO');
   }catch(_e){}
   // Canal EXTRA: push directo con título/cuerpo claros del parcial (no depende del chat_thread).
   try{ notificarRetiroParcialPush(st.usuario, total, pagadoAcum, montoTotal, completo); }catch(_e){}
