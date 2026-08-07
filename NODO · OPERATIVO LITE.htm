@@ -12622,6 +12622,10 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
   const op = (window.operador && (window.operador.usuario||window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
   const formas = [
+    // Forma N primero: es la firma que REALMENTE tiene la RPC (la misma que usa el otro call site,
+    // landing_retiro_registrar_parcial con p_id/p_monto_parcial). Sin ella se probaban A, B y C,
+    // fallaban las tres por firma y el progreso del parcial NO se registraba nunca.
+    { k:'N', p:{ p_id:sid, p_monto_parcial:Number(montoPago)||0, p_operador:op } },
     { k:'A', p:{ p_solicitud_id:sid, p_monto_pagado:Number(pagadoAcum)||0, p_monto_restante:Number(restante)||0, p_monto_total:Number(montoTotal)||0, p_operador:op } },
     { k:'B', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0, p_operador:op } },
     { k:'C', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0 } }
@@ -12903,10 +12907,20 @@ function _rv2Render(){
   const bils = _rv2BilsUsables(st.objetivo);
   const filasBil = bils.map(function(b){
     const bid=String(b.ID_BILLETERA); const on=!!st.sel[bid]; const monto=Number(st.montos[bid]||0);
-    return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:'+(on?'#12261a':'#12161d')+';border:1px solid '+(on?'rgba(34,197,94,.4)':'#262d3a')+';margin-top:4px">'
-      + '<input type="checkbox" '+(on?'checked':'')+' onchange="_rv2Toggle(\''+bid+'\')" style="width:16px;height:16px;cursor:pointer;flex-shrink:0">'
-      + '<div style="flex:1;min-width:0;line-height:1.15"><span style="font-weight:700;color:#e6edf3;font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
-      +   ' <span style="color:#8b949e;font-size:11px">· '+money(b.SALDO||0)+'</span></div>'
+    // La fila entera es clickeable y se ve que lo es: cursor de mano, hover, y el estado elegido
+    // marcado con borde grueso + barra verde a la izquierda. Antes era un checkbox chiquito sobre
+    // una fila casi del mismo color que el fondo y no se entendía que hubiera algo para tildar.
+    return '<div onclick="if(event.target.tagName!==\'INPUT\')_rv2Toggle(\''+bid+'\')" '
+      + 'onmouseover="if(!this.dataset.on)this.style.background=\'#1a2130\'" '
+      + 'onmouseout="if(!this.dataset.on)this.style.background=\'#12161d\'" '
+      + (on?'data-on="1" ':'')
+      + 'style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;transition:.12s;'
+      +   'background:'+(on?'#12261a':'#12161d')+';'
+      +   'border:1px solid '+(on?'#22c55e':'#262d3a')+';'
+      +   'border-left:4px solid '+(on?'#22c55e':'#2c3444')+';margin-top:5px">'
+      + '<input type="checkbox" '+(on?'checked':'')+' onchange="_rv2Toggle(\''+bid+'\')" style="width:17px;height:17px;cursor:pointer;flex-shrink:0;accent-color:#22c55e">'
+      + '<div style="flex:1;min-width:0;line-height:1.2"><span style="font-weight:700;color:'+(on?'#f0f6fc':'#c9d1d9')+';font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
+      +   '<div style="color:#8b949e;font-size:11px">tiene '+money(b.SALDO||0)+'</div></div>'
       + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" style="width:104px;text-align:right;background:#0d1117;border:1px solid '+(on?'#30363d':'#20262f')+';color:#e6edf3;border-radius:6px;padding:4px 6px;font-weight:700;font-size:13px">'
       + (on?'<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0">✕</button>':'<span style="width:14px;flex-shrink:0"></span>')
       + '</div>';
@@ -13072,27 +13086,57 @@ window._rv2Finalizar = async function(){
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
-  const listaBil = st.pagar.map(function(b){ return b.nombre+' '+money(b.monto); }).join(' + ');
-  try{
-    await registrarEnHistorial({
-      usuario:st.usuario, tipo:'RETIRO', monto:total,
-      billetera_id: st.pagar[0]?st.pagar[0].id:null, billetera_nombre: listaBil,
-      // El historial mostraba un RETIRO común de $X y no se veía que era una CUOTA de un retiro
-      // más grande: había que leer las notas. El origen lo deja a la vista en la columna.
-      origen: completo?'LANDING':'LANDING·PARCIAL', estado:'OK',
-      notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+money(total)+' desde: '+listaBil+(completo?'':(' · restan '+money(restante)))+(st.obs?(' · Obs: '+st.obs):''),
-      saldo_post: st.saldoPost, solicitud_id: st.id
-    });
-  }catch(_e){}
+  // UNA FILA POR BILLETERA. Antes se registraba una sola fila con "MATRELO $300.000 + GIORDANO
+  // $200.000" pegado en billetera_nombre y el total en monto: no se podía filtrar el historial por
+  // billetera, ni cuadrar cuánto salió de cada una, ni cotejar contra Chunior — que sí tiene un
+  // movimiento por billetera. Ahora cada billetera es su propia instancia, y si son varias van
+  // numeradas (1/2, 2/2) para que se lea que son parte del mismo retiro.
+  const _n = st.pagar.length;
+  for(let _i=0; _i<_n; _i++){
+    const b = st.pagar[_i];
+    const _parteTxt = _n>1 ? (' · parte '+(_i+1)+'/'+_n+' del retiro') : '';
+    try{
+      await registrarEnHistorial({
+        usuario:st.usuario, tipo:'RETIRO', monto:b.monto,
+        billetera_id: b.id||null, billetera_nombre: b.nombre||null,
+        // El origen deja a la vista en la columna que es una cuota, sin tener que leer las notas.
+        origen: completo?'LANDING':'LANDING·PARCIAL', estado:'OK',
+        notas:'Retiro'+(completo?'':' PARCIAL')+' · '+money(b.monto)+' desde '+(b.nombre||'—')+_parteTxt
+          +(_n>1?(' · total pagado '+money(total)):'')
+          +(completo?'':(' · restan '+money(restante)))+(st.obs?(' · Obs: '+st.obs):''),
+        // El saldo post del usuario es UNO solo (lo dejó la extracción de fichas), así que va en la
+        // primera fila. Repetirlo en todas haría creer que bajó una vez por billetera.
+        saldo_post: _i===0 ? st.saldoPost : null,
+        solicitud_id: st.id
+      });
+    }catch(_e){}
+  }
   try{
     await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_REVISION', {
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
+      // Se escriben LAS DOS formas del progreso, plana y anidada. Los lectores del panel están
+      // repartidos: unos miran metadata.monto_pagado y otros metadata.retiro_parcial.pagado, y
+      // además hay oficinas corriendo builds distintos. Duplicar el dato es barato; que una
+      // versión no vea el progreso y muestre el total original como si no se hubiera pagado nada,
+      // no lo es.
+      retiro_parcial: { pagado:pagadoAcum, total:montoTotal, restante:restante },
       operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
     });
   }catch(_e){}
-  // Progreso NATIVO del parcial en el portal (landing_retiro_registrar_parcial) — best-effort.
-  if(!completo){ try{ await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }catch(_e){} }
+  // Progreso NATIVO del parcial en el portal. NO es best-effort silencioso: si esto falla, el
+  // cliente ya cobró pero el portal le sigue mostrando la deuda entera. El operador tiene que
+  // enterarse EN EL MOMENTO para anotarlo a mano.
+  if(!completo){
+    let _rp=null;
+    try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
+    catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
+    if(!_rp || !_rp.ok){
+      try{ toast('⚠ Parcial PAGADO pero sin registrar el progreso · revisalo','red'); }catch(_e){}
+      try{ alert('⚠️ El retiro parcial SÍ se pagó ('+money(total)+'), pero NO se pudo registrar el progreso.\n\n'
+        + ((_rp&&_rp.detail)||'') + '\n\nEl usuario no va a ver el descuento hasta que se registre. Anotalo a mano.'); }catch(_e){}
+    }
+  }
   try{
     const msg = completo
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
