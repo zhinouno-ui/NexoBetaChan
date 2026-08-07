@@ -24,8 +24,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "admimaster26-collab",
-        "repo": "nodo-panel"
+        "owner": "zhinouno-ui",
+        "repo": "NexoBetaChan"
       }
     ],
     "files": [
