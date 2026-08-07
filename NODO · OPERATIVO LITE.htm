@@ -12766,11 +12766,9 @@ window.abrirModalRetiroV2 = function(id){
     })(),
     fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{}
   };
-  // Pre-seleccionar el reparto sugerido (montos ya redondeados).
-  try{
-    const rep = recomendarRepartoRetiro(objetivo);
-    (rep.reparto||[]).forEach(function(x){ window._retiroV2.sel[String(x.id)]=true; window._retiroV2.montos[String(x.id)]=x.usar; });
-  }catch(_e){}
+  // NADA preseleccionado. El monto que el operador escribe en cada billetera es lo único que
+  // cuenta: si hay monto, esa billetera paga; si está vacío, no. Antes se pre-tildaba el reparto
+  // sugerido y el operador terminaba pagando desde una billetera que él nunca eligió.
   _rv2Render();
   _rv2LeerSaldo();
 };
@@ -12889,7 +12887,23 @@ window._rv2SetObjetivo = function(val){ const st=window._retiroV2; if(!st) retur
 // Formato de miles en vivo (5.000.000) para que no marean los ceros. Parsea solo dígitos.
 function _rv2FmtMiles(n){ n = Math.abs(Number(String(n).replace(/[^\d]/g,''))||0); return n ? n.toLocaleString('es-AR') : ''; }
 window._rv2InputObjetivo = function(el){ const st=window._retiroV2; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.objetivo=raw; el.value=_rv2FmtMiles(raw); _rv2ActualizarTotal(); };
-window._rv2InputMonto = function(el, bid){ const st=window._retiroV2; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.montos[String(bid)]=raw; el.value=_rv2FmtMiles(raw); _rv2ActualizarTotal(); };
+// El monto ES la selección: con monto > 0 la billetera paga, vacía deja de pagar. Sin repintar
+// toda la lista (eso replegaba el detalle y te sacaba el foco del campo mientras escribías).
+window._rv2InputMonto = function(el, bid){
+  const st=window._retiroV2; if(!st) return;
+  const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0);
+  st.montos[String(bid)]=raw;
+  st.sel[String(bid)] = raw>0;
+  el.value = raw>0 ? _rv2FmtMiles(raw) : '';
+  try{
+    const fila=el.parentElement;
+    if(fila){ fila.style.background = raw>0?'#12261a':'#12161d';
+      fila.style.borderColor = raw>0?'#22c55e':'#262d3a';
+      fila.style.borderLeftColor = raw>0?'#22c55e':'#2c3444'; }
+    el.style.borderColor = raw>0?'#22c55e':'#30363d';
+  }catch(_e){}
+  _rv2ActualizarTotal();
+};
 function _rv2ActualizarTotal(){
   const st=window._retiroV2; if(!st) return;
   const tot=_rv2TotalSel(); const el=document.getElementById('rv2Total');
@@ -13002,19 +13016,20 @@ function _rv2Render(){
     // La fila entera es clickeable y se ve que lo es: cursor de mano, hover, y el estado elegido
     // marcado con borde grueso + barra verde a la izquierda. Antes era un checkbox chiquito sobre
     // una fila casi del mismo color que el fondo y no se entendía que hubiera algo para tildar.
-    return '<div onclick="if(event.target.tagName!==\'INPUT\')_rv2Toggle(\''+bid+'\')" '
-      + 'onmouseover="if(!this.dataset.on)this.style.background=\'#1a2130\'" '
-      + 'onmouseout="if(!this.dataset.on)this.style.background=\'#12161d\'" '
-      + (on?'data-on="1" ':'')
-      + 'style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;cursor:pointer;transition:.12s;'
+    // Sin tilde y sin ✕: el MONTO es la selección. Escribís un número, esa billetera paga; lo
+    // borrás, deja de pagar. Tener checkbox + X + input para decir lo mismo eran tres formas de
+    // hacer una sola cosa, y encima al sacar la billetera se replegaba el detalle entero.
+    // El campo nunca se deshabilita — antes había que tildar primero para poder escribir.
+    return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;transition:.12s;'
       +   'background:'+(on?'#12261a':'#12161d')+';'
       +   'border:1px solid '+(on?'#22c55e':'#262d3a')+';'
       +   'border-left:4px solid '+(on?'#22c55e':'#2c3444')+';margin-top:5px">'
-      + '<input type="checkbox" '+(on?'checked':'')+' onchange="_rv2Toggle(\''+bid+'\')" style="width:17px;height:17px;cursor:pointer;flex-shrink:0;accent-color:#22c55e">'
       + '<div style="flex:1;min-width:0;line-height:1.2"><span style="font-weight:700;color:'+(on?'#f0f6fc':'#c9d1d9')+';font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
       +   '<div style="color:#8b949e;font-size:11px">tiene '+money(b.SALDO||0)+'</div></div>'
-      + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" style="width:104px;text-align:right;background:#0d1117;border:1px solid '+(on?'#30363d':'#20262f')+';color:#e6edf3;border-radius:6px;padding:4px 6px;font-weight:700;font-size:13px">'
-      + (on?'<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0">✕</button>':'<span style="width:14px;flex-shrink:0"></span>')
+      + '<input type="text" inputmode="numeric" value="'+(monto>0?_rv2FmtMiles(monto):'')+'" '
+      +   'oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="0" '
+      +   'title="Escribí cuánto sale de esta billetera. Vacío = no paga."'
+      +   'style="width:112px;text-align:right;background:#0d1117;border:1px solid '+(on?'#22c55e':'#30363d')+';color:#e6edf3;border-radius:6px;padding:6px 8px;font-weight:700;font-size:14px">'
       + '</div>';
   }).join('');
   const cbuHtml = st.cbu ? ('<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+escapeHtml(st.cbu)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#161b22;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:8px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(st.cbu)+'</span></span><span class="pcopy-ico" style="font-size:15px">📋</span></button>') : '';
