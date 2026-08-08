@@ -44,12 +44,25 @@ IPC: si el archivo está, NODO corrió en esta PC y dejó su oficina ahí.
 
 ```jsonc
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "pc_codigo": "P4",                            // ← de qué oficina son estos datos
-  "generatedAt": "2026-08-07T09:31:00.000Z",    // cuándo lo escribió NODO
-  "operador": "juanjulian"                      // quién estaba logueado (referencia)
+  "generatedAt": "2026-08-08T12:31:00.000Z",    // cuándo lo escribió NODO
+  "operador": "juanjulian",                     // quién estaba logueado (referencia)
+  "supabase": {                                 // ← a qué servidor apuntar
+    "url": "https://pjvvyvfcwjoocjqvdror.supabase.co",
+    "key": "sb_publishable_…"
+  }
 }
 ```
+
+**Sobre `supabase`: NO lo hardcodees en Nexo.** Hay más de un servidor en juego y se cambia
+editando el código de NODO. Si Nexo lo tuviera fijo, al cambiar de servidor quedaría leyendo el
+viejo —datos de otra base— sin que nadie se entere. Tomándolo de acá, Nexo siempre habla con el
+**mismo** servidor que NODO, sin configurar nada.
+
+La `key` es la *publishable* (anon): ya viaja dentro de la app en cada máquina y está protegida por
+RLS. No es un secreto. El secreto de verdad es `PANEL_DATA_SECRET` (el que habilita las RPC
+`panel_*`) y **no se manda** — si Nexo necesita algo que lo requiera, se resuelve por otro lado.
 
 En cada oficina llega el suyo: P1, P2, P4… Nexo no tiene que elegir nada ni tener nada precargado,
 sólo leer el que le dejó el NODO de esa PC.
@@ -67,7 +80,7 @@ Forma REAL del archivo, leída del código (`_nexoBuildPayload`), no de memoria:
 
 ```jsonc
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "generatedAt": "2026-08-08T12:31:00.000Z",
   "pc_codigo": "P4",
   "operador": "juanjulian",
@@ -221,7 +234,7 @@ estado `OK`. Si el número tiene que cerrar, sumá el libro; el metadata sirve p
 
 ## 6. Resumen de lo que se le pide a Nexo
 
-1. Leer `pc_codigo` de `nodo-datos.json` y usarlo como scope. Llega solo, en cada una de las 9
+1. Leer `pc_codigo` Y `supabase` de `nodo-datos.json`: la oficina y el servidor salen de ahí, no de un config propio. Llega solo, en cada una de las 9
    oficinas — no hay que configurarlo en ningún lado.
 2. Releerlo cada tanto: puede cambiar mientras Nexo está abierto (cambio de puesto).
 3. Separar `portal` de `whatsapp` en toda métrica y permitir filtrar por canal.

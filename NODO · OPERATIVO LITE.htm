@@ -4367,10 +4367,17 @@ function _nexoBuildPayload(opsExtra){
   // config. Así el mismo instalador de Nexo sirve en cualquier máquina. Ver NEXO_INTEGRACION.md.
   const _pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim();
   return {
-    schemaVersion:2,
+    schemaVersion:3,
     generatedAt:new Date().toISOString(),
     pc_codigo:_pc || null,                 // null = NODO todavía no sabe la oficina → Nexo NO asume ninguna
     operador:(window.operador && (window.operador.usuario||window.operador.nombre)) || '',
+    // A QUÉ SERVIDOR apuntar. Hay más de un Supabase en juego (mirá el bloque de SUPABASE_URL: hay
+    // otro comentado) y se cambia editando el código. Si Nexo lo tuviera hardcodeado, al cambiar de
+    // servidor quedaría leyendo el viejo —datos de otra base— sin que nadie se entere. Mandándolo
+    // desde acá, Nexo siempre habla con el MISMO servidor que NODO, sin configurar nada.
+    // La key es la publishable (anon): ya viaja dentro de la app en cada máquina y está protegida
+    // por RLS. No es un secreto; el secreto es PANEL_DATA_SECRET, que NO se manda.
+    supabase:{ url:SUPABASE_URL, key:SUPABASE_KEY },
     usuarios:usuarios
   };
 }
