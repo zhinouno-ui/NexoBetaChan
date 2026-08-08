@@ -1032,7 +1032,15 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <div class="card" style="margin-bottom:0">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <h2 class="card-title" style="margin-bottom:0">📋 Solicitudes pendientes</h2>
-                <button class="mini-btn gray" onclick="mostrarVista('solicitudes')" style="font-size:11px">Ver todas</button>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <!-- Los retiros a medio pagar salían mezclados con las solicitudes nuevas y se
+                       perdían de vista. Acá tienen su propia caja, con cuánto falta de cada uno.
+                       El botón sólo aparece si hay alguno. -->
+                  <button id="btnParcialesEnProceso" class="mini-btn" onclick="verRetirosParciales()"
+                          style="font-size:11px;background:#7c3aed;color:#fff;border:none;display:none"
+                          title="Retiros que se están pagando por partes">💸 Parciales <span id="btnParcialesCount">0</span></button>
+                  <button class="mini-btn gray" onclick="mostrarVista('solicitudes')" style="font-size:11px">Ver todas</button>
+                </div>
               </div>
               <div id="tablaSolicitudesInicio"></div>
             </div>
@@ -5127,6 +5135,38 @@ window._retiroParcialInfo = function(s){
 // Un RETIRO con progreso PARCIAL (se pagó algo pero NO todo) sigue PENDIENTE hasta cobrar el total,
 // aunque la RPC lo haya marcado PAGADA/completo. Solo debe desaparecer si se retiró por COMPLETO
 // (pagado >= total) o si es un cierre deliberado (RECHAZADA/CANCELADA). Red de seguridad del panel.
+// Caja de retiros pagándose por partes. Portado de la línea de la encargada (5405ff9): los
+// parciales salían mezclados con las solicitudes nuevas y se perdían de vista — de hecho pasamos
+// media sesión peleando con uno que "desaparecía". La lista la arma el render del Inicio en
+// window._parcialesEnProceso.
+window.verRetirosParciales = function(){
+  const arr = (window._parcialesEnProceso || []).slice();
+  if(!arr.length){ try{ toast('No hay retiros pagándose por partes.','blue'); }catch(_e){} return; }
+  const filas = arr.map(function(s){
+    const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+    const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
+    const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
+    const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+    const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+    const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #7c3aed;border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+      +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
+      +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
+      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#a78bfa">falta '+money(pp.restante)+'</div>'
+      +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
+      + '</div>'
+      + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
+      +   '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#7c3aed,#a78bfa)"></div></div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">'
+      +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+      +   '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" '
+      +     'onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>'
+      + '</div></div>';
+  }).join('');
+  abrirModal('💸 Retiros pagándose por partes · '+arr.length, filas, null, '');
+};
+
 window._retiroParcialSigueAbierto = function(s){
   try{
     if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='RETIRO') return false;
@@ -12289,7 +12329,20 @@ if(window.ctrlElectron){
 
     const all = (V154P.solicitudes || []).slice();
     // INICIO: solo muestra CARGA y RETIRO pendientes. SOPORTE va al chat inbox, no acá.
-    const pendientes = all.filter(s => (!estadoCerrado(s.ESTADO) || (window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
+    const abiertas = all.filter(s => (!estadoCerrado(s.ESTADO) || (window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
+    // Los retiros a medio pagar se SACAN de la lista de pendientes y van a su propia caja (botón
+    // "💸 Parciales"). Mezclados con las solicitudes nuevas se perdían de vista, y son los que más
+    // hay que seguir: hay plata del cliente sin terminar de pagar.
+    const _esParc = s => !!(window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s));
+    const parciales = abiertas.filter(_esParc);
+    const pendientes = abiertas.filter(s => !_esParc(s));
+    window._parcialesEnProceso = parciales;
+    try{
+      const bp = document.getElementById("btnParcialesEnProceso");
+      const bc = document.getElementById("btnParcialesCount");
+      if(bc) bc.textContent = String(parciales.length);
+      if(bp) bp.style.display = parciales.length ? "" : "none";
+    }catch(_e){}
     const visibles = pendientes.slice(0,8);
 
     try{
