@@ -4554,6 +4554,31 @@ window.esDatoPropioBilletera = function(valor){
   }catch(_e){}
   return hit;
 };
+// Bloquear un titular desde la ficha del jugador. Mismo bloqueo que usa el auto-rechazo, así que
+// el próximo intento con ese titular se rechaza solo y no le llega al operador.
+window.pjBloquearTitular = function(usuario, titular){
+  if(!usuario || !titular) return;
+  if(!confirm('Bloquear el titular:\n\n  "'+titular+'"\n\npara el usuario «'+usuario+'».\n\n'
+    + 'Si lo vuelve a declarar en una carga o un retiro, se le rechaza SOLO y no te llega.\n\n¿Bloquear?')) return;
+  try{
+    window.marcarTitularRechazado(usuario, titular, 'BLOQUEADO_DESDE_FICHA');
+    toast('🚫 "'+titular+'" bloqueado para '+usuario, 'yellow');
+    // Repintar la ficha para que el titular quede marcado sin tener que cerrarla y volver a abrirla.
+    if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);
+  }catch(e){ toast('No se pudo bloquear: '+(e.message||''), 'red'); }
+};
+window.pjDesbloquearTitular = function(usuario, titular){
+  try{
+    const K='nodo_titulares_rechazados';
+    const m=JSON.parse(localStorage.getItem(K)||'{}')||{};
+    const k=String(usuario||'').toLowerCase().trim()+'|'+
+      String(titular||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+    delete m[k]; localStorage.setItem(K, JSON.stringify(m));
+    toast('✓ "'+titular+'" desbloqueado', 'green');
+    if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);
+  }catch(e){ toast('No se pudo desbloquear: '+(e.message||''), 'red'); }
+};
+
 window.jugadorRegistrarDato = function(usuario, dato){
   const u = String(usuario||'').toLowerCase().trim();
   if(!u || !dato) return;
@@ -4790,7 +4815,23 @@ window.abrirPerfilJugador = function(usuario){
   const railIdent =
       '<div class="pj-card"><h4>👤 Identidad</h4>'
     + (tits.length
-        ? tits.map(function(t){ return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)+' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span></span></div>'; }).join('')
+        // Cada titular con su botón de bloquear. Acá es donde el operador los VE juntos y se da
+        // cuenta de cuál está mal ("Ana marina" suelto al lado del nombre completo, un apodo, una
+        // basura): tenerlo que esperar a que el cliente mande otra solicitud para poder bloquearlo
+        // desde el modal de rechazo era el camino largo.
+        ? tits.map(function(t){
+            const _b = (window.titularYaRechazado && window.titularYaRechazado(usuario, t.raw));
+            return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)
+              + ' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span>'
+              + (_b
+                  ? ' <span style="color:#f87171;font-weight:700;font-size:10px">🚫 bloqueado</span>'
+                    + ' <button type="button" onclick="pjDesbloquearTitular(\''+esc(String(usuario).replace(/'/g,"\\'"))+'\',\''+esc(String(t.raw).replace(/'/g,"\\'"))+'\')"'
+                    + ' title="Desbloquear: vuelve a aceptarse" style="background:transparent;border:1px solid #3d4450;color:#8b949e;border-radius:6px;font-size:9.5px;padding:1px 5px;cursor:pointer;margin-left:3px">↩</button>'
+                  : ' <button type="button" onclick="pjBloquearTitular(\''+esc(String(usuario).replace(/'/g,"\\'"))+'\',\''+esc(String(t.raw).replace(/'/g,"\\'"))+'\')"'
+                    + ' title="Bloquear este titular: si lo vuelve a declarar, se le rechaza solo"'
+                    + ' style="background:transparent;border:1px solid #3d4450;color:#8b949e;border-radius:6px;font-size:9.5px;padding:1px 5px;cursor:pointer;margin-left:4px">🚫 bloquear</button>')
+              + '</span></div>';
+          }).join('')
         : (crmTit
             ? '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(crmTit)+' <span title="Del registro/whaticket" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
             : '<div class="pj-field"><span class="k">Titular</span><span class="v" style="color:#5a6474">sin datos</span></div>'))
