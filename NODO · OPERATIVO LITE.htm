@@ -12884,18 +12884,40 @@ async function cargarSolicitudesPortal(silencioso=false){
     const _rapHtml = _rap.map(function(t){
       return '<button type="button" class="mini-btn" style="margin:2px;font-size:11px" data-t="'+t.replace(/"/g,'&quot;')+'" onclick="var e=document.getElementById(\'v154pRechObs\'); if(e) e.value=this.getAttribute(\'data-t\');">'+escapeHtml(t.split(".")[0])+'</button>';
     }).join("");
+    // Bloquear el titular a mano. El auto-rechazo cubre sólo criterios DUROS (datos nuestros, sin
+    // letras, el propio usuario, reincidencia). Todo lo demás —"asdasd", un nombre inventado, el
+    // apodo del cliente— lo tiene que ver un operador, y hasta ahora no tenía cómo dejarlo
+    // bloqueado: lo rechazaba y el cliente lo volvía a mandar igual.
+    const _tit = String((s&&(s.TITULAR||s.NOMBRE_COMPLETO))||'').trim();
+    const _usr = String((s&&s.USUARIO)||'').trim();
+    const _yaBloq = (_tit && window.titularYaRechazado) ? window.titularYaRechazado(_usr,_tit) : false;
+    const _bloqHtml = _tit
+      ? ('<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid #30363d;font-size:12px;cursor:pointer;color:#e6edf3">'
+         + '<input type="checkbox" id="v154pBloqTitular" '+(_yaBloq?'checked disabled':'')+' style="width:16px;height:16px;margin-top:1px;flex-shrink:0">'
+         + '<span>Bloquear el titular <b>"'+escapeHtml(_tit)+'"</b> para <b>'+escapeHtml(_usr)+'</b>'
+         + '<div style="color:#8b949e;font-size:11px;margin-top:1px">'
+         + (_yaBloq ? 'Ya está bloqueado — si lo vuelve a mandar, se le rechaza solo.'
+                    : 'Si lo vuelve a mandar igual, se le rechaza solo y no te llega.')+'</div></span></label>')
+      : '';
     abrirModal("Rechazar solicitud #"+id,
       '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
       '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+
       '<div style="margin-top:6px;font-size:11px;color:#93a3b8">Motivos rápidos (tocá para usar):</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>',
+      '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>'+
+      _bloqHtml,
       async function(){
         const motivo = ((document.getElementById("v154pRechObs")||{}).value||"").trim()
           || "No pudimos procesar tu solicitud. Escribinos por el chat y lo resolvemos.";
+        // Se lee ANTES de cerrar el modal: después el checkbox ya no existe en el DOM.
+        const _bloq = !!(document.getElementById("v154pBloqTitular") && document.getElementById("v154pBloqTitular").checked);
         cerrarModal();
         try{
           await actualizarSolicitudPortal(id, "RECHAZADA", {etapa:"RECHAZADA_PANEL", motivo});
           const usuario = s&&(s.USUARIO||s.USUARIO_JUGADOR||"");
+          if(_bloq && _tit && window.marcarTitularRechazado){
+            window.marcarTitularRechazado(usuario, _tit, 'BLOQUEADO_POR_OPERADOR');
+            try{ toast('🚫 Titular "'+_tit+'" bloqueado para '+usuario,'yellow'); }catch(_e){}
+          }
           if(usuario) await notificarUsuarioEnChat(usuario, "❌ Tu solicitud fue rechazada.\n📝 Motivo: "+motivo);
           toast("Solicitud rechazada","red");
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
