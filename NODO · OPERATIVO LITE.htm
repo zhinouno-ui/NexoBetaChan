@@ -4436,6 +4436,7 @@ function _normNombre(v){
   return String(v||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
     .replace(/[^a-z0-9]+/g,' ').trim();
 }
+window._normNombre = _normNombre;   // el bloque del portal vive en otro <script>
 window.esDatoPropioBilletera = function(valor){
   const v = _normNombre(valor);
   const vCbu = _jugNormCbu(valor);
@@ -12561,6 +12562,11 @@ async function cargarSolicitudesPortal(silencioso=false){
     // 2) Sin una sola letra → no es el nombre de una persona
     if(!/[a-záéíóúñü]/i.test(titular)) return { motivo:'SOLO_NUMEROS',
       texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular de la cuenta desde la que transferís.' };
+    // 3) Puso su PROPIO USUARIO como titular. Es el caso más común de "completé cualquier cosa":
+    //    "usuariobet", "maria112x1". Ningún banco tiene una cuenta a nombre de un alias de casino,
+    //    así que el comprobante nunca va a coincidir y el depósito no se puede cotejar.
+    if(window._normNombre(titular) === window._normNombre(usuario)) return { motivo:'USUARIO_COMO_TITULAR',
+      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO de la persona desde cuya cuenta transferís, tal como figura en el banco.' };
     // 3) Reincidencia
     if(window.titularYaRechazado(usuario, titular)) return { motivo:'REINCIDENTE',
       texto:'Ya te rechazamos ese mismo titular ("'+titular+'"). Poné el nombre completo real del titular de la cuenta, o escribinos por soporte.' };
