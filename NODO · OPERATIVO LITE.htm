@@ -7959,7 +7959,12 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
       if(!r.error && Array.isArray(r.data)){
         r.data.forEach(function(v){
           const k=String(v.usuario||'').toLowerCase(); if(!k) return;
-          if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk' };
+          // Se guarda de QUÉ OFICINA es la fila. Este buscador va con p_pc_codigos:null, o sea que
+          // trae las 9 oficinas — pero panel_vincular_usuario, que es el que decide, filtra por LA
+          // TUYA. Sin esto la tarjeta te nombraba al dueño del teléfono en otra oficina y el
+          // confirm te nombraba a otro distinto: dos veredictos para el mismo dato.
+          if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk', pc:String(v.pc_codigo||'') };
+          if(!cand[k].pc && v.pc_codigo) cand[k].pc=String(v.pc_codigo);
           const t=_altaNormTel(v.telefono_canon||v.telefono);
           if(t && cand[k].telefonos.indexOf(t)<0) cand[k].telefonos.push(t);
           if(!cand[k].titular && v.titular) cand[k].titular=v.titular;
@@ -7995,8 +8000,13 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
         // Este campo responde UNA pregunta: de quién es este teléfono. No se negocia con el
         // declarado; para eso está el cruce del pie, que compara los dos y muestra el conflicto.
         if(tn===tD){
-          if(!out.telefono.exacto) out.telefono.exacto=Object.assign({_tel:tn}, c);
-          else if(_altaNormU(out.telefono.exacto.usuario)!==_altaNormU(c.usuario)) out.telefono.varios=true;
+          // Gana el de MI oficina. panel_vincular_usuario —el que realmente decide— filtra por
+          // pc_codigo, así que si el teléfono figura en dos oficinas y acá mostrábamos el de la
+          // otra, la tarjeta nombraba a un usuario y el confirm de vincular a otro distinto.
+          const _mio = _altaNormU(c.pc||'')===_altaNormU(pcOperativa||'');
+          const _yaMio = out.telefono.exacto && _altaNormU(out.telefono.exacto.pc||'')===_altaNormU(pcOperativa||'');
+          if(!out.telefono.exacto || (_mio && !_yaMio)) out.telefono.exacto=Object.assign({_tel:tn}, c);
+          else if(_altaNormU(out.telefono.exacto.usuario)!==_altaNormU(c.usuario) && _mio===_yaMio) out.telefono.varios=true;
           return;
         }
         // mismos últimos 8 dígitos (prefijo/0/15 distinto) o ≤2 dígitos cambiados
@@ -8181,9 +8191,16 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       } else {
         const grave = !!uDecl;                       // sin usuario declarado es dato, no contradicción
         if(grave) alerta=true;
+        // ¿El conflicto es en MI oficina o en otra? No es lo mismo: si el teléfono está tomado en
+        // otra oficina, vincular acá no lo va a liberar allá — y el confirm de vincular sólo mira
+        // la mía, así que ahí ni siquiera va a aparecer el conflicto.
+        const _pcOtro = String(tOk.pc||'');
+        const _esOtraOfi = _pcOtro && _altaNormU(_pcOtro)!==_altaNormU(pcOperativa||'');
         filas+=fila('Teléfono', esc(tN),
-          (grave?'⚠ es de ':'📱 es de ')+'<b>'+esc(tOk.usuario)+'</b>', grave?'#e3b341':'#58a6ff',
-          '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
+          (grave?'⚠ es de ':'📱 es de ')+'<b>'+esc(tOk.usuario)+'</b>'+(_esOtraOfi?(' <span style="font-size:9.5px;color:#8b949e">· oficina '+esc(_pcOtro)+'</span>'):''),
+          grave?'#e3b341':'#58a6ff',
+          (_esOtraOfi ? sub('Está tomado en OTRA oficina — vincular acá no lo libera allá') : '')
+          + '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
       }
     } else if(r.telefono.similares.length){
       alerta=true;
