@@ -8518,17 +8518,36 @@ const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', reti
 // Cuando una tarea detecta que no hay sesión, se levanta esta bandera y las que siguen se
 // rechazan AL INSTANTE, sin tocar el agente. Se baja sola al reponer la sesión.
 window._drexSinSesion = false;
+window._drexCanceladas = [];      // qué quedó sin ejecutar, para poder decirlo al reponer
 window._drexMarcarSinSesion = function(motivo){
   if(window._drexSinSesion) return;
   window._drexSinSesion = true;
   const q = (window._drexCola && window._drexCola.pendientes) || 0;
-  try{ toast('🔒 Sesión de Agentes caída'+(motivo?(' ('+motivo+')'):'')+(q>1?(' · se cancelan '+(q-1)+' en cola'):'')+' — logueate y reintentá','red'); }catch(_e){}
+  window._drexCanceladas = [];
+  try{ toast('🔒 Sesión de Agentes caída'+(q>1?(' · se cancelan '+(q-1)+' en cola'):'')+' — abriendo el login…','red'); }catch(_e){}
   console.warn('[cola] sesión caída → se cancela lo encolado ('+q+')');
+  // ACTUAR, no sólo avisar. Detectar que la sesión se cayó y dejar al operador con un cartel rojo
+  // que dice "logueate" es hacerle a él el trabajo que la app ya sabe hacer: el modal de login
+  // existe (_mostrarModalLoginDrex) y es el mismo que usa ensureDrexSession. Se abre solo.
+  // Va con delay para no pisar el toast ni abrirse dos veces si caen varias tareas juntas.
+  setTimeout(function(){
+    try{
+      if(!window._drexSinSesion) return;                       // ya se repuso en el interín
+      if(document.getElementById('drexLUser')) return;          // el modal ya está abierto
+      if(typeof _mostrarModalLoginDrex==='function') _mostrarModalLoginDrex();
+    }catch(_e){}
+  }, 600);
 };
 window._drexSesionRepuesta = function(){
   if(!window._drexSinSesion) return;
   window._drexSinSesion = false;
-  try{ toast('🔓 Sesión repuesta · ya podés reintentar','green'); }catch(_e){}
+  // Al reponer, se dice QUÉ quedó sin hacer. "Ya podés reintentar" a secas obliga al operador a
+  // acordarse de memoria qué estaba haciendo cuando se cayó.
+  const c = (window._drexCanceladas||[]).slice(0,4);
+  window._drexCanceladas = [];
+  try{
+    toast('🔓 Sesión repuesta'+(c.length?(' · quedó sin hacer: '+c.join(', ')+' — reintentalo'):' · ya podés seguir'), c.length?'yellow':'green');
+  }catch(_e){}
 };
 function _drexEncolar(nombre, fn, opts){
   const st = window._drexCola;
@@ -8544,9 +8563,12 @@ function _drexEncolar(nombre, fn, opts){
   const correr = function(){
     // Si la sesión se cayó mientras esta tarea esperaba, se descarta sin tocar el agente. Antes se
     // ejecutaba igual y se comía sus 120s de timeout, una atrás de otra.
-    if(window._drexSinSesion){
+    // Los chequeos de sesión y el login NUNCA se cancelan: son justamente los que la reponen. Si se
+    // cancelaran, el cortacircuitos no se podría apagar nunca — quedaba trabado para siempre.
+    if(window._drexSinSesion && nombre!=='estadoPagina' && nombre!=='iniciarSesion'){
       if(st.pendientes > 0) st.pendientes--;
-      return Promise.reject(new Error('Sesión de Agentes caída — "'+nombre+'" no se ejecutó. Logueate y reintentá.'));
+      try{ (window._drexCanceladas||[]).push(_DREX_NOMBRE[nombre] || nombre); }catch(_e){}
+      return Promise.reject(new Error('Sesión de Agentes caída — "'+(_DREX_NOMBRE[nombre]||nombre)+'" no se ejecutó. Se abrió el login: entrá y reintentá.'));
     }
     st.activo = { nombre:nombre, desde:Date.now() };
     const t0 = Date.now();
@@ -8592,9 +8614,17 @@ async function callDrex(method, ...args){
     // se levanta la bandera y lo que quedó en cola se cancela solo en vez de morir de a 120s.
     // El login exitoso la baja — así se retoma sin tener que reiniciar nada.
     try{
-      if(_r && _r.needsLogin) window._drexMarcarSinSesion(method);
-      else if(_r && _r.ok !== false && method === 'iniciarSesion') window._drexSesionRepuesta();
+      // OJO con qué se considera "sesión caída". estadoPagina e iniciarSesion devuelven needsLogin
+      // como parte NORMAL de su trabajo: ensureDrexSession justamente los usa para decidir si hay
+      // que mostrar el login. Tomarlos como caída hacía que el cortacircuitos se disparara en pleno
+      // arranque de una carga y cancelara todo lo que venía atrás — con la sesión perfectamente
+      // viva. Solicitudes que quedaron en ERROR_OPERATIVO por eso.
+      // Sólo cuenta si el que se encontró sin sesión fue una operación REAL, que ya daba por hecho
+      // que había sesión.
+      const _esChequeo = (method==='estadoPagina' || method==='iniciarSesion');
+      if(_r && _r.needsLogin && !_esChequeo) window._drexMarcarSinSesion(method);
       else if(_r && _r.needsLogin === false) window._drexSesionRepuesta();
+      else if(_r && _r.ok === true && method === 'iniciarSesion') window._drexSesionRepuesta();
     }catch(_e){}
     return _r;
   });
