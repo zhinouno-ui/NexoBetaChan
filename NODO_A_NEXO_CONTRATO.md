@@ -246,25 +246,47 @@ estado `OK`. Si el número tiene que cerrar, sumá el libro; el metadata sirve p
 
 ---
 
+---
+
 ## 8. Pedidos de Nexo → NODO (implementado, APAGADO por defecto)
 
 Nexo no puede escribir identidades: `panel_vincular_usuario` exige `PANEL_DATA_SECRET` y ese
-secreto no se comparte. **Nexo encola, NODO aplica.** Ya está del lado de NODO:
+secreto no se comparte. **Nexo encola, NODO aplica.** Ya está hecho del lado de NODO.
 
-- NODO lee `%APPDATA%
-exo-desktopshared
-exo-pedidos.json` (SOLO lectura — no lo borra ni lo
-  reescribe; ese archivo es de Nexo).
-- Por cada pedido `vincular_telefono` llama a `panel_vincular_usuario` con su secreto,
-  **sin `p_forzar`**: si hay conflicto de teléfono no lo pisa, lo devuelve como error. Un conflicto
-  lo resuelve un operador mirando el cotejo, no un pedido automático.
-- Ignora el archivo si su `pc_codigo` no es el de esta oficina.
-- El acuse vuelve en `nodo-datos.json`:
+**El archivo que NODO lee** (dueño: Nexo, NODO sólo lo lee — no lo borra ni lo reescribe):
 
+```
+%APPDATA%\nexo-desktop\shared\nexo-pedidos.json
+```
 
+**Qué hace NODO con cada pedido `vincular_telefono`:**
 
-Los acuses se sacan de la cola de NODO recién cuando se escribieron de verdad en el archivo.
+- Llama a `panel_vincular_usuario` con su propio secreto, **sin `p_forzar`**. Si hay conflicto de
+  teléfono no lo pisa: lo devuelve como error. Un conflicto de identidad lo resuelve un operador
+  mirando el cotejo, no un pedido automático.
+- Ignora el archivo entero si su `pc_codigo` no es el de esta oficina.
+- Procesa como mucho 200 pedidos por vuelta, en el mismo ciclo que el sync.
 
-**Arranca APAGADO.** Mientras `panel_vincular_usuario` compare el usuario crudo (sección 5), cada
-pedido puede duplicar al usuario. Se prende con `window.nexoPedidosActivar(true)` en la consola,
-DESPUÉS de aplicar `SQL_fix_vincular_usuario_limpio.sql`. Se apaga con `(false)`.
+**El acuse vuelve en `nodo-datos.json`:**
+
+```jsonc
+"pedidosAplicados": [
+  { "id": "a3f2c1d4-…", "ok": true,  "error": null, "ts": 1754500100000 },
+  { "id": "b7e1f9a2-…", "ok": false, "error": "conflicto: el teléfono es de pepe123", "ts": 1754500101000 }
+]
+```
+
+Un acuse sale de la cola de NODO recién cuando se escribió de verdad en el archivo. Si entra uno
+nuevo mientras se está armando el payload, sale en el próximo en vez de perderse.
+
+### ⚠ Arranca APAGADO
+
+Mientras `panel_vincular_usuario` compare el usuario **crudo** (el bug de la sección 5), cada
+pedido puede **duplicar** al usuario en el servidor. Lo pidió el lado de Nexo y tiene razón.
+
+Se prende desde la consola de NODO, **después** de aplicar `SQL_fix_vincular_usuario_limpio.sql`:
+
+```js
+window.nexoPedidosActivar(true)    // prende · persiste
+window.nexoPedidosActivar(false)   // apaga
+```
