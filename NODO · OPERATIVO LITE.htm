@@ -12898,7 +12898,7 @@ function _rv2TotalSel(){
 // Pre-relleno al tildar una billetera: SIEMPRE el RESTANTE que falta para llegar al objetivo,
 // nunca el saldo completo de la billetera. Antes `falta||saldo` caía al saldo completo cuando
 // `falta` daba 0 (JS trata 0 como falsy) → tildabas una billetera de más y te "pasabas" solo.
-window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= window._montoRedondo?window._montoRedondo(Math.min(Number(b&&b.SALDO||0), falta)):Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
+window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, Math.max(0,Number(st.totalReal||0)-Number(st.yaPagado||0)) - _rv2TotalSel()); st.montos[bid]= window._montoRedondo?window._montoRedondo(Math.min(Number(b&&b.SALDO||0), falta)):Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 // Fija el retiro al SALDO REAL del usuario (declaró de más). Al mover el objetivo, `montoTotal`
 // del cierre pasa a ser ese monto → el retiro cierra COMPLETO, sin dejar un parcial fantasma por
@@ -13005,17 +13005,21 @@ function _rv2ActualizarTotal(){
   const st=window._retiroV2; if(!st) return;
   const tot=_rv2TotalSel(); const el=document.getElementById('rv2Total');
   if(!el) return;
-  const parcial = tot < st.objetivo-0.5;
-  const paso    = tot > st.objetivo+0.5;
+  // Se mide contra LO QUE FALTA de la deuda (totalReal − yaPagado), no contra st.objetivo, que se
+  // lee al abrir y puede venir del metadata podrido. Si no, esta línea decía "/ $200.000" mientras
+  // el campo de arriba mostraba que faltaban $250.000.
+  const falta = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  const parcial = tot < falta-0.5;
+  const paso    = tot > falta+0.5;
   const ok = tot>0 && !paso;
-  let html = 'Seleccionado: <b style="color:'+(ok?'#22c55e':'#f87171')+'">'+money(tot)+'</b> / '+money(st.objetivo)
-    + (parcial?' · <span style="color:#f5c518">parcial</span>':(paso?' · <span style="color:#f87171">¡te pasaste!</span>':' ✓'));
+  let html = 'Seleccionado: <b style="color:'+(ok?'#22c55e':'#f87171')+'">'+money(tot)+'</b> / '+money(falta)
+    + (parcial?' · <span style="color:#f5c518">parcial</span>':(paso?' · <span style="color:#f87171">de más</span>':' ✓'));
   // Sin tilde de "confirmo parcial": el operador YA eligió los montos, pedirle que además tilde
   // que quiso hacer lo que acaba de hacer es una confirmación de trámite — de las que se tildan
   // sin leer. En su lugar se dice en texto qué va a pasar, y el botón de abajo lo repite.
   if(parcial){
     html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700">'
-      + '↩ Quedan '+money(st.objetivo-tot)+' sin pagar · la solicitud sigue abierta para el resto</div>';
+      + '↩ Quedan '+money(falta-tot)+' sin pagar · la solicitud sigue abierta para el resto</div>';
   }
   el.innerHTML = html;
   _rv2ActualizarBotonAprobar();
@@ -13224,7 +13228,17 @@ window._rv2Aprobar = async function(){
     .map(function(b){ return { id:String(b.ID_BILLETERA), nombre:b.NOMBRE_VISIBLE||'—', chunior:b.CHUNIOR_UID, saldo:Number(b.SALDO||0), monto:Number(st.montos[String(b.ID_BILLETERA)]||0) }; });
   if(!seleccionadas.length){ toast('Tildá al menos una billetera con monto.','red'); return; }
   if(total<=0){ toast('El total a pagar es 0.','red'); return; }
-  if(total > st.objetivo+0.5){ toast('El total ('+money(total)+') supera el monto real ('+money(st.objetivo)+').','red'); return; }
+  // Se compara contra LO QUE FALTA de la deuda (totalReal − yaPagado), igual que el botón. Antes
+  // comparaba contra st.objetivo, que es un valor que se lee al abrir el modal y puede venir del
+  // metadata podrido: el botón te habilitaba y esta validación te rechazaba con "supera el monto
+  // real ($200.000)" cuando en pantalla decía claramente que faltaban $250.000. Y no corta el
+  // flujo: pagar de más se pregunta, no se prohíbe — el que sabe cuánto se debe es el operador.
+  const _faltaDeuda = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  if(total > _faltaDeuda + 0.5){
+    if(!confirm('Vas a pagar '+money(total)+' y de esta deuda sólo faltan '+money(_faltaDeuda)+'.\n\n'
+      + 'Son '+money(total-_faltaDeuda)+' de MÁS.\n\n'
+      + 'Si el total del retiro está mal cargado, corregilo arriba en "Total del retiro".\n\n¿Pagar igual?')) return;
+  }
   for(const b of seleccionadas){ if(b.monto > b.saldo+0.5){ toast(b.nombre+' no tiene '+money(b.monto)+' (saldo '+money(b.saldo)+').','red'); return; } }
   // Chequeo de fichas. Si no se pudo leer al abrir el modal, se intenta AHORA — antes se salteaba
   // en silencio (la condición pedía saldoReal!=null) y el retiro salía sin verificar nada.
