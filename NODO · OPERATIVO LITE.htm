@@ -8363,6 +8363,8 @@ async function _resolverAliasParaCasino(usuario){
 window._drexCola = { activo:null, pendientes:0 };
 let _drexColaP = Promise.resolve();
 const _DREX_TAREA_MAX_MS = 120000;
+// El puente del portal (V15.4) vive en OTRO bloque <script>: se expone para que pueda encolar.
+setTimeout(function(){ try{ window._drexEncolar = _drexEncolar; }catch(_e){} },0);
 // Nombres lindos para el operador (los métodos internos no le dicen nada).
 const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', retirarSaldo:'retiro',
   crearUsuario:'crear usuario', cambiarClave:'cambiar clave', obtenerSaldoAgente:'leer fichas',
@@ -13846,8 +13848,16 @@ window._rv2Finalizar = async function(){
     toast('Portal: operación enviada. Podés seguir usando el panel.', 'blue');
     // No dejamos el modal bloqueando la pantalla: el flujo continúa en segundo plano
     // y al terminar actualiza Solicitudes/Historial como LANDING.
-    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId})
-      .catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
+    // EN COLA, no en paralelo. Antes esto llamaba directo y ejecutarSolicitudPortalSimple tomaba
+    // _drexGlobalLock: si ya había otra operación corriendo, RECHAZABA con "esperá a que termine" y
+    // la aprobación se perdía — el operador tenía que acordarse de volver a apretar. Ahora entra a
+    // la cola serial (_drexEncolar), que avisa "queda en cola", arranca sola cuando la anterior
+    // termina, y tiene timeout de 120s por tarea para que una colgada no trabe el resto.
+    // Así se pueden aprobar varias cargas seguidas y se van procesando de a una.
+    const _nom = (String(tipo).toUpperCase()==='RETIRO' ? 'retiro ' : 'carga ') + usuario + ' · ' + money(montoAprobado);
+    (window._drexEncolar||_drexEncolar)(_nom, function(){
+      return ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId});
+    }).catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
   };
 
   function portalNotasBase(ctx){
