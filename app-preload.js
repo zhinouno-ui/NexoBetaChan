@@ -75,7 +75,11 @@ contextBridge.exposeInMainWorld('updaterAPI', {
 // Nexo · integración por archivo (opcional, no estricta · portado de NexoBetaChan)
 // nodo escribe %APPDATA%/nexo-desktop/shared/nodo-datos.json; Nexo lo lee y fusiona.
 // ============================================================
+// pedidos: LEE nexo-pedidos.json (archivo de Nexo). Nexo encola ahí lo que no puede escribir solo
+// —la RPC de identidad exige PANEL_DATA_SECRET y ese secreto no se comparte— y NODO lo aplica con
+// el suyo. Solo lectura: el acuse va por nodo-datos.json, que es el archivo del que NODO es dueño.
 contextBridge.exposeInMainWorld('nexoFile', {
-  estado: () => ipcRenderer.invoke('nexo:estado'),
-  write:  (content) => ipcRenderer.invoke('nexo:write', { content })
+  estado:  () => ipcRenderer.invoke('nexo:estado'),
+  write:   (content) => ipcRenderer.invoke('nexo:write', { content }),
+  pedidos: () => ipcRenderer.invoke('nexo:pedidos')
 });

@@ -4378,9 +4378,77 @@ function _nexoBuildPayload(opsExtra){
     // La key es la publishable (anon): ya viaja dentro de la app en cada máquina y está protegida
     // por RLS. No es un secreto; el secreto es PANEL_DATA_SECRET, que NO se manda.
     supabase:{ url:SUPABASE_URL, key:SUPABASE_KEY },
+    // Acuse de los pedidos que Nexo encoló y NODO aplicó. Con esto Nexo los saca de su cola; los
+    // que no aparezcan acá los reintenta (es idempotente, reintentar de más no rompe nada).
+    pedidosAplicados: (window._nexoAcuses||[]).slice(),
     usuarios:usuarios
   };
 }
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// PEDIDOS DE NEXO · Nexo encola, NODO aplica
+// Nexo no puede escribir identidades: panel_vincular_usuario exige PANEL_DATA_SECRET y ese secreto
+// no se comparte. Entonces Nexo deja sus pedidos en nexo-pedidos.json y NODO los aplica con su
+// secreto. Nadie comparte nada y NODO decide qué se escribe.
+// El acuse ({id, ok, error, ts}) viaja en el próximo nodo-datos.json; con eso Nexo saca el pedido
+// de su cola. Sin acuse lo reintenta — es idempotente.
+//
+// ⚠ CANDADO: mientras panel_vincular_usuario compare el usuario CRUDO (bug documentado, fix en
+// SQL_fix_vincular_usuario_limpio.sql), cada pedido puede DUPLICAR al usuario en el servidor. Por
+// eso esto arranca APAGADO. Se prende con window.nexoPedidosActivar(true) DESPUÉS de aplicar el
+// SQL. Lo pidió el propio lado de Nexo y tiene razón.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+window.nexoPedidosActivar = function(on){
+  try{ localStorage.setItem('nodo_nexo_pedidos', on===true?'1':'0'); }catch(_e){}
+  toast(on===true ? '✅ Pedidos de Nexo ACTIVADOS' : '⛔ Pedidos de Nexo apagados', on===true?'green':'yellow');
+};
+function _nexoPedidosActivo(){ try{ return localStorage.getItem('nodo_nexo_pedidos')==='1'; }catch(_e){ return false; } }
+
+window._nexoAcuses = [];        // {id, ok, error, ts} — se vacía cuando se escriben en el payload
+let _nexoPedidosCorriendo = false;
+
+async function _nexoProcesarPedidos(){
+  if(!_nexoPedidosActivo()) return;
+  if(_nexoPedidosCorriendo) return;
+  if(!window.nexoFile || !window.nexoFile.pedidos) return;   // build viejo sin el puente de lectura
+  if(!pcOperativa || !window.PANEL_DATA_SECRET) return;
+  _nexoPedidosCorriendo = true;
+  try{
+    const r = await window.nexoFile.pedidos();
+    if(!r || !r.ok || !Array.isArray(r.pedidos) || !r.pedidos.length) return;
+    // La oficina del archivo tiene que ser LA MÍA. Si no, es de otra PC y no lo tocamos.
+    if(r.pc_codigo && String(r.pc_codigo).trim().toUpperCase() !== String(pcOperativa).trim().toUpperCase()){
+      console.warn('[nexo] pedidos de otra oficina ('+r.pc_codigo+' ≠ '+pcOperativa+') — ignorados');
+      return;
+    }
+    const yaAcusados = new Set((window._nexoAcuses||[]).map(function(a){ return String(a.id); }));
+    for(const p of r.pedidos){
+      const id = String((p&&p.id)||''); if(!id || yaAcusados.has(id)) continue;
+      const acuse = { id:id, ok:false, error:null, ts:Date.now() };
+      try{
+        if(String(p.tipo||'') !== 'vincular_telefono'){ acuse.error='tipo no soportado: '+p.tipo; }
+        else if(!p.usuario || !p.telefono){ acuse.error='faltan usuario o teléfono'; }
+        else{
+          // SIN p_forzar: Nexo sólo debe encolar HUECOS (usuario sin teléfono en el servidor). Si
+          // hay conflicto, que lo resuelva un operador mirando el cotejo — no un pedido automático.
+          const rr = await supabaseClient.rpc('panel_vincular_usuario',{
+            p_secret:window.PANEL_DATA_SECRET, p_pc_codigo:pcOperativa,
+            p_usuario:String(p.usuario), p_telefono:String(p.telefono)
+          });
+          const d = (rr && rr.data) || {};
+          if(rr.error) acuse.error = rr.error.message || 'error de RPC';
+          else if(!d.ok) acuse.error = d.mensaje || (d.conflicto_tel ? ('conflicto: el teléfono es de '+(d.usuario_actual||'otro')) : 'rechazado');
+          else acuse.ok = true;
+        }
+      }catch(e){ acuse.error = e.message || String(e); }
+      window._nexoAcuses.push(acuse);
+      console.log('[nexo] pedido '+id+' · '+(acuse.ok?'OK':'falló: '+acuse.error));
+    }
+    if(window._nexoAcuses.length){ try{ nexoSync(false); }catch(_e){} }   // devolver los acuses ya
+  }catch(e){ console.warn('[nexo] procesar pedidos falló:', e.message||e); }
+  finally{ _nexoPedidosCorriendo = false; }
+}
+window._nexoProcesarPedidos = _nexoProcesarPedidos;
+
 let _nexoSyncing=false; window._nexoLastOk=0;
 async function nexoSync(verbose){
   if(!window.nexoFile || !window.nexoFile.write || _nexoSyncing) return; // sin bridge (no desktop) → nada
@@ -4392,6 +4460,13 @@ async function nexoSync(verbose){
     const wr = await window.nexoFile.write(JSON.stringify(payload));
     if(wr && wr.ok){
       window._nexoLastOk=Date.now();
+      // Los acuses ya viajaron en ESTE archivo: se sacan de la cola local. Se descuentan sólo los
+      // que se escribieron, no todos — si entró un acuse nuevo mientras se armaba el payload, ese
+      // tiene que salir en el próximo, no perderse acá.
+      try{
+        const idsEnviados = new Set((payload.pedidosAplicados||[]).map(function(a){ return String(a.id); }));
+        window._nexoAcuses = (window._nexoAcuses||[]).filter(function(a){ return !idsEnviados.has(String(a.id)); });
+      }catch(_e){}
       const nops = payload.usuarios.reduce(function(a,u){return a+u.operaciones.length;},0);
       console.log('[nexo] sync OK · '+payload.usuarios.length+' usuarios · '+nops+' ops · '+(wr.bytes||0)+' bytes');
       if(verbose){ try{toast('🟢 Nexo: '+payload.usuarios.length+' usuarios · '+nops+' ops','green');}catch(_e){} }
@@ -4423,6 +4498,9 @@ window.nexo = async function(cmd){
 // se actualiza y Nexo relee). Configurable con window._nexoIntervaloMs (default 90s).
 window._nexoIntervaloMs = window._nexoIntervaloMs || 90000;
 try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
+// Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
+// mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
+try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
 try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
 
 // ── Base local de JUGADORES (CRM-lite · portado de NexoBetaChan 1.0.85) ──────────
