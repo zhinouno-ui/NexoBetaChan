@@ -8511,6 +8511,25 @@ setTimeout(function(){ try{ window._drexEncolar = _drexEncolar; }catch(_e){} },0
 const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', retirarSaldo:'retiro',
   crearUsuario:'crear usuario', cambiarClave:'cambiar clave', obtenerSaldoAgente:'leer fichas',
   iniciarSesion:'iniciar sesión', verifyUser:'verificar usuario' };
+// ── Cortacircuitos por sesión caída ─────────────────────────────────────────────────────────
+// Si la sesión de Agentes se cae con la cola llena, cada tarea igual se ejecuta y se queda
+// esperando su timeout de 120s. Con 10 encoladas son 20 minutos de panel trabado, y al final
+// ninguna hizo nada. Peor: el operador ve "10 esperando" y no sabe que ya está todo perdido.
+// Cuando una tarea detecta que no hay sesión, se levanta esta bandera y las que siguen se
+// rechazan AL INSTANTE, sin tocar el agente. Se baja sola al reponer la sesión.
+window._drexSinSesion = false;
+window._drexMarcarSinSesion = function(motivo){
+  if(window._drexSinSesion) return;
+  window._drexSinSesion = true;
+  const q = (window._drexCola && window._drexCola.pendientes) || 0;
+  try{ toast('🔒 Sesión de Agentes caída'+(motivo?(' ('+motivo+')'):'')+(q>1?(' · se cancelan '+(q-1)+' en cola'):'')+' — logueate y reintentá','red'); }catch(_e){}
+  console.warn('[cola] sesión caída → se cancela lo encolado ('+q+')');
+};
+window._drexSesionRepuesta = function(){
+  if(!window._drexSinSesion) return;
+  window._drexSinSesion = false;
+  try{ toast('🔓 Sesión repuesta · ya podés reintentar','green'); }catch(_e){}
+};
 function _drexEncolar(nombre, fn, opts){
   const st = window._drexCola;
   const silencioso = !!(opts && opts.silencioso);
@@ -8523,6 +8542,12 @@ function _drexEncolar(nombre, fn, opts){
   }
   st.pendientes++;
   const correr = function(){
+    // Si la sesión se cayó mientras esta tarea esperaba, se descarta sin tocar el agente. Antes se
+    // ejecutaba igual y se comía sus 120s de timeout, una atrás de otra.
+    if(window._drexSinSesion){
+      if(st.pendientes > 0) st.pendientes--;
+      return Promise.reject(new Error('Sesión de Agentes caída — "'+nombre+'" no se ejecutó. Logueate y reintentá.'));
+    }
     st.activo = { nombre:nombre, desde:Date.now() };
     const t0 = Date.now();
     let _to = null;
@@ -8555,12 +8580,23 @@ async function callDrex(method, ...args){
   return _drexEncolar(method, async function(){
     // Solo buscarUsuario resuelve el alias inteligentemente.
     // crearUsuario / cambiarClave NO se tocan.
+    let _r;
     if(method === 'buscarUsuario' && args.length > 0 && typeof args[0] === 'string'){
       const aliasFinal = await _resolverAliasParaCasino(args[0]);
       // Reenviamos los args extra (ej: options { skipBalance: true })
-      return window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+      _r = await window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+    } else {
+      _r = await window.ctrlElectron.drexAutomation(method, ...args);
     }
-    return window.ctrlElectron.drexAutomation(method, ...args);
+    // Punto único donde se ve el estado de la sesión: TODO pasa por acá. Si la página pide login,
+    // se levanta la bandera y lo que quedó en cola se cancela solo en vez de morir de a 120s.
+    // El login exitoso la baja — así se retoma sin tener que reiniciar nada.
+    try{
+      if(_r && _r.needsLogin) window._drexMarcarSinSesion(method);
+      else if(_r && _r.ok !== false && method === 'iniciarSesion') window._drexSesionRepuesta();
+      else if(_r && _r.needsLogin === false) window._drexSesionRepuesta();
+    }catch(_e){}
+    return _r;
   });
 }
 
@@ -14003,16 +14039,15 @@ window._rv2Finalizar = async function(){
     toast('Portal: operación enviada. Podés seguir usando el panel.', 'blue');
     // No dejamos el modal bloqueando la pantalla: el flujo continúa en segundo plano
     // y al terminar actualiza Solicitudes/Historial como LANDING.
-    // EN COLA, no en paralelo. Antes esto llamaba directo y ejecutarSolicitudPortalSimple tomaba
-    // _drexGlobalLock: si ya había otra operación corriendo, RECHAZABA con "esperá a que termine" y
-    // la aprobación se perdía — el operador tenía que acordarse de volver a apretar. Ahora entra a
-    // la cola serial (_drexEncolar), que avisa "queda en cola", arranca sola cuando la anterior
-    // termina, y tiene timeout de 120s por tarea para que una colgada no trabe el resto.
-    // Así se pueden aprobar varias cargas seguidas y se van procesando de a una.
-    const _nom = (String(tipo).toUpperCase()==='RETIRO' ? 'retiro ' : 'carga ') + usuario + ' · ' + money(montoAprobado);
-    (window._drexEncolar||_drexEncolar)(_nom, function(){
-      return ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId});
-    }).catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
+    // ⚠ NO envolver esto en _drexEncolar. Lo intenté para que las aprobaciones no se perdieran
+    // cuando el agente estaba ocupado, y produje un DEADLOCK: ejecutarSolicitudPortalSimple llama
+    // por dentro a callDrex(), que TAMBIÉN encola. La tarea de afuera se queda esperando a la de
+    // adentro, y la de adentro no arranca hasta que termine la de afuera → todo trabado hasta el
+    // timeout de 120s, con la cola llenándose ("10 esperando") y ninguna solicitud procesándose.
+    // Las llamadas internas a callDrex ya serializan de a una; la serialización tiene que quedar
+    // en ESE nivel, no envolviendo la operación entera.
+    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId})
+      .catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
   };
 
   function portalNotasBase(ctx){
