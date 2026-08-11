@@ -12666,9 +12666,18 @@ body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animati
         // minúscula, para que se note que falta traducir en vez de gritarle en mayúsculas.
         function _estadoLegible(e){
           const k = String(e||'').toUpperCase().trim();
+          // EN_PROCESO es el estado GENERAL de "tomada y trabajándose" — no significa parcial.
+          // Sólo se dice "por partes" cuando esta solicitud REALMENTE tiene pagos parciales.
+          if(k==='EN_PROCESO'){
+            try{
+              const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+              if(pp && pp.hasProg && pp.restante > 0.5) return 'Pagando por partes';
+            }catch(_e){}
+            return 'En proceso';
+          }
           const M = { PENDIENTE:'Sin tomar', NUEVA:'Sin tomar', EN_ESPERA:'Sin tomar',
                       TOMADA:'Tomada', TOMADO:'Tomada', EN_REVISION:'En revisión',
-                      EN_PROCESO:'Pagando por partes', PROCESANDO:'Procesando',
+                      PROCESANDO:'Procesando',
                       ERROR_OPERATIVO:'Falló · reintentar', PAGADA:'Pagada', ACREDITADA:'Acreditada',
                       APROBADA:'Aprobada', RECHAZADA:'Rechazada', CANCELADA:'Cancelada' };
           return M[k] || (k ? k.toLowerCase().replace(/_/g,' ') : '—');
