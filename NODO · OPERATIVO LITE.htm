@@ -12471,6 +12471,20 @@ if(window.ctrlElectron){
 .v154p-btn.ghost.danger{border-color:#5a2a32;color:#e08894}
 .v154p-btn.ghost.danger:hover{background:#3a1c22;color:#ffc8d0}
 .v154p-hueco{display:block}
+/* Mientras hay una operación del portal en curso: las acciones se apagan y la fila que se está
+   operando lo dice. El operador ve QUE está pasando algo y CUÁL es, en vez de apretar de nuevo. */
+body.op-portal-en-curso .v154p-actions .v154p-btn{opacity:.35;pointer-events:none}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions{position:relative;opacity:1}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{
+  content:"⏳ operando…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(13,17,23,.86);border-radius:9px;font-size:11px;font-weight:800;color:#f5c518;
+  letter-spacing:.02em}
+body.op-portal-en-curso .v154p-card.v154p-operando{border-color:rgba(245,197,24,.5)}
+@keyframes v154pLatido{0%,100%{opacity:1}50%{opacity:.55}}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animation:v154pLatido 1.4s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){
+  body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animation:none}
+}
 .v154p-btn.yellow{background:#f2cf4a;color:#111}
 .v154p-btn.green{background:#38d66b;color:#07110b}
 .v154p-btn.red{background:#542027;color:#ffc8d0}
@@ -12685,7 +12699,7 @@ if(window.ctrlElectron){
         const _montoCell = (_esRetiroS && _pp.hasProg)
           ? `${money(_pp.restante)}<div style="font-size:10px;font-weight:800;margin-top:2px;color:#a78bfa">parcial · pagado ${money(_pp.pagado)} de ${money(_pp.total)}</div>`
           : money(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
-        return `<div class="v154p-card">
+        return `<div class="v154p-card${(document.body.dataset.opSolicitud===String(id))?" v154p-operando":""}" data-sol="${id}">
           <div>
             <div class="v154p-main">${esc(s.USUARIO || "-")}</div>
             <div class="v154p-small">#${id} · ${fecha(s.FECHA_CREACION)} · ${esc(s.ORIGEN || "PORTAL")}</div>
@@ -14312,10 +14326,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     _portalSolicitudOperacionEnCurso = true;
     if(btn){ btn.disabled = true; btn.style.opacity = '.65'; btn.textContent = 'Operando...'; }
+    // Marcar la fila QUE SE ESTÁ OPERANDO y bloquear las demás. El guard ya evitaba la doble
+    // ejecución, pero no se veía: apretabas, no pasaba nada visible, apretabas de nuevo y recién
+    // ahí te saltaba un toast amarillo. Ahora la tarjeta muestra que está trabajando y las otras
+    // acciones quedan apagadas mientras tanto.
+    try{
+      document.body.classList.add('op-portal-en-curso');
+      document.body.dataset.opSolicitud = String(id);
+    }catch(_e){}
     _trazaInit((tipo==='CARGA'?'Carga':'Retiro')+' PORTAL · '+usuario+' · '+money(montoAbs)+' (sol. #'+id+')');
 
     const liberar = () => {
       _portalSolicitudOperacionEnCurso = false;
+      try{ document.body.classList.remove('op-portal-en-curso'); delete document.body.dataset.opSolicitud; }catch(_e){}
       _drexGlobalUnlock();
       _wdForceUnlock(); // libera el candado del watchdog tomado al arrancar (mismo fix que en manual)
       if(btn){ btn.disabled = false; btn.style.opacity = ''; btn.textContent = 'Aprobar'; }
