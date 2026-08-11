@@ -3184,13 +3184,65 @@ async function soloConsultarUsuario(){
 // compartido por todos los flujos que tocan la ventana de Agentes.
 window._drexGlobalBusy = false;
 window._drexGlobalBusyMotivo = null;
+window._drexGlobalBusyDesde = 0;
+// Un candado sin vencimiento se queda tomado PARA SIEMPRE si la operación que lo tomó muere sin
+// soltarlo (una excepción, la ventana cerrada, un preload colgado). Y el panel queda contestando
+// "hay otra operación corriendo" sin que haya ninguna — sin forma de salir. Pasó.
+// Ahora el candado se anota CUÁNDO se tomó y se suelta solo si quedó viejo.
+const _DREX_LOCK_MAX_MS = 150000;   // 2,5 min · más que la tarea más larga (120s de la cola)
 function _drexGlobalLock(motivo){
-  if(window._drexGlobalBusy) return false;
+  if(window._drexGlobalBusy){
+    const held = Date.now() - (window._drexGlobalBusyDesde||0);
+    if(held > _DREX_LOCK_MAX_MS){
+      // Candado vencido: lo tomó algo que nunca lo devolvió. Se libera y se avisa, en vez de
+      // dejar el panel trabado esperando a alguien que ya no está.
+      console.warn('[lock] candado vencido tras '+Math.round(held/1000)+'s ("'+(window._drexGlobalBusyMotivo||'?')+'") → liberado solo');
+      try{ toast('🔓 Se destrabó solo: "'+(window._drexGlobalBusyMotivo||'una operación')+'" quedó colgada hace '+Math.round(held/1000)+'s','yellow'); }catch(_e){}
+    } else {
+      return false;
+    }
+  }
   window._drexGlobalBusy = true;
   window._drexGlobalBusyMotivo = motivo || '';
+  window._drexGlobalBusyDesde = Date.now();
   return true;
 }
-function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; }
+function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; window._drexGlobalBusyDesde = 0; }
+// Qué está pasando, en una línea. Para el badge y para poder preguntarlo desde la consola.
+// Badge en vivo: qué está haciendo el agente, hace cuánto, y el botón para soltarlo. Aparece solo
+// si está tomado más de 2s (para no parpadear en cada operación corta).
+function _agentesBadgePintar(){
+  try{
+    let el = document.getElementById('agentesBadge');
+    if(!el){
+      el = document.createElement('div'); el.id='agentesBadge';
+      el.innerHTML = '<span>⚙️</span><span class="ab-txt"></span><span class="ab-seg"></span>'
+        + '<button type="button" onclick="liberarLockAgentes()" title="Soltar el agente a la fuerza">Destrabar</button>';
+      document.body.appendChild(el);
+    }
+    const b = window._drexGlobalBusy;
+    const seg = b ? Math.round((Date.now()-(window._drexGlobalBusyDesde||0))/1000) : 0;
+    if(!b || seg < 2){ el.style.display='none'; return; }
+    const q = (window._drexCola && window._drexCola.pendientes) || 0;
+    const nom = (window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre) || window._drexGlobalBusyMotivo || 'operación';
+    el.querySelector('.ab-txt').textContent = nom + (q>1 ? (' · '+(q-1)+' en cola') : '');
+    el.querySelector('.ab-seg').textContent = seg+'s';
+    el.classList.toggle('viejo', seg > 45);
+    el.style.display='flex';
+  }catch(_e){}
+}
+try{ setInterval(_agentesBadgePintar, 1000); }catch(_e){}
+
+window.estadoAgentes = function(){
+  const b = window._drexGlobalBusy;
+  const seg = b ? Math.round((Date.now()-(window._drexGlobalBusyDesde||0))/1000) : 0;
+  const q = (window._drexCola && window._drexCola.pendientes) || 0;
+  const info = { ocupado:b, motivo:window._drexGlobalBusyMotivo||null, segundos:seg,
+                 enCola:q, tareaActual:(window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre)||null,
+                 sinSesion:!!window._drexSinSesion };
+  console.log('[agentes]', info);
+  return info;
+};
 
 // ── Traza de proceso de carga/retiro (visibilidad + cancelar) ──────────────────
 // Registra cada paso de una operación con su tiempo, para: (1) mostrarlo EN VIVO en una tira
@@ -11831,13 +11883,27 @@ window.anularPropinaHistorial = async function(historialId){
 window._retiroSaldoCheck = window._retiroSaldoCheck || {};
 // Destrabar agente (portado de NexoBetaChan): salida de emergencia si un flujo dejó el candado
 // tomado (ej. buscarUsuario colgado). Libera el lock global + watchdog + flags de parcial/scanner.
+// DESTRABAR DE VERDAD. Antes soltaba cuatro cosas y dejaba tomadas otras cuatro — entre ellas el
+// guard del portal, que es el que contesta "hay una operación en curso". Por eso se apretaba
+// Destrabar, decía "destrabado", y el panel seguía sin dejar operar. Ahora se sueltan TODOS los
+// candados: si el operador pide destrabar, es porque ya no hay nada corriendo.
 window.liberarLockAgentes = function(){
-  const m = window._drexGlobalBusyMotivo;
+  const m = window._drexGlobalBusyMotivo || (window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre);
   try{ if(typeof _drexGlobalUnlock==='function') _drexGlobalUnlock(); }catch(_e){}
   try{ if(typeof _wdForceUnlock==='function') _wdForceUnlock(); }catch(_e){}
   try{ window._v154pParcialBusy = false; }catch(_e){}
   try{ window._retiroSaldoLastRun = 0; }catch(_e){}
-  try{ toast('🔓 Agente destrabado'+(m?(' (lo tenía: '+m+')'):'')+'. Ya podés reintentar.', 'green'); }catch(_e){}
+  // Los que faltaban:
+  try{ window._portalSolicitudOperacionEnCurso = false; }catch(_e){}   // el que decía "operación portal en curso"
+  try{ window._operacionManualEnCurso = false; }catch(_e){}
+  try{ window._cotejoDeclarando = false; }catch(_e){}
+  try{ window._drexSinSesion = false; }catch(_e){}                     // el cortacircuitos de sesión
+  try{ if(window._drexCola){ window._drexCola.activo = null; window._drexCola.pendientes = 0; } }catch(_e){}
+  try{ document.body.classList.remove('op-portal-en-curso'); delete document.body.dataset.opSolicitud; }catch(_e){}
+  try{ if(typeof _wdUnlock==='function'){ let g=0; while(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0 && g++<20) _wdUnlock(); } }catch(_e){}
+  try{ _agentesBadgePintar(); }catch(_e){}
+  try{ toast('🔓 Agente destrabado'+(m?(' · lo tenía: '+m):'')+'. Ya podés reintentar.', 'green'); }catch(_e){}
+  console.log('[lock] destrabado a mano · todos los candados liberados');
 };
 // Reiniciar Chunior cuando muestra 403/CSRF. Recargar NO sirve (re-envía el POST fallido → mismo
 // 403); esto NAVEGA a la base (GET) → token CSRF fresco. hard=true limpia las cookies de Chunior
@@ -18541,6 +18607,18 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
   box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
 }
 @media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
+/* Qué está haciendo Agentes ahora mismo. Antes el panel contestaba "hay otra operación corriendo"
+   sin decir cuál, desde cuándo, ni cómo salir. Esto aparece solo cuando el agente está tomado. */
+#agentesBadge{position:fixed;left:84px;bottom:46px;z-index:99997;display:none;align-items:center;gap:8px;
+  background:#1b2230;border:1px solid #3a4459;border-radius:999px;padding:6px 10px 6px 12px;
+  font-size:11px;font-weight:700;color:#e6edf3;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#agentesBadge.viejo{border-color:#7a4a1d;background:#2a1f14}
+#agentesBadge .ab-txt{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#agentesBadge .ab-seg{color:#8b949e;font-weight:600}
+#agentesBadge button{background:#3a2027;border:1px solid #5a2a32;color:#ffc8d0;border-radius:999px;
+  font-size:10px;font-weight:800;padding:3px 9px;cursor:pointer}
+#agentesBadge button:hover{background:#4a262f}
+@media(max-width:900px){#agentesBadge{left:12px;bottom:52px}#agentesBadge .ab-txt{max-width:160px}}
 /* ── Barra del chat: UN botón que cambia según dónde estás ───────────────────────────────
    El estado real de "hay una conversación abierta" es body.nodo-chat-open, que lo pone el puente
    del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que
