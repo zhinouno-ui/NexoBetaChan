@@ -587,11 +587,18 @@ async function aplicarMonto(tipo, amount, options = {}) {
     };
   }
 
-  // Cargar el monto en "Cantidad" y, en carga, Bono = 0.
+  // Cantidad y, en carga, Bono. El bono va EN LA MISMA carga: el modal tiene los dos campos, así
+  // que mandar el bono aparte significaba abrir el modal dos veces y correr el preload dos veces
+  // para lo que es una sola operación. Ahora entra con la carga; en Chunior siguen siendo dos
+  // anotaciones (carga y bono son movimientos distintos) y en el panel una sola operación.
   if (!m.cantidadInput) throw new Error('No se encontró el campo "Cantidad".');
   await setFieldAndVerify(m.cantidadInput, String(Math.round(monto)), 4);
-  if (tipo === 'carga' && m.bonoInput && String(m.bonoInput.value || '').trim() !== '0') {
-    setFieldValue(m.bonoInput, '0');
+  const bono = (tipo === 'carga') ? Math.max(0, Math.round(Number((options && options.bono) || 0)) || 0) : 0;
+  if (tipo === 'carga' && m.bonoInput) {
+    // Siempre se escribe: si no viene bono va 0 explícito, para que no quede el valor de la carga
+    // anterior en un campo que el modal reutiliza.
+    if (bono > 0) await setFieldAndVerify(m.bonoInput, String(bono), 4);
+    else if (String(m.bonoInput.value || '').trim() !== '0') setFieldValue(m.bonoInput, '0');
   }
   await delay(250);
 
@@ -627,6 +634,7 @@ async function aplicarMonto(tipo, amount, options = {}) {
     ok: true,
     action: tipo,
     amount: monto,
+    bono,                                    // lo que se cargó en el campo Bono (0 si no hubo)
     previousBalance: preJugador,
     newBalance,
     exito,                                   // true=ok / false=fallo / null=no se vio toast

@@ -1442,6 +1442,16 @@ function _toastQuitar(el){
   setTimeout(function(){ try{ el.remove(); }catch(_e){} }, 240);
 }
 function toast(msg,type="blue"){
+  // TODO aviso va también a la consola. Los toasts duran 3s y se van: cuando algo se traba o falla,
+  // lo que el operador vio ya no existe y no hay forma de reconstruir la secuencia. En la consola
+  // quedan con hora, en orden, y se pueden copiar enteros para diagnosticar.
+  try{
+    const _h = new Date().toLocaleTimeString('es-AR',{hour12:false});
+    const _c = type==='red' ? 'color:#f04438;font-weight:700'
+             : type==='green' ? 'color:#12b76a;font-weight:700'
+             : type==='yellow' ? 'color:#f5c518;font-weight:700' : 'color:#58a6ff';
+    console.log('%c[toast '+_h+'] '+msg, _c);
+  }catch(_e){}
   let stack=document.getElementById("toastStack");
   if(!stack){ stack=document.createElement("div"); stack.id="toastStack"; document.body.appendChild(stack); }
   const div=document.createElement("div");
