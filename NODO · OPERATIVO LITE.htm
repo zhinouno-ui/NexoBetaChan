@@ -12005,6 +12005,21 @@ async function verificarSaldoRetiroOcioso(){
                 etapa: 'AUTO_RECHAZO_SIN_SALDO',
                 motivo: 'Sin fichas para retirar (saldo '+_saldoTxt+', confirmado x2)'
               });
+              // Al historial. Antes esto sólo salía como toast: se veía tres segundos y se perdía,
+              // y después no había forma de saber por qué se le habia rechazado el retiro a alguien.
+              try{ await registrarEnHistorial({
+                usuario: usuario, tipo:'RETIRO', monto: Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0),
+                origen:'AUTO', estado:'RECHAZADA', solicitud_id: sid,
+                // Con TODO el detalle: qué pidió, qué tenía, cómo se leyó, y qué se le dijo. Un
+                // "rechazado" a secas obliga a reconstruir el caso de memoria cuando el cliente
+                // reclama tres días después.
+                notas:'AUTO-RECHAZO · SIN FICHAS'
+                  + ' · pidió '+money(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0))
+                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+((b.balance&&b.balance.raw)||'').trim()+'" y "'+raw2+'")'
+                  + ' · piso '+money(_PISO_SIN_FICHAS)
+                  + (objetivo.TITULAR?(' · titular declarado: '+objetivo.TITULAR):'')
+                  + ' · se le avisó por el chat'
+              }); }catch(_e){}
               try{ await notificarUsuarioEnChat(usuario, '❌ No pudimos procesar tu retiro: no figurás con fichas disponibles para retirar. Si creés que es un error, escribinos por acá.'); }catch(_e){}
               toast('❌ Retiro de '+usuario+' rechazado · SIN fichas (saldo '+_saldoTxt+', confirmado x2)', 'red');
             }catch(_e){}
@@ -13038,8 +13053,16 @@ async function cargarSolicitudesPortal(silencioso=false){
         window.marcarTitularRechazado(s.USUARIO, titular, r.motivo);
         s.ESTADO='RECHAZADA';
         try{ if(typeof notificarUsuarioEnChat==='function') await notificarUsuarioEnChat(s.USUARIO, '❌ '+r.texto, id, 'RECHAZADA'); }catch(_e){}
+        // Detalle completo: por qué se rechazó, qué había declarado y qué se le respondió. Sin esto
+        // el historial dice "RECHAZADA" y nadie puede reconstruir el caso cuando el cliente vuelve.
         try{ await registrarEnHistorial({ usuario:s.USUARIO, tipo:String(s.TIPO||'CARGA'), monto:Number(s.MONTO_DECLARADO||0),
-          origen:'PORTAL', estado:'RECHAZADA', notas:'Auto-rechazo ('+r.motivo+') · titular declarado: '+titular, solicitud_id:id }); }catch(_e){}
+          origen:'PORTAL', estado:'RECHAZADA', solicitud_id:id,
+          notas:'AUTO-RECHAZO · '+r.motivo
+            + ' · titular declarado: "'+titular+'"'
+            + (s.TELEFONO?(' · tel '+s.TELEFONO):'')
+            + (s.DESTINO?(' · destino '+s.DESTINO):'')
+            + ' · se le respondió: '+String(r.texto||'').slice(0,140)
+        }); }catch(_e){}
         try{ toast('⛔ Auto-rechazo · '+s.USUARIO+' · '+r.motivo,'yellow'); }catch(_e){}
         console.warn('[auto-rechazo] #'+id+' '+s.USUARIO+' · '+r.motivo+' · titular: "'+titular+'"');
       }catch(e){ console.warn('[auto-rechazo] falló #'+id, e); }
