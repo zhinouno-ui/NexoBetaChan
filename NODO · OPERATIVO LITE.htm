@@ -12551,7 +12551,10 @@ if(window.ctrlElectron){
 .v154p-btn{border:0;border-radius:9px;padding:7px 10px;font-weight:900;cursor:pointer;background:#2d3342;color:#fff;font-size:11px}
 /* Mientras hay una operación del portal en curso: las acciones se apagan y la fila que se está
    operando lo dice. El operador ve QUE está pasando algo y CUÁL es, en vez de apretar de nuevo. */
-body.op-portal-en-curso .v154p-actions .v154p-btn{opacity:.35;pointer-events:none}
+/* SOLO se bloquea la fila que se está operando. Apagar todas impedía lo que el operador realmente
+   quiere hacer mientras espera: seguir aprobando (que se encolen) y rechazar las que no van.
+   La espera no tiene por qué congelar el resto del trabajo. */
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions .v154p-btn{opacity:.35;pointer-events:none}
 body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions{position:relative;opacity:1}
 body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{
   content:"⏳ operando…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
@@ -14698,7 +14701,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
           }catch(eb){ console.warn('[bono]', eb); toast('⚠️ Error con el bono: '+(eb.message||''), 'red'); }
         }
         if(tipo === 'CARGA' && busqueda?.user){ try{ _autoregistrarUsuarioSiFalta(busqueda.user); }catch(_e){} }
-        setTimeout(()=>{ cerrarPortalJobModal(); }, 450);
+        // Cerrar SOLO si el modal sigue siendo el de ESTA solicitud. La operación corre en segundo
+        // plano: para cuando esto dispara, el operador ya abrió el modal de la SIGUIENTE carga —
+        // y le cerrábamos ese, en la cara, mientras lo estaba completando.
+        setTimeout(()=>{
+          try{
+            const _m = document.getElementById('portalJobModal');
+            if(_m && Number(_m.dataset && _m.dataset.solicitudId) === Number(id)) cerrarPortalJobModal();
+          }catch(_e){}
+        }, 450);
       }else{
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
         try{ if(typeof colaPendientesAdd==='function') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
