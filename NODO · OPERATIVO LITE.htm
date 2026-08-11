@@ -6297,7 +6297,20 @@ function tablaHistorialUnificadoHTML(lista){
       `<td style="font-size:12px">${movTd}</td>`+
       `<td>${estadoBadge(it.estado)}</td>`+
       `<td style="white-space:nowrap"><div style="display:flex;gap:4px;flex-wrap:wrap">${solBtns}${blBtn}</div></td>`+
-      `</tr>`;
+      `</tr>`+
+      // El MOTIVO, debajo de la fila. Esta vista mostraba "RECHAZADA" o "ERROR" y nada más: no se
+      // podía saber por qué se le rechazó el retiro a alguien sin abrir el detalle uno por uno.
+      // Las notas ya se guardaban (el auto-rechazo escribe el caso completo); sólo faltaba verlas.
+      (function(){
+        const _n = String((it._raw && it._raw.notas) || it.notas || '').replace(/\[BL_EXCLUIDO\]/g,'').trim();
+        if(!_n) return '';
+        const _e = String(it.estado||'').toUpperCase();
+        const _malo = /RECHAZ|ERROR|CANCEL/.test(_e);
+        return `<tr${rowAttrs}><td></td><td colspan="8" style="padding:0 8px 8px 8px">`
+          + `<div style="font-size:11px;line-height:1.35;color:${_malo?'#e3b341':'#8b949e'};`
+          + `border-left:2px solid ${_malo?'#7a5a1d':'#2c3444'};padding-left:8px">`
+          + escapeHtml(_n) + `</div></td></tr>`;
+      })();
   });
   html += `</tbody></table></div>`;
   return html;
