@@ -12458,6 +12458,19 @@ if(window.ctrlElectron){
 .v154p-badge{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;background:#312b09;color:#fde68a}
 .v154p-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .v154p-btn{border:0;border-radius:9px;padding:7px 10px;font-weight:900;cursor:pointer;background:#2d3342;color:#fff;font-size:11px}
+/* UNA acción principal por fila; el resto en segunda línea, chicas y sin color. Antes eran cinco
+   botones del mismo peso y encima la fila cambiaba de ancho según el tipo (en un RETIRO aparecía
+   "Parcial" y todo lo demás se corría) — ibas a "Ver" y le pegabas a "Rechazar". Ahora las
+   secundarias ocupan SIEMPRE los mismos 4 lugares: si una no aplica, queda el hueco. */
+.v154p-actions{display:flex;flex-direction:column;gap:5px;align-items:stretch;min-width:170px}
+.v154p-actions > .v154p-btn.green{padding:9px 12px;font-size:12px}
+.v154p-sec{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.v154p-btn.ghost{background:transparent;border:1px solid #333b4a;color:#9aa4b2;font-weight:700;font-size:10px;padding:5px 4px}
+.v154p-btn.ghost:hover:not(:disabled){background:#232a36;color:#e6edf3}
+.v154p-btn.ghost:disabled{opacity:.45;cursor:default}
+.v154p-btn.ghost.danger{border-color:#5a2a32;color:#e08894}
+.v154p-btn.ghost.danger:hover{background:#3a1c22;color:#ffc8d0}
+.v154p-hueco{display:block}
 .v154p-btn.yellow{background:#f2cf4a;color:#111}
 .v154p-btn.green{background:#38d66b;color:#07110b}
 .v154p-btn.red{background:#542027;color:#ffc8d0}
@@ -12646,6 +12659,19 @@ if(window.ctrlElectron){
       html = `<div class="small" style="margin:0 0 8px;color:#98a2b3">Mostrando ${pendientes.length} solicitud/es pendiente/s del portal.</div>` + visibles.map(s => {
         const id = Number(s.ID || s.SOLICITUD_ID || 0);
         const tomada = ["EN_REVISION","EN_PROCESO"].includes(String(s.ESTADO||"").toUpperCase());
+        const _esRet = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
+        // Los enums de la base no le dicen nada al operador ("¿ERROR_OPERATIVO qué es?"). Se
+        // traducen a lo que significan para él. Lo que no esté mapeado se muestra tal cual, en
+        // minúscula, para que se note que falta traducir en vez de gritarle en mayúsculas.
+        function _estadoLegible(e){
+          const k = String(e||'').toUpperCase().trim();
+          const M = { PENDIENTE:'Sin tomar', NUEVA:'Sin tomar', EN_ESPERA:'Sin tomar',
+                      TOMADA:'Tomada', TOMADO:'Tomada', EN_REVISION:'En revisión',
+                      EN_PROCESO:'Pagando por partes', PROCESANDO:'Procesando',
+                      ERROR_OPERATIVO:'Falló · reintentar', PAGADA:'Pagada', ACREDITADA:'Acreditada',
+                      APROBADA:'Aprobada', RECHAZADA:'Rechazada', CANCELADA:'Cancelada' };
+          return M[k] || (k ? k.toLowerCase().replace(/_/g,' ') : '—');
+        }
         const _saldoChk = (window._retiroSaldoCheck||{})[String(s.USUARIO||"").toLowerCase()];
         const _esRetiroS = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
         const _accS = _esRetiroS ? '#fb923c' : (String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="CARGA" ? '#22c55e' : ''); // 🟠 retiro · 🟢 carga
@@ -12667,13 +12693,17 @@ if(window.ctrlElectron){
           </div>
           <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${esc(s.TIPO || "-")}</span></div>
           <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
-          <div><span class="v154p-badge">${esc(s.ESTADO || "-")}</span></div>
+          <div><span class="v154p-badge">${esc(_estadoLegible(s.ESTADO))}</span></div>
           <div class="v154p-actions">
-            ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
-            ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
-            <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
-            <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
+            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">${_esRet?"Pagar":"Acreditar"}</button>
+            <div class="v154p-sec">
+              ${_esRet?`<button class="v154p-btn ghost" onclick="v154pRegistrarParcial(${id})" title="Pagar el retiro por partes">Por partes</button>`:`<span class="v154p-hueco"></span>`}
+              <button class="v154p-btn ghost" onclick="v154pDetalleSolicitud(${id})" title="Ver el detalle">Detalle</button>
+              ${tomada
+                ? `<button class="v154p-btn ghost" disabled title="Ya la tomó un operador">Tomada</button>`
+                : `<button class="v154p-btn ghost" onclick="v154pTomarSolicitud(${id})" title="Marcarla como tuya para que no la agarre otro">Tomar</button>`}
+              <button class="v154p-btn ghost danger" onclick="v154pRechazarSolicitud(${id})" title="Rechazar y avisarle al cliente">Rechazar</button>
+            </div>
           </div>
         </div>`;
       }).join("");
