@@ -3358,6 +3358,206 @@ function verTrazaHistorial(histId){
   if(typeof abrirModal==='function') abrirModal('🔎 '+(data.titulo||'Proceso'), '<div style="font-size:12px;color:#94a3b8;margin-bottom:8px">'+escapeHtml(cuando)+'</div><div style="max-height:60vh;overflow:auto;font-size:13px">'+filas+'</div>', null, 'Cerrar');
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// DETALLE DE ERROR — por qué falló, con todo lo que se sabía en ese momento.
+// Antes un error era una fila roja con ❌ y nada más: el motivo vivía en `notas`, y el render
+// SÓLO mostraba `notas` para CONSULTA y RESET_CLAVE. Justo en CARGA y RETIRO —las que mueven
+// plata— el operador no veía ni una palabra de por qué falló, y para reconstruir el caso había
+// que estar sentado en la PC que operó (la traza es local).
+// Ahora cada fallo estampa un contexto estructurado DENTRO de `notas`, con etiqueta [ERR]{...}
+// (el mismo truco que ya usa [CHUNIOR_OK_SIN_N]). Va ahí y no en una columna nueva a propósito:
+// historial_ops es una tabla compartida por las 9 oficinas y no se le agrega una columna para
+// esto. Como viaja en la fila, el detalle se ve desde CUALQUIER PC, no sólo desde la que operó.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+const _ERR_MOTIVOS = {
+  USUARIO_NO_ENCONTRADO: {t:'Usuario inexistente',      plata:false, d:'Agentes no encontró ese usuario. No se tocó plata.'},
+  SALDO_INSUFICIENTE:    {t:'Saldo insuficiente',       plata:false, d:'El jugador no tenía fichas suficientes para el retiro pedido.'},
+  CANCELADO:             {t:'Cancelado por el operador',plata:false, d:'Se frenó antes de aplicar. No se tocó plata.'},
+  SESION_CAIDA:          {t:'Sesión caída',             plata:true,  d:'La sesión de Agentes se cayó durante la operación. NO está confirmado si llegó a aplicarse — verificá en el casino antes de reintentar.'},
+  ERROR_PAGINA:          {t:'Error de página',          plata:true,  d:'Agentes devolvió un error de página (403/CDN). NO está confirmado si llegó a aplicarse — verificá en el casino antes de reintentar.'},
+  RECHAZO_CASINO:        {t:'Rechazado por el casino',  plata:false, d:'Agentes no dijo "Operación correcta". No se anota en Chunior.'},
+  NO_APLICO:             {t:'No se pudo aplicar',       plata:true,  d:'Agentes no aplicó la operación. Verificá en el casino.'},
+  EXCEPCION:             {t:'Error inesperado',         plata:true,  d:'Excepción de JavaScript en el panel. El detalle técnico está abajo.'}
+};
+
+// Arma el contexto del fallo y devuelve el texto para `notas`: humano + etiqueta [ERR].
+function _errNotas(motivo, humano, extra){
+  const ctx = Object.assign({ m: motivo }, extra || {});
+  try{
+    if(window._traza && window._traza.t0) ctx.ms = Date.now() - window._traza.t0;
+    // Los últimos pasos viajan EN la fila: la traza completa sólo vive en la PC que operó, así
+    // que si el error se mira desde otra máquina esto es lo único que queda del proceso.
+    if(window._traza && window._traza.pasos && window._traza.pasos.length){
+      ctx.pasos = window._traza.pasos.slice(-6).map(function(p){
+        return p.t+'s '+(p.estado==='err'?'✗ ':p.estado==='warn'?'! ':'')+String(p.msg||'');
+      });
+    }
+  }catch(_e){}
+  try{ if(typeof pcOperativa!=='undefined' && pcOperativa) ctx.pc = String(pcOperativa); }catch(_e){}
+  try{ if(typeof operador!=='undefined' && operador) ctx.op = String(operador.usuario||operador.nombre||''); }catch(_e){}
+  // Tope de tamaño. Truncar el JSON a lo bruto lo deja inválido y entonces se pierde TODO el
+  // contexto — justo en las operaciones largas, que son las más interesantes cuando fallan.
+  // Así que se van soltando campos por orden de menor a mayor valor, y el JSON queda siempre
+  // parseable. El motivo (m) es lo último que se suelta: nunca.
+  const _ser = function(o){ try{ return '[ERR]'+JSON.stringify(o); }catch(_e){ return null; } };
+  let tag = _ser(ctx);
+  const _aSoltar = ['stack','pasos','msg','saldoRaw','op'];
+  for(let i = 0; tag && tag.length > 1800 && i < _aSoltar.length; i++){
+    if(_aSoltar[i] === 'pasos' && ctx.pasos && ctx.pasos.length > 2){
+      ctx.pasos = ctx.pasos.slice(-2).map(function(p){ return String(p).slice(0,160); });  // los 2 últimos, recortados
+    } else {
+      delete ctx[_aSoltar[i]];
+    }
+    ctx.recortado = true;
+    tag = _ser(ctx);
+  }
+  if(!tag || tag.length > 1800) tag = '[ERR]'+JSON.stringify({m:String(motivo), recortado:true});
+  return (String(humano||'').trim()+' '+tag).trim();
+}
+
+function _errParse(notas){
+  const s = String(notas||''); const i = s.indexOf('[ERR]');
+  if(i < 0) return null;
+  try{ return JSON.parse(s.slice(i+5)); }catch(_e){ return null; }
+}
+// El texto para humanos, sin la etiqueta técnica.
+function _errTextoLimpio(notas){
+  const s = String(notas||''); const i = s.indexOf('[ERR]');
+  return (i < 0 ? s : s.slice(0, i)).trim();
+}
+// Etiqueta corta para la celda Estado de la tabla.
+function _errEtiqueta(notas){
+  const c = _errParse(notas);
+  if(c && c.m && _ERR_MOTIVOS[c.m]) return _ERR_MOTIVOS[c.m].t;
+  const t = _errTextoLimpio(notas);
+  return t ? (t.length > 30 ? t.slice(0,30)+'…' : t) : '';
+}
+
+// Índice de filas del historial por id, para que el modal de detalle tenga la fila entera
+// sin volver a consultar Supabase. Lo llena renderHistorial en cada pintada.
+window._histPorId = window._histPorId || {};
+
+// Modal de detalle del error: TODO lo que se sabe de esa fila, en un solo lugar.
+window.verDetalleError = function(histId){
+  const h = (window._histPorId||{})[String(histId)];
+  if(!h){ if(typeof toast==='function') toast('No tengo la fila en pantalla · recargá el historial','yellow'); return; }
+  const ctx  = _errParse(h.notas);
+  const info = (ctx && ctx.m && _ERR_MOTIVOS[ctx.m]) || null;
+  const esc  = (typeof escapeHtml==='function') ? escapeHtml : function(x){ return String(x==null?'':x); };
+  const fmtM = (typeof money==='function') ? money : function(x){ return String(x); };
+
+  const titulo = info ? info.t : (_errEtiqueta(h.notas) || 'Error');
+  let html = '';
+
+  // 1) Qué pasó, en castellano, y si quedó plata en duda.
+  html += '<div style="border-radius:10px;padding:10px 12px;margin-bottom:10px;background:rgba(240,68,56,.10);border:1px solid rgba(240,68,56,.40)">'
+        +   '<div style="font-weight:900;color:#f87171;font-size:14px">❌ '+esc(titulo)+'</div>'
+        +   (info ? '<div style="font-size:12.5px;color:#e6edf3;margin-top:4px">'+esc(info.d)+'</div>' : '')
+        +   (_errTextoLimpio(h.notas) ? '<div style="font-size:12.5px;color:#c9d1d9;margin-top:5px">'+esc(_errTextoLimpio(h.notas))+'</div>' : '')
+        + '</div>';
+  if(info && info.plata){
+    html += '<div style="border-radius:10px;padding:9px 11px;margin-bottom:10px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.45);font-size:12.5px;color:#f5c518;font-weight:700">'
+          +   '⚠ No hay confirmación de si la plata se movió. Verificá en el casino ANTES de reintentar — reintentar a ciegas es como se duplica una carga.'
+          + '</div>';
+  }
+
+  // 2) La fila entera. Todo lo que en la tabla no entra.
+  const campos = [
+    ['Fecha',        (typeof formatFecha==='function' ? formatFecha(h.created_at) : String(h.created_at||'—'))],
+    ['Tipo',         h.tipo||'—'],
+    ['Usuario',      h.usuario||'—'],
+    ['Monto',        (h.monto ? fmtM(h.monto) : '—')],
+    ['Saldo pre',    (h.saldo_pre!=null  && h.saldo_pre!==''  ? fmtM(h.saldo_pre)  : '— (no se pudo leer)')],
+    ['Saldo post',   (h.saldo_post!=null && h.saldo_post!=='' ? fmtM(h.saldo_post) : '— (no se pudo leer)')],
+    ['Billetera',    h.billetera_nombre||'—'],
+    ['Origen',       h.origen||'—'],
+    ['Estado',       h.estado||'—'],
+    ['Operador',     h.operador || (ctx&&ctx.op) || '—'],
+    ['PC',           h.pc_codigo || (ctx&&ctx.pc) || '—'],
+    ['Solicitud',    h.solicitud_id ? ('#'+h.solicitud_id) : '—'],
+    ['Mov. Chunior', h.chunior_movimiento_id ? ('N° '+h.chunior_movimiento_id) : '— (no se anotó)'],
+    ['ID historial', h.id||'—']
+  ];
+  if(ctx && ctx.ms!=null)      campos.push(['Duró', (ctx.ms/1000).toFixed(1)+'s hasta fallar']);
+  if(ctx && ctx.intento!=null) campos.push(['Intento', ctx.intento+' de '+(ctx.maxIntentos!=null?ctx.maxIntentos:'?')]);
+  if(ctx && ctx.saldoRaw)      campos.push(['Saldo leído en Agentes', String(ctx.saldoRaw)]);
+  if(ctx && ctx.pedido!=null)  campos.push(['Monto pedido', fmtM(ctx.pedido)]);
+  if(ctx && ctx.needsLogin)    campos.push(['Sesión', 'caída (needsLogin)']);
+  if(ctx && ctx.pageError)     campos.push(['Página', 'error de Agentes (pageError)']);
+
+  html += '<div style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px;padding:10px 12px;background:#12161d;border:1px solid #262d3a;border-radius:10px;margin-bottom:10px">'
+        + campos.map(function(c){
+            return '<div style="color:#8b949e;white-space:nowrap">'+esc(c[0])+'</div><div style="color:#e6edf3;font-weight:600;word-break:break-word">'+esc(c[1])+'</div>';
+          }).join('')
+        + '</div>';
+
+  // 3) El proceso paso a paso. Primero la traza completa (sólo existe en la PC que operó);
+  //    si no está, los últimos pasos que viajaron dentro de la propia fila.
+  let traza = null;
+  try{ traza = JSON.parse(localStorage.getItem('nodo_traza_hist_'+h.id)||'null'); }catch(_e){}
+  const ico = function(e){ return e==='ok'?'✅':e==='err'?'❌':e==='warn'?'⚠️':'•'; };
+  if(traza && traza.pasos && traza.pasos.length){
+    html += '<div style="font-weight:800;font-size:12px;color:#c9d1d9;margin-bottom:4px">Proceso completo ('+traza.pasos.length+' pasos)</div>'
+          + '<div style="max-height:34vh;overflow:auto;font-size:12.5px;background:#12161d;border:1px solid #262d3a;border-radius:10px;padding:8px 10px">'
+          + traza.pasos.map(function(p){
+              return '<div style="display:flex;gap:10px;padding:2px 0"><span style="color:#6b7688;min-width:46px">+'+esc(p.t)+'s</span><span>'+ico(p.estado)+' '+esc(p.msg)+'</span></div>';
+            }).join('')
+          + '</div>';
+  } else if(ctx && ctx.pasos && ctx.pasos.length){
+    html += '<div style="font-weight:800;font-size:12px;color:#c9d1d9;margin-bottom:4px">Últimos pasos antes de fallar</div>'
+          + '<div style="font-size:12.5px;background:#12161d;border:1px solid #262d3a;border-radius:10px;padding:8px 10px">'
+          + ctx.pasos.map(function(p){ return '<div style="padding:2px 0;color:#e6edf3">'+esc(p)+'</div>'; }).join('')
+          + '<div class="small" style="color:#8b949e;margin-top:6px">El paso a paso completo quedó en la PC que operó'+(ctx.pc?(' ('+esc(ctx.pc)+')'):'')+'.</div>'
+          + '</div>';
+  } else {
+    html += '<div class="small" style="color:#8b949e">Sin paso a paso guardado. La traza completa sólo se guarda en la PC que ejecutó la operación, y de las últimas ~300.</div>';
+  }
+
+  // 4) Crudo, para copiar y pasarle a soporte.
+  html += '<details style="margin-top:10px"><summary style="cursor:pointer;color:#8b949e;font-size:12px">Detalle técnico (crudo)</summary>'
+        + '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;color:#9aa7bd;background:#0d1117;border:1px solid #262d3a;border-radius:8px;padding:8px;margin-top:6px">'
+        + esc(String(h.notas||'(sin notas)')) + '</pre></details>'
+        + '<div style="margin-top:10px"><button class="mini-btn" style="background:#1e3a5f;color:#7cc4ff;border:1px solid rgba(124,196,255,.45)" onclick="copiarDetalleError(&#39;'+esc(String(h.id))+'&#39;)">📋 Copiar todo</button></div>';
+
+  if(typeof abrirModal==='function') abrirModal('🔎 Detalle del error', html, null, 'Cerrar');
+};
+
+// Copia el caso entero como texto plano, para pegarlo en un chat o un ticket.
+window.copiarDetalleError = function(histId){
+  const h = (window._histPorId||{})[String(histId)];
+  if(!h) return;
+  const ctx = _errParse(h.notas);
+  let traza = null;
+  try{ traza = JSON.parse(localStorage.getItem('nodo_traza_hist_'+h.id)||'null'); }catch(_e){}
+  const L = [];
+  L.push('NODO · detalle de error');
+  L.push('motivo:    '+((ctx&&ctx.m&&_ERR_MOTIVOS[ctx.m]&&_ERR_MOTIVOS[ctx.m].t) || _errEtiqueta(h.notas) || '?'));
+  L.push('mensaje:   '+(_errTextoLimpio(h.notas)||'—'));
+  L.push('fecha:     '+(h.created_at||'—'));
+  L.push('tipo:      '+(h.tipo||'—')+'   usuario: '+(h.usuario||'—')+'   monto: '+(h.monto||'—'));
+  L.push('saldos:    pre='+(h.saldo_pre!=null&&h.saldo_pre!==''?h.saldo_pre:'—')+'  post='+(h.saldo_post!=null&&h.saldo_post!==''?h.saldo_post:'—'));
+  L.push('billetera: '+(h.billetera_nombre||'—')+'   chunior: '+(h.chunior_movimiento_id||'—'));
+  L.push('origen:    '+(h.origen||'—')+'   estado: '+(h.estado||'—')+'   operador: '+(h.operador||'—'));
+  L.push('pc:        '+(h.pc_codigo||(ctx&&ctx.pc)||'—')+'   solicitud: '+(h.solicitud_id||'—')+'   hist_id: '+(h.id||'—'));
+  if(ctx && ctx.ms!=null) L.push('duracion:  '+(ctx.ms/1000).toFixed(1)+'s');
+  const pasos = (traza && traza.pasos && traza.pasos.length)
+    ? traza.pasos.map(function(p){ return '  +'+p.t+'s '+(p.estado==='err'?'X ':p.estado==='warn'?'! ':'')+p.msg; })
+    : ((ctx && ctx.pasos) ? ctx.pasos.map(function(p){ return '  '+p; }) : []);
+  if(pasos.length){ L.push('proceso:'); L.push(pasos.join('\n')); }
+  L.push('notas crudas: '+(h.notas||'—'));
+  const txt = L.join('\n');
+  const ok = function(){ if(typeof toast==='function') toast('📋 Detalle copiado','green'); };
+  try{
+    navigator.clipboard.writeText(txt).then(ok, function(){
+      const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand('copy'); ok(); }catch(_e2){ if(typeof toast==='function') toast('No se pudo copiar','red'); }
+      ta.remove();
+    });
+  }catch(_e){
+    if(typeof toast==='function') toast('No se pudo copiar','red');
+  }
+};
+
 // ── Operación manual automatizada ─────────────────────────────────────────────
 // ⛔ Cancelar (freno real): pide al agent-preload que corte la operación en curso. El freno solo
 // actúa ANTES de "Aplicar" (nunca después — la plata ya se movió). Portado de NexoBetaChan.
@@ -3516,7 +3716,7 @@ async function ejecutarOperacionManual(){
       }
 
       if(!busqueda.exists){
-        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Usuario no encontrado'});
+        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:_errNotas('USUARIO_NO_ENCONTRADO','Usuario no encontrado',{paso:'buscar usuario', pedido:montoAbs})});
         if(res) res.innerHTML = '<div class="err-box">❌ <b>'+escapeHtml(usuario)+'</b> no existe en el casino.</div>';
         _trazaPaso(usuario+' NO existe en Agentes','err'); _trazaFin('err', _fh&&_fh.id);
         toast(usuario+" no encontrado","red"); return;
@@ -3530,7 +3730,7 @@ async function ejecutarOperacionManual(){
         const saldo = busqueda.balance?.value ?? null;
         const saldoConfiable = /\d/.test(saldoRaw) && typeof saldo === "number" && Number.isFinite(saldo);
         if(saldoConfiable && saldo >= 0 && saldo < montoAbs){
-          const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Saldo insuficiente'});
+          const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:_errNotas('SALDO_INSUFICIENTE','Saldo insuficiente',{paso:'chequeo de saldo', pedido:montoAbs, saldoRaw:saldoRaw, saldo:saldo})});
           if(res) res.innerHTML = '<div class="err-box">⚠️ Saldo insuficiente: '+escapeHtml(busqueda.balance?.raw||'')+'</div>';
           _trazaPaso('Saldo insuficiente ('+(busqueda.balance?.raw||'').trim()+')','err'); _trazaFin('err', _fh&&_fh.id);
           toast("Saldo insuficiente","red"); return;
@@ -3542,7 +3742,7 @@ async function ejecutarOperacionManual(){
       // Punto de CANCELACIÓN seguro: si el operador canceló mientras buscábamos, NO aplicamos
       // la carga (todavía no se tocó plata). Libera el panel y avisa.
       if(window._traza && window._traza.cancelada){
-        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Cancelado por el operador antes de aplicar'});
+        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:_errNotas('CANCELADO','Cancelado por el operador antes de aplicar',{paso:'antes de aplicar', pedido:montoAbs})});
         _trazaFin('warn');
         if(res) res.innerHTML = '<div class="alert-box">⛔ '+tipo+' cancelada antes de aplicar. No se tocó nada en el casino.</div>';
         toast(tipo+' cancelada', 'yellow'); return;
@@ -3592,7 +3792,7 @@ async function ejecutarOperacionManual(){
           continue;
         }
         // Sin más reintentos → error claro (no operamos a ciegas)
-        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:(resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado'});
+        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:_errNotas(resultado.needsLogin?'SESION_CAIDA':'ERROR_PAGINA',(resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado',{paso:'aplicar', pedido:montoAbs, intento:intentoOp, maxIntentos:MAX_REINTENTOS, needsLogin:!!resultado.needsLogin, pageError:!!resultado.pageError, msg:(resultado&&resultado.message)||null})});
         if(res) res.innerHTML = '<div class="err-box">❌ '+tipo+' no confirmada: '+(resultado.needsLogin?'sesión caída':'error de página en Agentes')+'. Verificá en el casino antes de reintentar.</div>';
         _trazaPaso((resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado','err'); _trazaFin('err', _fh&&_fh.id);
         toast(tipo+' no confirmada · verificá', 'red'); return;
@@ -3639,8 +3839,8 @@ async function ejecutarOperacionManual(){
     const cargaConfirmada = ok && !_rechazoCasino; // script corrió y no hubo rechazo explícito → se confía
     const aplicadoLimpio = cargaConfirmada && _confianza !== 'duplicado';
     const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : "OK");
-    const notas = !ok ? ((resultado && resultado.message) || "error")
-                : _rechazoCasino ? "El casino NO confirmó 'Operación correcta' (rechazo) · NO anotado en Chunior"
+    const notas = !ok ? _errNotas('NO_APLICO', ((resultado && resultado.message) || "error"), {paso:'aplicar', pedido:montoAbs, saldoRaw:(resultado?.previousBalance?.raw || busqueda.balance?.raw || null), needsLogin:!!(resultado&&resultado.needsLogin), pageError:!!(resultado&&resultado.pageError), timeoutVerificar:!!(resultado&&resultado.timeoutVerificar)})
+                : _rechazoCasino ? _errNotas('RECHAZO_CASINO', "El casino NO confirmó 'Operación correcta' (rechazo) · NO anotado en Chunior", {paso:'confirmación', pedido:montoAbs, saldoPre:saldoPre, saldoPost:saldoPost, msg:(resultado&&resultado.message)||null})
                 : _confianza === 'duplicado' ? ('🚨 DUPLICADO x'+(_vecesDup||'?')+' · saldo '+money(saldoPre)+'→'+money(saldoPost))
                 : (resultado?.previousBalance?.raw || busqueda.balance?.raw || null);
     if(_confianza === 'duplicado'){
@@ -3759,7 +3959,7 @@ async function ejecutarOperacionManual(){
     renderBillerasInicio();
     poblarManualBilletera();
   } catch(e) {
-    const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, origen:'MANUAL', estado:'ERROR', notas:e.message||'excepción'});
+    const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, origen:'MANUAL', estado:'ERROR', notas:_errNotas('EXCEPCION', e.message||'excepción', {paso:'excepción', stack:String((e&&e.stack)||'').split('\n').slice(0,3).join(' | ')})});
     if(res) res.innerHTML = '<div class="err-box">Error inesperado: '+escapeHtml(e.message||'sin detalle')+'</div>';
     _trazaPaso('Error inesperado: '+(e.message||'sin detalle'),'err'); _trazaFin('err', _fh&&_fh.id);
     toast("Error: "+(e.message||"sin detalle"),"red");
@@ -6095,6 +6295,7 @@ function renderHistorial(lista){
     '</tr></thead><tbody>';
 
   lista.forEach(function(h){
+    try{ window._histPorId[String(h.id)] = h; }catch(_e){}
     const rowClass = h.estado==='REVERTIDA'?'hrow-revertida':h.estado==='ERROR'?'hrow-error':
       h.origen==='MANUAL'?'hrow-manual':h.origen==='AUTO'?'hrow-auto':h.origen==='PANEL'?'hrow-panel':'hrow-landing';
     const estadoOkVisual = (h.estado==='OK'||h.estado==='ACREDITADA'||h.estado==='PAGADA'||h.estado==='COMPLETADA'||h.estado==='APROBADA');
@@ -6102,8 +6303,10 @@ function renderHistorial(lista){
     const histAccionId = String(h.historial_id || (h._fuente!=='SOLICITUD' ? h.id : '') || '');
     const puedeAccionarHistorial = esOperacionDinero && (!!histAccionId || (h._fuente==='SOLICITUD' && !!h.solicitud_id));
     const canUndo = estadoOkVisual && puedeAccionarHistorial;
-    const notasTd = (h.notas && (h.tipo==='CONSULTA'||h.tipo==='RESET_CLAVE'))
-      ? '<br><span class="small">'+escapeHtml(h.notas)+'</span>' : '';
+    const notasTd = (h.estado==='ERROR' && h.notas)
+      ? '<br><span class="small" style="color:#f87171">'+escapeHtml(_errTextoLimpio(h.notas)||_errEtiqueta(h.notas)||'sin detalle')+'</span>'
+      : ((h.notas && (h.tipo==='CONSULTA'||h.tipo==='RESET_CLAVE'))
+          ? '<br><span class="small">'+escapeHtml(h.notas)+'</span>' : '');
     const undoBtn = canUndo
       ? '<button class="mini-btn yellow" onclick="deshacerOperacion(\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(h.usuario||'')+'\x27,\x27'+h.tipo+'\x27,\x27'+h.monto+'\x27,\x27'+(h.billetera_id||'')+'\x27)" style="font-size:11px">&#8629; Deshacer</button>'
       : '';
@@ -6140,7 +6343,10 @@ function renderHistorial(lista){
     const anularPropBtn = (String(h.tipo||'').toUpperCase()==='PROPINA' && h.chunior_movimiento_id && String(h.estado||'').toUpperCase()!=='ANULADA')
       ? '<button class="mini-btn red" style="font-size:11px" onclick="anularPropinaHistorial(\x27'+escapeHtml(String(h.id))+'\x27)" title="Anular esta propina (pone el monto en 0,10 en Chunior)">🚫 Anular</button>'
       : '';
-    const acciones = [infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn, anularPropBtn].filter(Boolean).join(' ') || '-';
+    const errBtn = (h.estado === 'ERROR')
+      ? '<button class="mini-btn" style="font-size:12px;background:#3f1d1d;color:#fca5a5;border:1px solid rgba(248,113,113,.45);padding:5px 9px;line-height:1" onclick="verDetalleError(\x27'+escapeHtml(String(h.id||''))+'\x27)" title="Por qué falló: contexto completo, paso a paso y detalle técnico">🔎 Por qué falló</button>'
+      : '';
+    const acciones = [errBtn, infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn, anularPropBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
       ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
       : '<span class="small">—</span>';
@@ -6158,7 +6364,7 @@ function renderHistorial(lista){
       '<td style="font-size:12px;white-space:nowrap">'+saldoPostTd+'</td>'+
       '<td style="font-size:12px">'+escapeHtml(String(h.billetera_nombre||'—').split('·')[0].trim()||String(h.billetera_nombre||'—'))+'</td>'+
       '<td>'+origenPill(h.origen)+'</td>'+
-      '<td>'+estadoIcon(h.estado)+'</td>'+
+      '<td style="white-space:nowrap">'+estadoIcon(h.estado)+((h.estado==='ERROR' && _errEtiqueta(h.notas)) ? (' <span style="font-size:10.5px;font-weight:800;color:#f87171">'+escapeHtml(_errEtiqueta(h.notas))+'</span>') : '')+'</td>'+
       '<td style="font-size:11px;color:var(--muted)">'+escapeHtml(h.operador||'—')+'</td>'+
       '<td style="white-space:nowrap">'+acciones+'</td>'+
       '</tr>';
@@ -6563,17 +6769,33 @@ function tablaHistorialUnificadoHTML(lista){
       // podía saber por qué se le rechazó el retiro a alguien sin abrir el detalle uno por uno.
       // Las notas ya se guardaban (el auto-rechazo escribe el caso completo); sólo faltaba verlas.
       (function(){
-        const _n = String((it._raw && it._raw.notas) || it.notas || '').replace(/\[BL_EXCLUIDO\]/g,'').trim();
+        const _crudo = String((it._raw && it._raw.notas) || it.notas || '').replace(/\[BL_EXCLUIDO\]/g,'').trim();
+        // La etiqueta [ERR]{...} es para la máquina. Acá va el motivo en castellano: si se
+        // imprimiera crudo, el operador vería un JSON en el medio de la tabla.
+        const _ctxN = _errParse(_crudo);
+        const _n = _ctxN
+          ? ((_errEtiqueta(_crudo) ? ('❌ ' + _errEtiqueta(_crudo) + (_errTextoLimpio(_crudo) ? ' · ' : '')) : '') + _errTextoLimpio(_crudo))
+          : _crudo;
         if(!_n) return '';
         const _e = String(it.estado||'').toUpperCase();
         const _malo = /RECHAZ|ERROR|CANCEL/.test(_e);
+        // Mismo botón de detalle que en el Historial: el caso completo sin cambiar de pantalla.
+        let _btnErr = '';
+        try{
+          if(_malo && it._raw && it._raw.id){
+            window._histPorId[String(it._raw.id)] = it._raw;
+            _btnErr = ' <button type="button" onclick="verDetalleError(&#39;'+escapeHtml(String(it._raw.id))+'&#39;)"'
+              + ' title="Por qué falló: contexto completo, paso a paso y detalle técnico"'
+              + ' style="background:transparent;border:1px solid #7a5a1d;color:#e3b341;border-radius:6px;font-size:10px;padding:1px 6px;cursor:pointer;margin-left:6px">🔎 detalle</button>';
+          }
+        }catch(_e2){}
         // Sin borde arriba y con el fondo de la fila de datos: se lee como parte de ESA operación,
         // no como un renglón suelto. Antes cada movimiento ocupaba dos filas que parecían dos cosas.
         return `<tr class="hist-nota"><td style="border-top:0"></td>`
           + `<td colspan="8" style="border-top:0;padding:0 8px 7px 8px">`
           + `<div style="font-size:11px;line-height:1.4;color:${_malo?'#e3b341':'#8b949e'};`
           + `border-left:2px solid ${_malo?'#7a5a1d':'#2c3444'};padding-left:8px">`
-          + escapeHtml(_n) + `</div></td></tr>`;
+          + escapeHtml(_n) + _btnErr + `</div></td></tr>`;
       })();
   });
   html += `</tbody></table></div>`;
