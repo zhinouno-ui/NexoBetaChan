@@ -6668,7 +6668,14 @@ function construirHistorialUnificado(){
   });
 
   items.sort(function(a,b){
-    return (b.fecha?new Date(b.fecha).getTime():0) - (a.fecha?new Date(a.fecha).getTime():0);
+    // Primero lo que ESPERA una accion.
+    if(!!a.pendiente !== !!b.pendiente) return a.pendiente ? -1 : 1;
+    const ta = a.fecha?new Date(a.fecha).getTime():0, tb = b.fecha?new Date(b.fecha).getTime():0;
+    // Pendientes: la que espera hace MAS tiempo va primero. Es una cola de trabajo, y el cliente
+    // que lleva 40 minutos esperando es el urgente, no el que acaba de entrar.
+    if(a.pendiente && b.pendiente) return ta - tb;
+    // Lo ya cerrado es historial: lo mas nuevo arriba, como siempre.
+    return tb - ta;
   });
   return items;
 }
@@ -6714,11 +6721,25 @@ function tablaHistorialUnificadoHTML(lista){
   const chkHead = haySeleccionables
     ? `<input type="checkbox" id="histCheckAll" onchange="toggleSeleccionTodos(this.checked)" title="Seleccionar / deseleccionar todos">`
     : '';
-  let html = `<div class="small" style="color:var(--muted);margin-bottom:6px">💡 Tildá operaciones con N° Chunior para cambiar su billetera en lote.</div>`;
+  const _nPend = lista.filter(function(it){ return !!it.pendiente; }).length;
+  let html = _nPend
+    ? `<div style="margin-bottom:7px;padding:7px 11px;border-radius:9px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.45);font-size:12.5px;font-weight:800;color:#f5c518">⚡ ${_nPend} esperando · lo de abajo ya cerró</div>`
+    : `<div style="margin-bottom:7px;padding:7px 11px;border-radius:9px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.35);font-size:12.5px;font-weight:700;color:#22c55e">✓ No queda nada pendiente</div>`;
+  html += `<div class="small" style="color:var(--muted);margin-bottom:6px">💡 Tildá operaciones con N° Chunior para cambiar su billetera en lote.</div>`;
   html += `<div class="table-wrap"><table><thead><tr>`+
     `<th style="width:30px;text-align:center">${chkHead}</th><th>Fecha</th><th>Origen</th><th>Tipo</th><th>Usuario</th>`+
     `<th>Billetera</th><th>Monto</th><th>N° Mov</th><th>Estado</th><th></th></tr></thead><tbody>`;
+  let _corteHecho = false;
   lista.forEach(function(it){
+    // Linea divisoria: se emite UNA vez, al pasar de las pendientes a lo ya cerrado. Sin esto
+    // las dos mitades se leen como una sola lista y se pierde para que sirve el orden nuevo.
+    if(_nPend && !it.pendiente && !_corteHecho){
+      _corteHecho = true;
+      html += `<tr><td colspan="10" style="padding:6px 8px;border-top:0">`
+            + `<div style="display:flex;align-items:center;gap:9px;color:#6b7688;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em">`
+            +   `<span style="flex:1;height:1px;background:#2c3444"></span>ya procesado<span style="flex:1;height:1px;background:#2c3444"></span>`
+            + `</div></td></tr>`;
+    }
     const seleccionable = it.fuente==='OPERACION' && it.chunior_movimiento_id;
     const selId = String(it.historial_id||it.id||'');
     const checked = seleccionable && _seleccionLote.has(selId);
