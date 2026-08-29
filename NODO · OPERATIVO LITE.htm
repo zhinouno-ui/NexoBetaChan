@@ -14476,7 +14476,7 @@ function _rv2ActualizarTotal(){
     const modo=document.getElementById('rv2ModoCada');
     if(modo) modo.style.display = nSel>1 ? 'block' : 'none';
     // El veredicto y el resumen de arriba tienen que seguir a lo que se toca abajo.
-    const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml();
+    _rv2PintarVeredicto();
     const r=document.getElementById('rv2Resumen');  if(r) r.innerHTML=_rv2ResumenPago();
   }catch(_e){}
 }
@@ -14533,6 +14533,16 @@ function _rv2Veredicto(){
                          : ('Tiene '+money(st.saldoReal)+' en fichas.')};
   return {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LAS BILLETERAS NO CUBREN EL TOTAL',
     det:'Se puede pagar '+money(tot)+' ahora · quedan '+money(falta)+' para después.'};
+}
+// Conviven dos modales de retiro segun de donde se abra el retiro: uno tiene #rv2Veredicto y el
+// otro #rv2SaldoReal. Hay que pintar en el que exista — buscando solo el primero, en el modal que
+// quedo tras el merge el saldo se leia (consulta real a Agentes, con reintentos) y no se mostraba
+// en ningun lado: el if(v) lo hacia fallar en silencio, justo en la pantalla que mueve plata.
+function _rv2PintarVeredicto(){
+  try{
+    const v = document.getElementById('rv2Veredicto') || document.getElementById('rv2SaldoReal');
+    if(v) v.innerHTML = _rv2VeredictoHtml();
+  }catch(_e){}
 }
 function _rv2VeredictoHtml(){
   const v=_rv2Veredicto(); if(!v) return '';
@@ -14628,6 +14638,7 @@ function _rv2Render(){
     + '<div style="border-radius:11px;padding:11px;text-align:center;border:1px solid rgba(251,146,60,.35);background:rgba(251,146,60,.06)">'
     +   '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e">Transferir a</div>'
     +   '<div style="font-size:19px;font-weight:900;color:#f0f6fc;line-height:1.2">'+escapeHtml(st.titular||st.usuario)+'</div>'
+    +   '<div id="rv2SaldoReal" class="small" style="color:#8b949e;margin-top:3px">💰 leyendo saldo real…</div>'
     +   cbuHtml
     +   '<div style="margin-top:9px;padding-top:8px;border-top:1px solid #262d3a">'
     +     '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e;margin-bottom:2px">Sale de</div>'
@@ -14672,7 +14683,7 @@ function _rv2Render(){
 // diciendo lo mismo con textos distintos. Ahora hay un solo veredicto y él decide qué mostrar.
 async function _rv2LeerSaldo(intento){
   const st = window._retiroV2; if(!st || !window.ctrlElectron) return;
-  const pintar=function(){ try{ const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml(); _rv2ActualizarBotonAprobar(); }catch(_e){} };
+  const pintar=function(){ try{ _rv2PintarVeredicto(); _rv2ActualizarBotonAprobar(); }catch(_e){} };
   // El agente puede estar tomado por otra operación justo cuando abrís el modal. Antes se
   // intentaba UNA vez, quedaba en "no pudimos leer sus fichas" y ahí moría — y como _rv2Aprobar
   // sólo valida el saldo si pudo leerlo, el retiro salía SIN chequear las fichas. Ahora reintenta.
