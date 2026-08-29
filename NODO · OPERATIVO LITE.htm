@@ -1451,6 +1451,16 @@ function _toastQuitar(el){
   setTimeout(function(){ try{ el.remove(); }catch(_e){} }, 240);
 }
 function toast(msg,type="blue"){
+  // TODO aviso va también a la consola. Los toasts duran 3s y se van: cuando algo se traba o falla,
+  // lo que el operador vio ya no existe y no hay forma de reconstruir la secuencia. En la consola
+  // quedan con hora, en orden, y se pueden copiar enteros para diagnosticar.
+  try{
+    const _h = new Date().toLocaleTimeString('es-AR',{hour12:false});
+    const _c = type==='red' ? 'color:#f04438;font-weight:700'
+             : type==='green' ? 'color:#12b76a;font-weight:700'
+             : type==='yellow' ? 'color:#f5c518;font-weight:700' : 'color:#58a6ff';
+    console.log('%c[toast '+_h+'] '+msg, _c);
+  }catch(_e){}
   let stack=document.getElementById("toastStack");
   if(!stack){ stack=document.createElement("div"); stack.id="toastStack"; document.body.appendChild(stack); }
   const div=document.createElement("div");
@@ -3206,13 +3216,65 @@ async function soloConsultarUsuario(){
 // compartido por todos los flujos que tocan la ventana de Agentes.
 window._drexGlobalBusy = false;
 window._drexGlobalBusyMotivo = null;
+window._drexGlobalBusyDesde = 0;
+// Un candado sin vencimiento se queda tomado PARA SIEMPRE si la operación que lo tomó muere sin
+// soltarlo (una excepción, la ventana cerrada, un preload colgado). Y el panel queda contestando
+// "hay otra operación corriendo" sin que haya ninguna — sin forma de salir. Pasó.
+// Ahora el candado se anota CUÁNDO se tomó y se suelta solo si quedó viejo.
+const _DREX_LOCK_MAX_MS = 150000;   // 2,5 min · más que la tarea más larga (120s de la cola)
 function _drexGlobalLock(motivo){
-  if(window._drexGlobalBusy) return false;
+  if(window._drexGlobalBusy){
+    const held = Date.now() - (window._drexGlobalBusyDesde||0);
+    if(held > _DREX_LOCK_MAX_MS){
+      // Candado vencido: lo tomó algo que nunca lo devolvió. Se libera y se avisa, en vez de
+      // dejar el panel trabado esperando a alguien que ya no está.
+      console.warn('[lock] candado vencido tras '+Math.round(held/1000)+'s ("'+(window._drexGlobalBusyMotivo||'?')+'") → liberado solo');
+      try{ toast('🔓 Se destrabó solo: "'+(window._drexGlobalBusyMotivo||'una operación')+'" quedó colgada hace '+Math.round(held/1000)+'s','yellow'); }catch(_e){}
+    } else {
+      return false;
+    }
+  }
   window._drexGlobalBusy = true;
   window._drexGlobalBusyMotivo = motivo || '';
+  window._drexGlobalBusyDesde = Date.now();
   return true;
 }
-function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; }
+function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; window._drexGlobalBusyDesde = 0; }
+// Qué está pasando, en una línea. Para el badge y para poder preguntarlo desde la consola.
+// Badge en vivo: qué está haciendo el agente, hace cuánto, y el botón para soltarlo. Aparece solo
+// si está tomado más de 2s (para no parpadear en cada operación corta).
+function _agentesBadgePintar(){
+  try{
+    let el = document.getElementById('agentesBadge');
+    if(!el){
+      el = document.createElement('div'); el.id='agentesBadge';
+      el.innerHTML = '<span>⚙️</span><span class="ab-txt"></span><span class="ab-seg"></span>'
+        + '<button type="button" onclick="liberarLockAgentes()" title="Soltar el agente a la fuerza">Destrabar</button>';
+      document.body.appendChild(el);
+    }
+    const b = window._drexGlobalBusy;
+    const seg = b ? Math.round((Date.now()-(window._drexGlobalBusyDesde||0))/1000) : 0;
+    if(!b || seg < 2){ el.style.display='none'; return; }
+    const q = (window._drexCola && window._drexCola.pendientes) || 0;
+    const nom = (window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre) || window._drexGlobalBusyMotivo || 'operación';
+    el.querySelector('.ab-txt').textContent = nom + (q>1 ? (' · '+(q-1)+' en cola') : '');
+    el.querySelector('.ab-seg').textContent = seg+'s';
+    el.classList.toggle('viejo', seg > 45);
+    el.style.display='flex';
+  }catch(_e){}
+}
+try{ setInterval(_agentesBadgePintar, 1000); }catch(_e){}
+
+window.estadoAgentes = function(){
+  const b = window._drexGlobalBusy;
+  const seg = b ? Math.round((Date.now()-(window._drexGlobalBusyDesde||0))/1000) : 0;
+  const q = (window._drexCola && window._drexCola.pendientes) || 0;
+  const info = { ocupado:b, motivo:window._drexGlobalBusyMotivo||null, segundos:seg,
+                 enCola:q, tareaActual:(window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre)||null,
+                 sinSesion:!!window._drexSinSesion };
+  console.log('[agentes]', info);
+  return info;
+};
 
 // ── Traza de proceso de carga/retiro (visibilidad + cancelar) ──────────────────
 // Registra cada paso de una operación con su tiempo, para: (1) mostrarlo EN VIVO en una tira
@@ -4383,8 +4445,94 @@ function _nexoBuildPayload(opsExtra){
   const usuarios = Object.values(porUsuario).filter(function(u){
     return u.operaciones.length || (u.bonos&&u.bonos.length) || u.telefono || u.titular;
   });
-  return { schemaVersion:1, generatedAt:new Date().toISOString(), usuarios:usuarios };
+  // pc_codigo = la LLAVE de oficina. Nexo no debe tener ninguna oficina configurada a mano: le
+  // pregunta a NODO (leyendo este archivo) de qué oficina es esta PC. NODO es el único que lo sabe
+  // de verdad — lo detecta de Chunior al loguear, no sale de la ruta de instalación ni de un
+  // config. Así el mismo instalador de Nexo sirve en cualquier máquina. Ver NEXO_INTEGRACION.md.
+  const _pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim();
+  return {
+    schemaVersion:3,
+    generatedAt:new Date().toISOString(),
+    pc_codigo:_pc || null,                 // null = NODO todavía no sabe la oficina → Nexo NO asume ninguna
+    operador:(window.operador && (window.operador.usuario||window.operador.nombre)) || '',
+    // A QUÉ SERVIDOR apuntar. Hay más de un Supabase en juego (mirá el bloque de SUPABASE_URL: hay
+    // otro comentado) y se cambia editando el código. Si Nexo lo tuviera hardcodeado, al cambiar de
+    // servidor quedaría leyendo el viejo —datos de otra base— sin que nadie se entere. Mandándolo
+    // desde acá, Nexo siempre habla con el MISMO servidor que NODO, sin configurar nada.
+    // La key es la publishable (anon): ya viaja dentro de la app en cada máquina y está protegida
+    // por RLS. No es un secreto; el secreto es PANEL_DATA_SECRET, que NO se manda.
+    supabase:{ url:SUPABASE_URL, key:SUPABASE_KEY },
+    // Acuse de los pedidos que Nexo encoló y NODO aplicó. Con esto Nexo los saca de su cola; los
+    // que no aparezcan acá los reintenta (es idempotente, reintentar de más no rompe nada).
+    pedidosAplicados: (window._nexoAcuses||[]).slice(),
+    usuarios:usuarios
+  };
 }
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// PEDIDOS DE NEXO · Nexo encola, NODO aplica
+// Nexo no puede escribir identidades: panel_vincular_usuario exige PANEL_DATA_SECRET y ese secreto
+// no se comparte. Entonces Nexo deja sus pedidos en nexo-pedidos.json y NODO los aplica con su
+// secreto. Nadie comparte nada y NODO decide qué se escribe.
+// El acuse ({id, ok, error, ts}) viaja en el próximo nodo-datos.json; con eso Nexo saca el pedido
+// de su cola. Sin acuse lo reintenta — es idempotente.
+//
+// ⚠ CANDADO: mientras panel_vincular_usuario compare el usuario CRUDO (bug documentado, fix en
+// SQL_fix_vincular_usuario_limpio.sql), cada pedido puede DUPLICAR al usuario en el servidor. Por
+// eso esto arranca APAGADO. Se prende con window.nexoPedidosActivar(true) DESPUÉS de aplicar el
+// SQL. Lo pidió el propio lado de Nexo y tiene razón.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+window.nexoPedidosActivar = function(on){
+  try{ localStorage.setItem('nodo_nexo_pedidos', on===true?'1':'0'); }catch(_e){}
+  toast(on===true ? '✅ Pedidos de Nexo ACTIVADOS' : '⛔ Pedidos de Nexo apagados', on===true?'green':'yellow');
+};
+function _nexoPedidosActivo(){ try{ return localStorage.getItem('nodo_nexo_pedidos')==='1'; }catch(_e){ return false; } }
+
+window._nexoAcuses = [];        // {id, ok, error, ts} — se vacía cuando se escriben en el payload
+let _nexoPedidosCorriendo = false;
+
+async function _nexoProcesarPedidos(){
+  if(!_nexoPedidosActivo()) return;
+  if(_nexoPedidosCorriendo) return;
+  if(!window.nexoFile || !window.nexoFile.pedidos) return;   // build viejo sin el puente de lectura
+  if(!pcOperativa || !window.PANEL_DATA_SECRET) return;
+  _nexoPedidosCorriendo = true;
+  try{
+    const r = await window.nexoFile.pedidos();
+    if(!r || !r.ok || !Array.isArray(r.pedidos) || !r.pedidos.length) return;
+    // La oficina del archivo tiene que ser LA MÍA. Si no, es de otra PC y no lo tocamos.
+    if(r.pc_codigo && String(r.pc_codigo).trim().toUpperCase() !== String(pcOperativa).trim().toUpperCase()){
+      console.warn('[nexo] pedidos de otra oficina ('+r.pc_codigo+' ≠ '+pcOperativa+') — ignorados');
+      return;
+    }
+    const yaAcusados = new Set((window._nexoAcuses||[]).map(function(a){ return String(a.id); }));
+    for(const p of r.pedidos){
+      const id = String((p&&p.id)||''); if(!id || yaAcusados.has(id)) continue;
+      const acuse = { id:id, ok:false, error:null, ts:Date.now() };
+      try{
+        if(String(p.tipo||'') !== 'vincular_telefono'){ acuse.error='tipo no soportado: '+p.tipo; }
+        else if(!p.usuario || !p.telefono){ acuse.error='faltan usuario o teléfono'; }
+        else{
+          // SIN p_forzar: Nexo sólo debe encolar HUECOS (usuario sin teléfono en el servidor). Si
+          // hay conflicto, que lo resuelva un operador mirando el cotejo — no un pedido automático.
+          const rr = await supabaseClient.rpc('panel_vincular_usuario',{
+            p_secret:window.PANEL_DATA_SECRET, p_pc_codigo:pcOperativa,
+            p_usuario:String(p.usuario), p_telefono:String(p.telefono)
+          });
+          const d = (rr && rr.data) || {};
+          if(rr.error) acuse.error = rr.error.message || 'error de RPC';
+          else if(!d.ok) acuse.error = d.mensaje || (d.conflicto_tel ? ('conflicto: el teléfono es de '+(d.usuario_actual||'otro')) : 'rechazado');
+          else acuse.ok = true;
+        }
+      }catch(e){ acuse.error = e.message || String(e); }
+      window._nexoAcuses.push(acuse);
+      console.log('[nexo] pedido '+id+' · '+(acuse.ok?'OK':'falló: '+acuse.error));
+    }
+    if(window._nexoAcuses.length){ try{ nexoSync(false); }catch(_e){} }   // devolver los acuses ya
+  }catch(e){ console.warn('[nexo] procesar pedidos falló:', e.message||e); }
+  finally{ _nexoPedidosCorriendo = false; }
+}
+window._nexoProcesarPedidos = _nexoProcesarPedidos;
+
 let _nexoSyncing=false; window._nexoLastOk=0;
 async function nexoSync(verbose){
   if(!window.nexoFile || !window.nexoFile.write || _nexoSyncing) return; // sin bridge (no desktop) → nada
@@ -4396,6 +4544,13 @@ async function nexoSync(verbose){
     const wr = await window.nexoFile.write(JSON.stringify(payload));
     if(wr && wr.ok){
       window._nexoLastOk=Date.now();
+      // Los acuses ya viajaron en ESTE archivo: se sacan de la cola local. Se descuentan sólo los
+      // que se escribieron, no todos — si entró un acuse nuevo mientras se armaba el payload, ese
+      // tiene que salir en el próximo, no perderse acá.
+      try{
+        const idsEnviados = new Set((payload.pedidosAplicados||[]).map(function(a){ return String(a.id); }));
+        window._nexoAcuses = (window._nexoAcuses||[]).filter(function(a){ return !idsEnviados.has(String(a.id)); });
+      }catch(_e){}
       const nops = payload.usuarios.reduce(function(a,u){return a+u.operaciones.length;},0);
       console.log('[nexo] sync OK · '+payload.usuarios.length+' usuarios · '+nops+' ops · '+(wr.bytes||0)+' bytes');
       if(verbose){ try{toast('🟢 Nexo: '+payload.usuarios.length+' usuarios · '+nops+' ops','green');}catch(_e){} }
@@ -4427,6 +4582,9 @@ window.nexo = async function(cmd){
 // se actualiza y Nexo relee). Configurable con window._nexoIntervaloMs (default 90s).
 window._nexoIntervaloMs = window._nexoIntervaloMs || 90000;
 try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
+// Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
+// mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
+try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
 try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
 
 // ── Base local de JUGADORES (CRM-lite · portado de NexoBetaChan 1.0.85) ──────────
@@ -4564,6 +4722,20 @@ window.jugadorRegistrarDato = function(usuario, dato){
     if(dato.telefono){
       const t = String(dato.telefono).replace(/\D/g,'');
       if(t){ const p = j.telefonos[t]||{veces:0,primera:fecha}; p.veces++; p.ultima=fecha; if(dato.verificado) p.verificado=true; j.telefonos[t]=p; }
+    }
+    // No guardamos en la ficha del jugador datos que son NUESTROS (titular/alias de una billetera
+    // propia). Antes entraban como un titular más y la identidad quedaba con "Juan Carlos Matrelo
+    // ×4" colgando de un cliente cualquiera.
+    const _propioTit = dato.titular ? window.esDatoPropioBilletera(dato.titular) : null;
+    const _propioCbu = dato.cbu     ? window.esDatoPropioBilletera(dato.cbu)     : null;
+    if(_propioTit || _propioCbu){
+      const p = _propioTit || _propioCbu;
+      try{ console.warn('[jugadores] '+u+' declaró un dato NUESTRO ('+p.campo+' de '+p.billetera+'): "'+p.valor+'" — no se registra en su ficha'); }catch(_e){}
+      j.datosPropios = Array.isArray(j.datosPropios) ? j.datosPropios : [];
+      j.datosPropios.push({ campo:p.campo, billetera:p.billetera, valor:String(dato.titular||dato.cbu||''), fecha:fecha });
+      if(j.datosPropios.length>20) j.datosPropios = j.datosPropios.slice(-20);
+      if(_propioTit) dato = Object.assign({}, dato, { titular:'' });
+      if(_propioCbu) dato = Object.assign({}, dato, { cbu:'' });
     }
     const cbuN = _jugNormCbu(dato.cbu);
     if(cbuN){
@@ -5127,13 +5299,28 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
   // buscamos en la solicitud del portal (V154P) por usuario + tipo RETIRO → SIEMPRE aparece.
   let cbuVal = String(mov.cbu||mov.destino||'').trim();
   let titularDecl = String(mov.titular||'').trim();
+  let cbuDudoso = false;   // true = el CBU no salió del retiro exacto, sino del más reciente
   if (esRetiro && (!cbuVal || !titularDecl)) {
     try {
       const _sols = (window.V154P && window.V154P.solicitudes) || [];
-      const _sol = _sols.find(function(s){
-        return String(s.USUARIO||s.USUARIO_JUGADOR||'').toLowerCase()===String(usuario).toLowerCase()
-          && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
-      });
+      const _sid = String(mov.solicitud_id||mov.SOLICITUD_ID||mov.solicitudId||mov.ID_SOLICITUD||'').trim();
+      let _sol = null;
+      // 1) Por ID de solicitud: es el único cruce que no se puede equivocar de retiro.
+      if(_sid) _sol = _sols.find(function(s){ return String(s.ID||s.SOLICITUD_ID||'')===_sid; }) || null;
+      if(!_sol){
+        // 2) Sin ID hay que adivinar. Antes esto era un .find() por usuario+RETIRO a secas: con
+        //    DOS retiros del mismo usuario en la lista agarraba el primero del array — el VIEJO —
+        //    y mostraba (y copiaba) el CBU de un retiro anterior. O sea, pagarle al CBU equivocado.
+        //    Ahora se toma el más NUEVO y, si había más de uno, queda marcado como a verificar.
+        const _cands = _sols.filter(function(s){
+          return String(s.USUARIO||s.USUARIO_JUGADOR||'').toLowerCase()===String(usuario).toLowerCase()
+            && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
+        }).sort(function(a,b){
+          return new Date(b.FECHA_CREACION||b.FECHA||0) - new Date(a.FECHA_CREACION||a.FECHA||0);
+        });
+        _sol = _cands[0] || null;
+        if(_cands.length>1) cbuDudoso = true;
+      }
       if (_sol) {
         if (!cbuVal)      cbuVal      = String(_sol.DESTINO||_sol.CBU||_sol.RETIRO_ALIAS_CBU||_sol.ALIAS_CBU||'').trim();
         if (!titularDecl) titularDecl = String(_sol.TITULAR||_sol.RETIRO_TITULAR||'').trim();
@@ -5141,7 +5328,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
     } catch(_e){}
   }
   const cbuHtml = (esRetiro && cbuVal)
-    ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
+    ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba('+(cbuDudoso?'245,197,24,.6':'251,146,60,.45')+');border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:'+(cbuDudoso?'#f5c518':'#8b949e')+'">'+(cbuDudoso?'⚠ CBU del retiro MÁS RECIENTE · verificalo contra la solicitud':'CBU / Alias destino · tocá para copiar')+'</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
     : '';
   // Cruce antifraude con la base local de jugadores: ¿destino conocido? ¿titular habitual?
   let cbuWarnHtml = '';
@@ -5280,6 +5467,31 @@ function _arbolResumenHtml(usuario){
 }
 // Progreso de un retiro PARCIAL: cuánto se pagó ya (metadata.retiro_parcial.pagado) y cuánto resta.
 // Se usa para que la tarjeta y el modal muestren el RESTANTE (no el total original) a medida que se paga.
+// ── Cuánto se pagó REALMENTE de un retiro ────────────────────────────────────────────────────
+// Se SUMA DEL HISTORIAL, no se lee de un contador. Cada transferencia real escribe su fila con
+// solicitud_id, monto y billetera: ese es el libro, y es el único registro que existe porque
+// hubo plata moviéndose. metadata.monto_pagado es un acumulado que se le suma a ciegas en cada
+// pago — se conto doble una vez y quedaron solicitudes diciendo "pagado 450.000" cuando habian
+// salido 250.000, sin forma de corregirlo desde el panel (la RPC solo suma, no fija).
+// Derivarlo del historial lo hace AUTOCORREGIBLE: si el numero guardado esta podrido, el proximo
+// pago lo pisa con la suma real. Mismo criterio que con Chunior y el saldo de las billeteras:
+// la verdad es el registro de los movimientos, no un contador paralelo.
+window._retiroPagadoDelHistorial = function(solicitudId){
+  const sid = String(solicitudId||''); if(!sid) return null;
+  let filas = [];
+  try{ filas = (typeof _historialData!=='undefined' && Array.isArray(_historialData)) ? _historialData
+             : (Array.isArray(window._historialData) ? window._historialData : []); }catch(_e){ return null; }
+  if(!filas.length) return null;                       // historial no cargado → no afirmamos nada
+  let suma = 0, n = 0;
+  filas.forEach(function(h){
+    if(!h || String(h.solicitud_id||'')!==sid) return;
+    if(normalizar(h.tipo)!=='RETIRO') return;
+    if(normalizar(h.estado)!=='OK') return;            // sólo las efectivas
+    suma += Math.abs(Number(h.monto||0)) || 0; n++;
+  });
+  return n ? { pagado:suma, filas:n } : null;          // sin filas → todavía no se pagó nada
+};
+
 window._retiroParcialInfo = function(s){
   const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   let pagado = 0, pagadoAlt = 0;
@@ -5306,6 +5518,38 @@ window._retiroParcialInfo = function(s){
 // Un RETIRO con progreso PARCIAL (se pagó algo pero NO todo) sigue PENDIENTE hasta cobrar el total,
 // aunque la RPC lo haya marcado PAGADA/completo. Solo debe desaparecer si se retiró por COMPLETO
 // (pagado >= total) o si es un cierre deliberado (RECHAZADA/CANCELADA). Red de seguridad del panel.
+// Caja de retiros pagándose por partes. Portado de la línea de la encargada (5405ff9): los
+// parciales salían mezclados con las solicitudes nuevas y se perdían de vista — de hecho pasamos
+// media sesión peleando con uno que "desaparecía". La lista la arma el render del Inicio en
+// window._parcialesEnProceso.
+window.verRetirosParciales = function(){
+  const arr = (window._parcialesEnProceso || []).slice();
+  if(!arr.length){ try{ toast('No hay retiros pagándose por partes.','blue'); }catch(_e){} return; }
+  const filas = arr.map(function(s){
+    const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+    const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
+    const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
+    const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+    const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+    const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #7c3aed;border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+      +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
+      +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
+      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#a78bfa">falta '+money(pp.restante)+'</div>'
+      +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
+      + '</div>'
+      + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
+      +   '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#7c3aed,#a78bfa)"></div></div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">'
+      +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+      +   '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" '
+      +     'onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>'
+      + '</div></div>';
+  }).join('');
+  abrirModal('💸 Retiros pagándose por partes · '+arr.length, filas, null, '');
+};
+
 window._retiroParcialSigueAbierto = function(s){
   try{
     if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='RETIRO') return false;
@@ -5382,15 +5626,44 @@ window.cerrarRetiroSaldado = async function(id){
   }catch(e){ toast('No se pudo cerrar: '+(e.message||e),'red'); }
 };
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
+// Copiar el CBU/alias. El bug que tenía: navigator.clipboard.writeText() falla en Electron sobre
+// file:// (no es contexto seguro), el .catch() se comía el error EN SILENCIO, y aun así pintaba
+// el ✅ y toasteaba "Copiado". El operador pegaba y no había nada — o peor, quedaba lo anterior
+// del portapapeles, que puede ser el alias de OTRO retiro. Ahora: si el modo moderno falla, cae
+// al textarea + execCommand, y sólo se canta "copiado" cuando de verdad se copió.
 function portalCopiarCbu(btn){
+  const val = (btn && btn.getAttribute('data-valor')) || '';
+  if(!val){ if(typeof toast==='function') toast('No hay alias/CBU para copiar','red'); return; }
+  const ok = function(){
+    try{
+      const ico = btn.querySelector('.pcopy-ico');
+      if(ico){ const prev=ico.textContent; ico.textContent='✅'; setTimeout(function(){ ico.textContent=prev; }, 1200); }
+    }catch(_e){}
+    if(typeof toast==='function') toast('Copiado: '+val,'green');
+  };
+  const fallo = function(){
+    // El alias va en el aviso: si no se pudo copiar, al menos se puede leer y tipear.
+    if(typeof toast==='function') toast('No se pudo copiar — copialo a mano: '+val,'red');
+  };
+  const porTextarea = function(){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=val;
+      // Fuera de pantalla pero SELECCIONABLE: un textarea display:none no se puede copiar.
+      ta.setAttribute('readonly','');
+      ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;padding:0;border:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select(); ta.setSelectionRange(0, val.length);
+      let r=false; try{ r=document.execCommand('copy'); }catch(_e){}
+      document.body.removeChild(ta);
+      r ? ok() : fallo();
+    }catch(_e){ fallo(); }
+  };
   try{
-    const val = (btn && btn.getAttribute('data-valor')) || '';
-    if(!val) return;
-    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).catch(function(){}); }
-    else { const ta=document.createElement('textarea'); ta.value=val; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_e){} document.body.removeChild(ta); }
-    const ico = btn.querySelector('.pcopy-ico'); if(ico){ const prev=ico.textContent; ico.textContent='✅'; setTimeout(function(){ ico.textContent=prev; }, 1200); }
-    if(typeof toast==='function') toast('Copiado','green');
-  }catch(_e){}
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(val).then(ok).catch(porTextarea);
+    } else porTextarea();
+  }catch(_e){ porTextarea(); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -6285,7 +6558,23 @@ function tablaHistorialUnificadoHTML(lista){
       `<td style="font-size:12px">${movTd}</td>`+
       `<td>${estadoBadge(it.estado)}</td>`+
       `<td style="white-space:nowrap"><div style="display:flex;gap:4px;flex-wrap:wrap">${solBtns}${blBtn}</div></td>`+
-      `</tr>`;
+      `</tr>`+
+      // El MOTIVO, debajo de la fila. Esta vista mostraba "RECHAZADA" o "ERROR" y nada más: no se
+      // podía saber por qué se le rechazó el retiro a alguien sin abrir el detalle uno por uno.
+      // Las notas ya se guardaban (el auto-rechazo escribe el caso completo); sólo faltaba verlas.
+      (function(){
+        const _n = String((it._raw && it._raw.notas) || it.notas || '').replace(/\[BL_EXCLUIDO\]/g,'').trim();
+        if(!_n) return '';
+        const _e = String(it.estado||'').toUpperCase();
+        const _malo = /RECHAZ|ERROR|CANCEL/.test(_e);
+        // Sin borde arriba y con el fondo de la fila de datos: se lee como parte de ESA operación,
+        // no como un renglón suelto. Antes cada movimiento ocupaba dos filas que parecían dos cosas.
+        return `<tr class="hist-nota"><td style="border-top:0"></td>`
+          + `<td colspan="8" style="border-top:0;padding:0 8px 7px 8px">`
+          + `<div style="font-size:11px;line-height:1.4;color:${_malo?'#e3b341':'#8b949e'};`
+          + `border-left:2px solid ${_malo?'#7a5a1d':'#2c3444'};padding-left:8px">`
+          + escapeHtml(_n) + `</div></td></tr>`;
+      })();
   });
   html += `</tbody></table></div>`;
   return html;
@@ -7642,6 +7931,60 @@ const _watchdog = {
 };
 
 // Helpers para que las operaciones se anuncien al watchdog
+// ── Relevo watchdog → revisión de fichas de retiros ──────────────────────────────────────────
+// Cuando el watchdog termina de leer, avisa acá: "ya terminé, empezá lo tuyo". Es un RELEVO, no
+// paralelismo — corre después del ciclo, nunca encimado. Y sólo si el agente está libre: si hay
+// otra solicitud en proceso, esto se saltea y espera al próximo ciclo (pasa cada pocos minutos,
+// no hay apuro). Objetivo: confirmar que las fichas del retiro salieron de verdad de Agentes.
+let _revFichasUltimo = 0;
+function _revisarFichasRetirosTrasWatchdog(){
+  if(Date.now() - _revFichasUltimo < 60000) return;          // como mucho una vez por minuto
+  if(_watchdog.busy > 0) return;                             // el agente sigue tomado
+  if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0)) return;
+  if(window._v154pParcialBusy) return;                       // hay un parcial en curso
+  if(window._cotejoDeclarando) return;
+  if(window._retiroV2) return;                               // hay un modal de retiro abierto
+  const sols = (window.V154P && V154P.solicitudes) || [];
+  const pend = sols.filter(function(s){
+    if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase() !== 'RETIRO') return false;
+    return /EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase());
+  });
+  if(!pend.length) return;                                   // no hay retiro que revisar
+  _revFichasUltimo = Date.now();
+  try{ window._revisarFichasRetiros && window._revisarFichasRetiros(pend); }catch(_e){}
+}
+window._revisarFichasRetirosTrasWatchdog = _revisarFichasRetirosTrasWatchdog;
+
+// Confirma contra Agentes que las fichas del retiro salieron de verdad. Es SOLO LECTURA: lee el
+// saldo del jugador y avisa. No aprueba, no anota, no toca plata — si algo no cuadra decide el
+// operador. Revisa de a UN retiro por ciclo para no acaparar el agente.
+window._revisarFichasRetiros = async function(pendientes){
+  if(!Array.isArray(pendientes) || !pendientes.length) return;
+  if(!window.ctrlElectron) return;
+  const s = pendientes[0];
+  const usuario = String(s.USUARIO||'').trim(); if(!usuario) return;
+  if(!_drexGlobalLock('rev-fichas-retiro')) return;   // alguien lo tomó entre medio → al próximo ciclo
+  _wdLock();
+  try{
+    const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
+    if(!b || !b.exists || typeof b.balance?.value !== 'number') return;
+    const saldo = b.balance.value;
+    const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+    const falta = pp ? pp.restante : Number(s.MONTO_REAL||s.MONTO_DECLARADO||0);
+    // Lo único que importa acá: ¿le quedaron fichas como para cubrir lo que todavía se le debe?
+    // Si NO le alcanzan, el retiro no se puede terminar y el operador tiene que saberlo antes de
+    // sentarse a transferir.
+    if(falta > 0 && saldo + 0.5 < falta){
+      try{ toast('⚠ '+usuario+': quedan '+money(falta)+' por pagar pero tiene '+money(saldo)+' en fichas','yellow'); }catch(_e){}
+      console.warn('[rev-fichas] '+usuario+' · restan '+falta+' · fichas '+saldo);
+    } else {
+      console.log('[rev-fichas] '+usuario+' OK · restan '+falta+' · fichas '+saldo);
+    }
+    s.__fichasRevisadas = { saldo:saldo, ts:Date.now() };
+  }catch(e){ console.warn('[rev-fichas] falló:', e.message||e); }
+  finally{ _wdUnlock(); _drexGlobalUnlock(); }
+};
+
 function _wdLock(){   _watchdog.busy++; }
 function _wdUnlock(){ if(_watchdog.busy > 0) _watchdog.busy--; }
 // Reset duro a 0 — para los puntos de limpieza GARANTIZADA al final de una operación (o su
@@ -7818,6 +8161,10 @@ async function _watchdogPoll(){
   _watchdog.drexFichas    = ahora.drexFichas;
   _watchdog.chuniorFichas = ahora.chuniorFichas;
   _watchdog.lastCheck     = Date.now();
+  // El watchdog terminó su lectura y suelta el agente. Le pasa la posta a la revisión de fichas
+  // de los retiros: DESPUÉS de este, nunca encimado. El watchdog sólo lee, así que no hay riesgo
+  // de que dos cosas escriban plata — pero igual va en relevo, no en paralelo.
+  try{ _revisarFichasRetirosTrasWatchdog(); }catch(_e){}
 
   const horaCheck = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
   const fmt = function(v){ return money(v).replace('$ ','$'); };
@@ -8084,7 +8431,12 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
       if(!r.error && Array.isArray(r.data)){
         r.data.forEach(function(v){
           const k=String(v.usuario||'').toLowerCase(); if(!k) return;
-          if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk' };
+          // Se guarda de QUÉ OFICINA es la fila. Este buscador va con p_pc_codigos:null, o sea que
+          // trae las 9 oficinas — pero panel_vincular_usuario, que es el que decide, filtra por LA
+          // TUYA. Sin esto la tarjeta te nombraba al dueño del teléfono en otra oficina y el
+          // confirm te nombraba a otro distinto: dos veredictos para el mismo dato.
+          if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk', pc:String(v.pc_codigo||'') };
+          if(!cand[k].pc && v.pc_codigo) cand[k].pc=String(v.pc_codigo);
           const t=_altaNormTel(v.telefono_canon||v.telefono);
           if(t && cand[k].telefonos.indexOf(t)<0) cand[k].telefonos.push(t);
           if(!cand[k].titular && v.titular) cand[k].titular=v.titular;
@@ -8111,7 +8463,24 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     lista.forEach(function(c){
       (c.telefonos||[]).forEach(function(t){
         const tn=_altaNormTel(t); if(!tn) return;
-        if(tn===tD){ if(!out.telefono.exacto) out.telefono.exacto=Object.assign({_tel:tn}, c); return; }
+        // OJO: NO preferir al usuario declarado acá. Lo intenté (para que tras reasignar un
+        // teléfono no siguiera nombrando al dueño viejo) y rompí lo importante: si el declarado
+        // aparece en el índice con ese teléfono, gana él y el cotejo dice "✓ mismo dueño" aunque
+        // en la base el teléfono sea de OTRO. El conflicto quedaba tapado con un verde, el
+        // operador validaba confiado, y recién ahí saltaba "ese teléfono es de natta473" — con el
+        // aviso al cliente ya enviado con el usuario equivocado.
+        // Este campo responde UNA pregunta: de quién es este teléfono. No se negocia con el
+        // declarado; para eso está el cruce del pie, que compara los dos y muestra el conflicto.
+        if(tn===tD){
+          // Gana el de MI oficina. panel_vincular_usuario —el que realmente decide— filtra por
+          // pc_codigo, así que si el teléfono figura en dos oficinas y acá mostrábamos el de la
+          // otra, la tarjeta nombraba a un usuario y el confirm de vincular a otro distinto.
+          const _mio = _altaNormU(c.pc||'')===_altaNormU(pcOperativa||'');
+          const _yaMio = out.telefono.exacto && _altaNormU(out.telefono.exacto.pc||'')===_altaNormU(pcOperativa||'');
+          if(!out.telefono.exacto || (_mio && !_yaMio)) out.telefono.exacto=Object.assign({_tel:tn}, c);
+          else if(_altaNormU(out.telefono.exacto.usuario)!==_altaNormU(c.usuario) && _mio===_yaMio) out.telefono.varios=true;
+          return;
+        }
         // mismos últimos 8 dígitos (prefijo/0/15 distinto) o ≤2 dígitos cambiados
         const cola = tn.length>=8 && tD.length>=8 && tn.slice(-8)===tD.slice(-8);
         const d=_altaDist(tn,tD);
@@ -8157,7 +8526,18 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
       // eso además deja el nombre limpio y arregla el cotejo del portal para ese usuario.
       if(d.conflicto_tel){
         const otro=d.usuario_actual||"otro usuario";
-        if(!confirm("Ese teléfono ya figura vinculado a «"+otro+"».\n\n¿Es la MISMA persona (dato viejo o mal escrito) y querés reasignar el teléfono al usuario «"+usuario+"»?")) return;
+        // El confirm dice EXPLÍCITO qué cuenta va a quedar y qué mensaje le llega al cliente. Sin
+        // eso el operador aceptaba pensando "sí, es la misma persona" y terminaba mandándole al
+        // cliente el usuario del OTRO — o sea, acceso a una cuenta ajena.
+        if(!confirm(
+          "⚠ CONFLICTO DE TELÉFONO\n\n"+
+          "El teléfono "+telefono+" hoy figura de «"+otro+"».\n"+
+          "Vos estás validando a «"+usuario+"».\n\n"+
+          "Si aceptás:\n"+
+          "  · el teléfono pasa a «"+usuario+"»\n"+
+          "  · «"+otro+"» queda SIN ese teléfono\n"+
+          "  · al cliente se le avisa que entre como «"+usuario+"»\n\n"+
+          "¿Son la misma persona?")) return;
         r=await _vinc(true); d=(r&&r.data)||{};
         if(r.error || !d.ok){ toast("No se pudo reasignar: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
         _notaEvento = 'Teléfono reasignado desde «'+otro+'»';
@@ -8184,6 +8564,8 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     try{ if(window._nexoTrigger) window._nexoTrigger(); }catch(_e){}
     // Modal de RESULTADO (antes solo había feedback cuando fallaba): simple, para ver y agendar.
     try{ _altaModalResultado(usuario, telefono); }catch(_e){}
+    // Repintar el cotejo con el vínculo YA guardado (si no, se queda en "NO COINCIDEN" por caché).
+    try{ window._altaCotejoRefrescar && window._altaCotejoRefrescar(); }catch(_e){}
     // Aviso al usuario por el chat del portal con su info de ingreso + botón "Ingresar" (background).
     try{
       if(typeof window.nodoEnviarMensajePortal==="function"){
@@ -8290,15 +8672,24 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
   if(tN.length>=6){
     if(tOk){
-      const mismoDueno = duenoTel===uReal || duenoTel===uDeclN;
+      // Si el teléfono figura en MÁS DE UN usuario, no hay "mismo dueño" posible: es ambiguo y
+      // tiene que decidirlo el operador. Nunca en verde.
+      const mismoDueno = !r.telefono.varios && (duenoTel===uReal || duenoTel===uDeclN);
       if(mismoDueno){
         filas+=fila('Teléfono', esc(tN), '✓ mismo dueño', '#3fb950', '');
       } else {
         const grave = !!uDecl;                       // sin usuario declarado es dato, no contradicción
         if(grave) alerta=true;
+        // ¿El conflicto es en MI oficina o en otra? No es lo mismo: si el teléfono está tomado en
+        // otra oficina, vincular acá no lo va a liberar allá — y el confirm de vincular sólo mira
+        // la mía, así que ahí ni siquiera va a aparecer el conflicto.
+        const _pcOtro = String(tOk.pc||'');
+        const _esOtraOfi = _pcOtro && _altaNormU(_pcOtro)!==_altaNormU(pcOperativa||'');
         filas+=fila('Teléfono', esc(tN),
-          (grave?'⚠ es de ':'📱 es de ')+'<b>'+esc(tOk.usuario)+'</b>', grave?'#e3b341':'#58a6ff',
-          '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
+          (grave?'⚠ es de ':'📱 es de ')+'<b>'+esc(tOk.usuario)+'</b>'+(_esOtraOfi?(' <span style="font-size:9.5px;color:#8b949e">· oficina '+esc(_pcOtro)+'</span>'):''),
+          grave?'#e3b341':'#58a6ff',
+          (_esOtraOfi ? sub('Está tomado en OTRA oficina — vincular acá no lo libera allá') : '')
+          + '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
       }
     } else if(r.telefono.similares.length){
       alerta=true;
@@ -8528,6 +8919,7 @@ window._altaCotejoConsulta = async function(ticket){
   if(!uDecl && _altaNormTel(tDecl).length<6){ cont.innerHTML=''; return; }
   // Cache por ticket: no re-cotejar en cada repintado del chat (que ocurre en cada poll)
   const key=_altaNormU(uDecl)+'|'+_altaNormTel(tDecl);
+  window.__altaCotejoTicket=ticket;   // para poder re-cotejar tras vincular (ver _altaCotejoRefrescar)
   if(cont.dataset.key===key) return;
   cont.dataset.key=key;
   cont.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando usuario y teléfono en la base…</div>';
@@ -8535,6 +8927,18 @@ window._altaCotejoConsulta = async function(ticket){
   if(cont.dataset.key!==key) return;  // llegó otro ticket mientras tanto
   const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular', 'declaró el cliente');
   cont.innerHTML='<div style="margin-top:6px">'+out.html+'</div>';
+};
+// Re-cotejar DESPUÉS de vincular. El cotejo se cachea por usuario|teléfono declarados, y esos dos
+// datos NO cambian al vincular: sin invalidar la caché la tarjeta se quedaba clavada en
+// "🚨 NO COINCIDEN" para siempre, aunque el vínculo ya estuviera guardado y el cliente ya hubiera
+// recibido el "Ya validamos tu cuenta". Parecía que no se guardaba nada; se guardaba, no se repintaba.
+window._altaCotejoRefrescar=function(){
+  try{
+    const cont=document.getElementById('altaCotejoConsulta');
+    if(cont) cont.dataset.key='';
+    const t=window.__altaCotejoTicket;
+    if(t && window._altaCotejoConsulta) window._altaCotejoConsulta(t);
+  }catch(_e){}
 };
 // Chip del cotejo de la consulta → abre "Validar y vincular" ya cargado con esos datos.
 window._altaAbrirVincular=function(usuario, telefono){ try{ abrirModalVincular(usuario, telefono, true, true); }catch(_e){} };
@@ -8619,10 +9023,50 @@ async function _resolverAliasParaCasino(usuario){
 window._drexCola = { activo:null, pendientes:0 };
 let _drexColaP = Promise.resolve();
 const _DREX_TAREA_MAX_MS = 120000;
+// El puente del portal (V15.4) vive en OTRO bloque <script>: se expone para que pueda encolar.
+setTimeout(function(){ try{ window._drexEncolar = _drexEncolar; }catch(_e){} },0);
 // Nombres lindos para el operador (los métodos internos no le dicen nada).
 const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', retirarSaldo:'retiro',
   crearUsuario:'crear usuario', cambiarClave:'cambiar clave', obtenerSaldoAgente:'leer fichas',
   iniciarSesion:'iniciar sesión', verifyUser:'verificar usuario' };
+// ── Cortacircuitos por sesión caída ─────────────────────────────────────────────────────────
+// Si la sesión de Agentes se cae con la cola llena, cada tarea igual se ejecuta y se queda
+// esperando su timeout de 120s. Con 10 encoladas son 20 minutos de panel trabado, y al final
+// ninguna hizo nada. Peor: el operador ve "10 esperando" y no sabe que ya está todo perdido.
+// Cuando una tarea detecta que no hay sesión, se levanta esta bandera y las que siguen se
+// rechazan AL INSTANTE, sin tocar el agente. Se baja sola al reponer la sesión.
+window._drexSinSesion = false;
+window._drexCanceladas = [];      // qué quedó sin ejecutar, para poder decirlo al reponer
+window._drexMarcarSinSesion = function(motivo){
+  if(window._drexSinSesion) return;
+  window._drexSinSesion = true;
+  const q = (window._drexCola && window._drexCola.pendientes) || 0;
+  window._drexCanceladas = [];
+  try{ toast('🔒 Sesión de Agentes caída'+(q>1?(' · se cancelan '+(q-1)+' en cola'):'')+' — abriendo el login…','red'); }catch(_e){}
+  console.warn('[cola] sesión caída → se cancela lo encolado ('+q+')');
+  // ACTUAR, no sólo avisar. Detectar que la sesión se cayó y dejar al operador con un cartel rojo
+  // que dice "logueate" es hacerle a él el trabajo que la app ya sabe hacer: el modal de login
+  // existe (_mostrarModalLoginDrex) y es el mismo que usa ensureDrexSession. Se abre solo.
+  // Va con delay para no pisar el toast ni abrirse dos veces si caen varias tareas juntas.
+  setTimeout(function(){
+    try{
+      if(!window._drexSinSesion) return;                       // ya se repuso en el interín
+      if(document.getElementById('drexLUser')) return;          // el modal ya está abierto
+      if(typeof _mostrarModalLoginDrex==='function') _mostrarModalLoginDrex();
+    }catch(_e){}
+  }, 600);
+};
+window._drexSesionRepuesta = function(){
+  if(!window._drexSinSesion) return;
+  window._drexSinSesion = false;
+  // Al reponer, se dice QUÉ quedó sin hacer. "Ya podés reintentar" a secas obliga al operador a
+  // acordarse de memoria qué estaba haciendo cuando se cayó.
+  const c = (window._drexCanceladas||[]).slice(0,4);
+  window._drexCanceladas = [];
+  try{
+    toast('🔓 Sesión repuesta'+(c.length?(' · quedó sin hacer: '+c.join(', ')+' — reintentalo'):' · ya podés seguir'), c.length?'yellow':'green');
+  }catch(_e){}
+};
 function _drexEncolar(nombre, fn, opts){
   const st = window._drexCola;
   const silencioso = !!(opts && opts.silencioso);
@@ -8635,6 +9079,15 @@ function _drexEncolar(nombre, fn, opts){
   }
   st.pendientes++;
   const correr = function(){
+    // Si la sesión se cayó mientras esta tarea esperaba, se descarta sin tocar el agente. Antes se
+    // ejecutaba igual y se comía sus 120s de timeout, una atrás de otra.
+    // Los chequeos de sesión y el login NUNCA se cancelan: son justamente los que la reponen. Si se
+    // cancelaran, el cortacircuitos no se podría apagar nunca — quedaba trabado para siempre.
+    if(window._drexSinSesion && nombre!=='estadoPagina' && nombre!=='iniciarSesion'){
+      if(st.pendientes > 0) st.pendientes--;
+      try{ (window._drexCanceladas||[]).push(_DREX_NOMBRE[nombre] || nombre); }catch(_e){}
+      return Promise.reject(new Error('Sesión de Agentes caída — "'+(_DREX_NOMBRE[nombre]||nombre)+'" no se ejecutó. Se abrió el login: entrá y reintentá.'));
+    }
     st.activo = { nombre:nombre, desde:Date.now() };
     const t0 = Date.now();
     let _to = null;
@@ -8667,12 +9120,31 @@ async function callDrex(method, ...args){
   return _drexEncolar(method, async function(){
     // Solo buscarUsuario resuelve el alias inteligentemente.
     // crearUsuario / cambiarClave NO se tocan.
+    let _r;
     if(method === 'buscarUsuario' && args.length > 0 && typeof args[0] === 'string'){
       const aliasFinal = await _resolverAliasParaCasino(args[0]);
       // Reenviamos los args extra (ej: options { skipBalance: true })
-      return window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+      _r = await window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+    } else {
+      _r = await window.ctrlElectron.drexAutomation(method, ...args);
     }
-    return window.ctrlElectron.drexAutomation(method, ...args);
+    // Punto único donde se ve el estado de la sesión: TODO pasa por acá. Si la página pide login,
+    // se levanta la bandera y lo que quedó en cola se cancela solo en vez de morir de a 120s.
+    // El login exitoso la baja — así se retoma sin tener que reiniciar nada.
+    try{
+      // OJO con qué se considera "sesión caída". estadoPagina e iniciarSesion devuelven needsLogin
+      // como parte NORMAL de su trabajo: ensureDrexSession justamente los usa para decidir si hay
+      // que mostrar el login. Tomarlos como caída hacía que el cortacircuitos se disparara en pleno
+      // arranque de una carga y cancelara todo lo que venía atrás — con la sesión perfectamente
+      // viva. Solicitudes que quedaron en ERROR_OPERATIVO por eso.
+      // Sólo cuenta si el que se encontró sin sesión fue una operación REAL, que ya daba por hecho
+      // que había sesión.
+      const _esChequeo = (method==='estadoPagina' || method==='iniciarSesion');
+      if(_r && _r.needsLogin && !_esChequeo) window._drexMarcarSinSesion(method);
+      else if(_r && _r.needsLogin === false) window._drexSesionRepuesta();
+      else if(_r && _r.ok === true && method === 'iniciarSesion') window._drexSesionRepuesta();
+    }catch(_e){}
+    return _r;
   });
 }
 
@@ -9438,6 +9910,9 @@ async function ejecutarAutoCarga(id){
         movimientoChunior = rChu.movimientoId;
         toast(`📋 Movimiento Chunior N° ${rChu.movimientoId}`, 'blue');
       } else if(rChu.error){
+        // Las fichas YA salieron. Si Chunior no la tomó, la anotación NO se pierde: queda guardada
+        // y se reintenta sola cuando Chunior vuelve. Antes acá terminaba todo con un toast rojo y
+        // el descuadre aparecía recién al cotejar, horas después.
         toast('⚠️ Carga OK en casino pero falló en Chunior: '+rChu.error, 'red');
         // Las fichas ya salieron: la anotación queda pendiente y se reintenta sola.
         try{ window.chuniorPendienteAdd({ tipo:'CARGA', uid:bilL.CHUNIOR_UID, monto:monto, usuario:usuario, motivo:rChu.error }); }catch(_e){}
@@ -11664,6 +12139,30 @@ async function _anularMovimientoChunior(tipoUrl, movId){
   return conf || { ok:false, error:'Sin respuesta' };
 }
 async function anularPropinaChunior(movId){ return _anularMovimientoChunior('propina', movId); }
+// Deshacer = abrir el movimiento por su N° y dejarlo en 0,1. No se anota una contrapartida:
+// Chunior deja EDITAR el movimiento, así que el original queda neutralizado y no aparece una
+// segunda fila fantasma. El segmento de URL es el mismo que usa el /add/ de cada tipo.
+async function anularTransferenciaChunior(movId){ return _anularMovimientoChunior('movimientointerno', movId); }
+async function anularDepoSinReclamarChunior(movId){ return _anularMovimientoChunior('depositossinreclamar', movId); }
+window.anularTransferenciaChunior = anularTransferenciaChunior;
+window.anularDepoSinReclamarChunior = anularDepoSinReclamarChunior;
+// Un solo punto de entrada para el botón Deshacer del historial.
+window._CHUNIOR_ANULABLE = { MOV_BILLETERA:'movimientointerno', PROPINA:'propina', DEPO_SR:'depositossinreclamar' };
+window.deshacerMovimientoChunior = async function(tipo, movId){
+  const seg = window._CHUNIOR_ANULABLE[String(tipo||'').toUpperCase()];
+  if(!seg) return { ok:false, error:'Ese tipo de movimiento no se puede deshacer desde acá' };
+  return _anularMovimientoChunior(seg, movId);
+};
+// Deshacer sólo dentro del turno en curso: un turno no toca la plata de otro (regla del negocio).
+// Pasado el cierre, el movimiento queda como está y se escala al superior.
+window._movimientoEsDelTurno = function(fechaIso){
+  try{
+    if(!fechaIso) return false;
+    const t = new Date(fechaIso).getTime();
+    if(isNaN(t)) return false;
+    return t >= _cotejoInicioTurnoMs();
+  }catch(_e){ return false; }
+};
 
 // ── Depósitos sin reclamar + reclamo + anular propina (portado de NexoBetaChan 1.0.85) ──
 // Todo por el BRIDGE de Chunior (window.chunior), sin escrituras nuevas a la DB salvo el
@@ -11848,13 +12347,27 @@ window.anularPropinaHistorial = async function(historialId){
 window._retiroSaldoCheck = window._retiroSaldoCheck || {};
 // Destrabar agente (portado de NexoBetaChan): salida de emergencia si un flujo dejó el candado
 // tomado (ej. buscarUsuario colgado). Libera el lock global + watchdog + flags de parcial/scanner.
+// DESTRABAR DE VERDAD. Antes soltaba cuatro cosas y dejaba tomadas otras cuatro — entre ellas el
+// guard del portal, que es el que contesta "hay una operación en curso". Por eso se apretaba
+// Destrabar, decía "destrabado", y el panel seguía sin dejar operar. Ahora se sueltan TODOS los
+// candados: si el operador pide destrabar, es porque ya no hay nada corriendo.
 window.liberarLockAgentes = function(){
-  const m = window._drexGlobalBusyMotivo;
+  const m = window._drexGlobalBusyMotivo || (window._drexCola && window._drexCola.activo && window._drexCola.activo.nombre);
   try{ if(typeof _drexGlobalUnlock==='function') _drexGlobalUnlock(); }catch(_e){}
   try{ if(typeof _wdForceUnlock==='function') _wdForceUnlock(); }catch(_e){}
   try{ window._v154pParcialBusy = false; }catch(_e){}
   try{ window._retiroSaldoLastRun = 0; }catch(_e){}
-  try{ toast('🔓 Agente destrabado'+(m?(' (lo tenía: '+m+')'):'')+'. Ya podés reintentar.', 'green'); }catch(_e){}
+  // Los que faltaban:
+  try{ window._portalSolicitudOperacionEnCurso = false; }catch(_e){}   // el que decía "operación portal en curso"
+  try{ window._operacionManualEnCurso = false; }catch(_e){}
+  try{ window._cotejoDeclarando = false; }catch(_e){}
+  try{ window._drexSinSesion = false; }catch(_e){}                     // el cortacircuitos de sesión
+  try{ if(window._drexCola){ window._drexCola.activo = null; window._drexCola.pendientes = 0; } }catch(_e){}
+  try{ document.body.classList.remove('op-portal-en-curso'); delete document.body.dataset.opSolicitud; }catch(_e){}
+  try{ if(typeof _wdUnlock==='function'){ let g=0; while(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0 && g++<20) _wdUnlock(); } }catch(_e){}
+  try{ _agentesBadgePintar(); }catch(_e){}
+  try{ toast('🔓 Agente destrabado'+(m?(' · lo tenía: '+m):'')+'. Ya podés reintentar.', 'green'); }catch(_e){}
+  console.log('[lock] destrabado a mano · todos los candados liberados');
 };
 // Reiniciar Chunior cuando muestra 403/CSRF. Recargar NO sirve (re-envía el POST fallido → mismo
 // 403); esto NAVEGA a la base (GET) → token CSRF fresco. hard=true limpia las cookies de Chunior
@@ -11961,6 +12474,21 @@ async function verificarSaldoRetiroOcioso(){
                 etapa: 'AUTO_RECHAZO_SIN_SALDO',
                 motivo: 'Sin fichas para retirar (saldo '+_saldoTxt+', confirmado x2)'
               });
+              // Al historial. Antes esto sólo salía como toast: se veía tres segundos y se perdía,
+              // y después no había forma de saber por qué se le habia rechazado el retiro a alguien.
+              try{ await registrarEnHistorial({
+                usuario: usuario, tipo:'RETIRO', monto: Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0),
+                origen:'AUTO', estado:'RECHAZADA', solicitud_id: sid,
+                // Con TODO el detalle: qué pidió, qué tenía, cómo se leyó, y qué se le dijo. Un
+                // "rechazado" a secas obliga a reconstruir el caso de memoria cuando el cliente
+                // reclama tres días después.
+                notas:'AUTO-RECHAZO · SIN FICHAS'
+                  + ' · pidió '+money(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0))
+                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+((b.balance&&b.balance.raw)||'').trim()+'" y "'+raw2+'")'
+                  + ' · piso '+money(_PISO_SIN_FICHAS)
+                  + (objetivo.TITULAR?(' · titular declarado: '+objetivo.TITULAR):'')
+                  + ' · se le avisó por el chat'
+              }); }catch(_e){}
               try{ await notificarUsuarioEnChat(usuario, '❌ No pudimos procesar tu retiro: no figurás con fichas disponibles para retirar. Si creés que es un error, escribinos por acá.'); }catch(_e){}
               toast('❌ Retiro de '+usuario+' rechazado · SIN fichas (saldo '+_saldoTxt+', confirmado x2)', 'red');
             }catch(_e){}
@@ -12567,6 +13095,23 @@ if(window.ctrlElectron){
 .v154p-badge{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;background:#312b09;color:#fde68a}
 .v154p-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .v154p-btn{border:0;border-radius:9px;padding:7px 10px;font-weight:900;cursor:pointer;background:#2d3342;color:#fff;font-size:11px}
+/* Mientras hay una operación del portal en curso: las acciones se apagan y la fila que se está
+   operando lo dice. El operador ve QUE está pasando algo y CUÁL es, en vez de apretar de nuevo. */
+/* SOLO se bloquea la fila que se está operando. Apagar todas impedía lo que el operador realmente
+   quiere hacer mientras espera: seguir aprobando (que se encolen) y rechazar las que no van.
+   La espera no tiene por qué congelar el resto del trabajo. */
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions .v154p-btn{opacity:.35;pointer-events:none}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions{position:relative;opacity:1}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{
+  content:"⏳ operando…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(13,17,23,.86);border-radius:9px;font-size:11px;font-weight:800;color:#f5c518;
+  letter-spacing:.02em}
+body.op-portal-en-curso .v154p-card.v154p-operando{border-color:rgba(245,197,24,.5)}
+@keyframes v154pLatido{0%,100%{opacity:1}50%{opacity:.55}}
+body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animation:v154pLatido 1.4s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){
+  body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animation:none}
+}
 .v154p-btn.yellow{background:#f2cf4a;color:#111}
 .v154p-btn.green{background:#38d66b;color:#07110b}
 .v154p-btn.red{background:#542027;color:#ffc8d0}
@@ -12682,8 +13227,10 @@ if(window.ctrlElectron){
       // del CRM y lo que se le manda a Nexo.
       TELEFONO: s.telefono || meta.telefono || "",
       PC: s.pc_codigo || s.PC || "",
-      MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),
-      MONTO_REAL: Number(s.monto || s.MONTO || 0),
+      MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),   // lo que tecleó el cliente, no se pisa
+      // MONTO_REAL = lo que realmente se va a pagar. Si el operador corrigió un cero de más
+      // (_retiroAjustarASaldo), ese monto manda: de acá lo toman la tarjeta, el modal y el historial.
+      MONTO_REAL: Number(meta.monto_corregido != null ? meta.monto_corregido : (s.monto || s.MONTO || 0)),
       ESTADO: s.estado || s.ESTADO || "",
       BILLETERA_NOMBRE: meta.billetera_nombre || meta.billetera || meta.destino || "",
       ID_BILLETERA: meta.billetera_id || "",
@@ -12871,6 +13418,28 @@ if(window.ctrlElectron){
       html = `<div class="small" style="margin:0 0 8px;color:#98a2b3">Mostrando ${pendientes.length} solicitud/es pendiente/s del portal.</div>` + visibles.map(s => {
         const id = Number(s.ID || s.SOLICITUD_ID || 0);
         const tomada = ["EN_REVISION","EN_PROCESO"].includes(String(s.ESTADO||"").toUpperCase());
+        const _esRet = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
+        // Los enums de la base no le dicen nada al operador ("¿ERROR_OPERATIVO qué es?"). Se
+        // traducen a lo que significan para él. Lo que no esté mapeado se muestra tal cual, en
+        // minúscula, para que se note que falta traducir en vez de gritarle en mayúsculas.
+        function _estadoLegible(e){
+          const k = String(e||'').toUpperCase().trim();
+          // EN_PROCESO es el estado GENERAL de "tomada y trabajándose" — no significa parcial.
+          // Sólo se dice "por partes" cuando esta solicitud REALMENTE tiene pagos parciales.
+          if(k==='EN_PROCESO'){
+            try{
+              const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+              if(pp && pp.hasProg && pp.restante > 0.5) return 'Pagando por partes';
+            }catch(_e){}
+            return 'En proceso';
+          }
+          const M = { PENDIENTE:'Sin tomar', NUEVA:'Sin tomar', EN_ESPERA:'Sin tomar',
+                      TOMADA:'Tomada', TOMADO:'Tomada', EN_REVISION:'En revisión',
+                      PROCESANDO:'Procesando',
+                      ERROR_OPERATIVO:'Falló · reintentar', PAGADA:'Pagada', ACREDITADA:'Acreditada',
+                      APROBADA:'Aprobada', RECHAZADA:'Rechazada', CANCELADA:'Cancelada' };
+          return M[k] || (k ? k.toLowerCase().replace(/_/g,' ') : '—');
+        }
         const _saldoChk = (window._retiroSaldoCheck||{})[String(s.USUARIO||"").toLowerCase()];
         const _esRetiroS = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
         const _accS = _esRetiroS ? '#fb923c' : (String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="CARGA" ? '#22c55e' : ''); // 🟠 retiro · 🟢 carga
@@ -12904,11 +13473,11 @@ if(window.ctrlElectron){
           </div>
           <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${esc(s.TIPO || "-")}</span></div>
           <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
-          <div><span class="v154p-badge">${esc(s.ESTADO || "-")}</span></div>
+          <div><span class="v154p-badge">${esc(_estadoLegible(s.ESTADO))}</span></div>
           <div class="v154p-actions">
             ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
             <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
-            ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
+            ${_esRet?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
           </div>
@@ -13045,7 +13614,27 @@ async function cargarSolicitudesPortal(silencioso=false){
       V154P.solicitudesErrorAt = null;
       try{ _v154pAvisoDesfasaje(null); }catch(_e){}
 
-      V154P.solicitudes = normArr(r.data).map(mapSolicitudPortal);
+      const _nuevas = normArr(r.data).map(mapSolicitudPortal);
+      // Un retiro a medio pagar NO puede desaparecer de la lista. La RPC filtra por estado, así que
+      // al pasar el parcial a EN_PROCESO deja de devolverlo y el retiro se esfumaba del panel con
+      // plata todavía debida — no había forma de terminar de pagarlo. Los que tienen progreso
+      // parcial y ya no vienen del server se conservan del ciclo anterior, marcados, hasta que se
+      // salden o los cierre alguien a mano.
+      try{
+        const _ids = new Set(_nuevas.map(function(x){ return String(x.ID||x.SOLICITUD_ID||''); }));
+        (V154P.solicitudes||[]).forEach(function(v){
+          const id = String(v.ID||v.SOLICITUD_ID||'');
+          if(!id || _ids.has(id)) return;
+          const pp = window._retiroParcialInfo ? window._retiroParcialInfo(v) : null;
+          if(pp && pp.hasProg && pp.restante > 0.5){
+            v.__soloLocal = true;                       // ya no viene del server, lo sostenemos acá
+            _nuevas.push(v);
+            console.warn('[portal] retiro #'+id+' con '+money(pp.restante)+' sin pagar dejó de venir de la RPC — se conserva local');
+          }
+        });
+      }catch(_e){}
+      V154P.solicitudes = _nuevas;
+      try{ _portalAutoRechazar(V154P.solicitudes); }catch(_e){}
       window.solicitudes = V154P.solicitudes.slice();
       try{ solicitudes = V154P.solicitudes.slice(); }catch(_e){}
       // Cosecha pasiva → base LOCAL de jugadores (portado de NexoBetaChan): cada solicitud del portal
@@ -13109,6 +13698,96 @@ async function cargarSolicitudesPortal(silencioso=false){
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  // AUTO-RECHAZO de tickets del portal con titular basura
+  // Sólo se rechaza solo por criterios DUROS y verificables. Nada de heurísticas ni de "me
+  // parece": si hay la menor duda, la solicitud entra normal y decide el operador.
+  //   1. El titular declarado es un dato NUESTRO (titular/alias/nombre de una billetera propia).
+  //      El portal se lo muestra al cliente para que transfiera; copiarlo y pegarlo es gratis.
+  //   2. El titular son SOLO números (o basura sin una sola letra): no es el nombre de nadie.
+  //   3. Ese titular ya fue rechazado antes para ese usuario → no lo mandes de nuevo.
+  // Sólo aplica a solicitudes que declaran titular (CARGA/RETIRO) y que están PENDIENTES.
+  // ══════════════════════════════════════════════════════════════════════════════════════
+  const _RECH_KEY = 'nodo_titulares_rechazados';
+  function _rechStore(){ try{ return JSON.parse(localStorage.getItem(_RECH_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+  function _rechSave(m){ try{ localStorage.setItem(_RECH_KEY, JSON.stringify(m)); }catch(_e){} }
+  function _rechClave(usuario, titular){
+    return String(usuario||'').toLowerCase().trim() + '|' +
+      String(titular||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+  }
+  // Devuelve el motivo (texto para el cliente) o null si la solicitud es legítima.
+  window._portalMotivoRechazo = function(s){
+    const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
+    if(tipo!=='CARGA' && tipo!=='RETIRO') return null;             // soporte/clave no declaran titular
+    const est = String(s.ESTADO||'').toUpperCase();
+    if(est && !/PENDIENTE|NUEVA|EN_ESPERA/.test(est)) return null;  // ya la tocó alguien
+    const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
+    if(!titular) return null;                                       // sin titular no inventamos nada
+    const usuario = String(s.USUARIO||'').trim();
+    // 1) Datos nuestros
+    const propio = window.esDatoPropioBilletera ? window.esDatoPropioBilletera(titular) : null;
+    if(propio) return { motivo:'DATO_PROPIO',
+      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferís.' };
+    // 2) Sin una sola letra → no es el nombre de una persona
+    if(!/[a-záéíóúñü]/i.test(titular)) return { motivo:'SOLO_NUMEROS',
+      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular de la cuenta desde la que transferís.' };
+    // 3) Puso su PROPIO USUARIO como titular. Es el caso más común de "completé cualquier cosa":
+    //    "usuariobet", "maria112x1". Ningún banco tiene una cuenta a nombre de un alias de casino,
+    //    así que el comprobante nunca va a coincidir y el depósito no se puede cotejar.
+    if(window._normNombre(titular) === window._normNombre(usuario)) return { motivo:'USUARIO_COMO_TITULAR',
+      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO de la persona desde cuya cuenta transferís, tal como figura en el banco.' };
+    // 3) Reincidencia
+    if(window.titularYaRechazado(usuario, titular)) return { motivo:'REINCIDENTE',
+      texto:'Ya te rechazamos ese mismo titular ("'+titular+'"). Poné el nombre completo real del titular de la cuenta, o escribinos por soporte.' };
+    return null;
+  };
+  // Interruptor de apagado. Esto rechaza SOLO y le escribe al cliente: si alguna vez se equivoca,
+  // tiene que poder frenarse en el momento y no esperar a una release.
+  //   apagar  → window.autoRechazoPortal(false)      (queda apagado también al reiniciar)
+  //   prender → window.autoRechazoPortal(true)
+  window.autoRechazoPortal = function(on){
+    try{ localStorage.setItem('nodo_auto_rechazo', on===false?'0':'1'); }catch(_e){}
+    toast(on===false?'⛔ Auto-rechazo APAGADO':'✅ Auto-rechazo prendido', on===false?'yellow':'green');
+  };
+  function _autoRechazoActivo(){ try{ return localStorage.getItem('nodo_auto_rechazo')!=='0'; }catch(_e){ return true; } }
+
+  async function _portalAutoRechazar(lista){
+    if(!_autoRechazoActivo()) return;
+    if(!Array.isArray(lista) || !lista.length) return;
+    // Sin billeteras cargadas no se puede decidir el criterio 1 → no rechazamos nada a ciegas.
+    if(!(window.billeteras||[]).length) return;
+    for(const s of lista){
+      let r=null; try{ r=window._portalMotivoRechazo(s); }catch(_e){ continue; }
+      if(!r) continue;
+      const id = s.ID||s.SOLICITUD_ID; if(!id) continue;
+      if(window.__autoRechDone && window.__autoRechDone[String(id)]) continue;
+      window.__autoRechDone = window.__autoRechDone || {};
+      window.__autoRechDone[String(id)] = true;
+      const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
+      try{
+        await actualizarSolicitudPortal(String(id), 'RECHAZADA', {
+          etapa:'AUTO_RECHAZO', motivo_rechazo:r.motivo, observacion:r.texto, operador:'AUTO'
+        });
+        window.marcarTitularRechazado(s.USUARIO, titular, r.motivo);
+        s.ESTADO='RECHAZADA';
+        try{ if(typeof notificarUsuarioEnChat==='function') await notificarUsuarioEnChat(s.USUARIO, '❌ '+r.texto, id, 'RECHAZADA'); }catch(_e){}
+        // Detalle completo: por qué se rechazó, qué había declarado y qué se le respondió. Sin esto
+        // el historial dice "RECHAZADA" y nadie puede reconstruir el caso cuando el cliente vuelve.
+        try{ await registrarEnHistorial({ usuario:s.USUARIO, tipo:String(s.TIPO||'CARGA'), monto:Number(s.MONTO_DECLARADO||0),
+          origen:'PORTAL', estado:'RECHAZADA', solicitud_id:id,
+          notas:'AUTO-RECHAZO · '+r.motivo
+            + ' · titular declarado: "'+titular+'"'
+            + (s.TELEFONO?(' · tel '+s.TELEFONO):'')
+            + (s.DESTINO?(' · destino '+s.DESTINO):'')
+            + ' · se le respondió: '+String(r.texto||'').slice(0,140)
+        }); }catch(_e){}
+        try{ toast('⛔ Auto-rechazo · '+s.USUARIO+' · '+r.motivo,'yellow'); }catch(_e){}
+        console.warn('[auto-rechazo] #'+id+' '+s.USUARIO+' · '+r.motivo+' · titular: "'+titular+'"');
+      }catch(e){ console.warn('[auto-rechazo] falló #'+id, e); }
+    }
+  }
+  window._portalAutoRechazar = _portalAutoRechazar;
+
   async function actualizarSolicitudPortal(id, estado, extra){
     const payload = {
       p_id: Number(id),
@@ -13159,18 +13838,40 @@ async function cargarSolicitudesPortal(silencioso=false){
     const _rapHtml = _rap.map(function(t){
       return '<button type="button" class="mini-btn" style="margin:2px;font-size:11px" data-t="'+t.replace(/"/g,'&quot;')+'" onclick="var e=document.getElementById(\'v154pRechObs\'); if(e) e.value=this.getAttribute(\'data-t\');">'+escapeHtml(t.split(".")[0])+'</button>';
     }).join("");
+    // Bloquear el titular a mano. El auto-rechazo cubre sólo criterios DUROS (datos nuestros, sin
+    // letras, el propio usuario, reincidencia). Todo lo demás —"asdasd", un nombre inventado, el
+    // apodo del cliente— lo tiene que ver un operador, y hasta ahora no tenía cómo dejarlo
+    // bloqueado: lo rechazaba y el cliente lo volvía a mandar igual.
+    const _tit = String((s&&(s.TITULAR||s.NOMBRE_COMPLETO))||'').trim();
+    const _usr = String((s&&s.USUARIO)||'').trim();
+    const _yaBloq = (_tit && window.titularYaRechazado) ? window.titularYaRechazado(_usr,_tit) : false;
+    const _bloqHtml = _tit
+      ? ('<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid #30363d;font-size:12px;cursor:pointer;color:#e6edf3">'
+         + '<input type="checkbox" id="v154pBloqTitular" '+(_yaBloq?'checked disabled':'')+' style="width:16px;height:16px;margin-top:1px;flex-shrink:0">'
+         + '<span>Bloquear el titular <b>"'+escapeHtml(_tit)+'"</b> para <b>'+escapeHtml(_usr)+'</b>'
+         + '<div style="color:#8b949e;font-size:11px;margin-top:1px">'
+         + (_yaBloq ? 'Ya está bloqueado — si lo vuelve a mandar, se le rechaza solo.'
+                    : 'Si lo vuelve a mandar igual, se le rechaza solo y no te llega.')+'</div></span></label>')
+      : '';
     abrirModal("Rechazar solicitud #"+id,
       '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
       '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+
       '<div style="margin-top:6px;font-size:11px;color:#93a3b8">Motivos rápidos (tocá para usar):</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>',
+      '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>'+
+      _bloqHtml,
       async function(){
         const motivo = ((document.getElementById("v154pRechObs")||{}).value||"").trim()
           || "No pudimos procesar tu solicitud. Escribinos por el chat y lo resolvemos.";
+        // Se lee ANTES de cerrar el modal: después el checkbox ya no existe en el DOM.
+        const _bloq = !!(document.getElementById("v154pBloqTitular") && document.getElementById("v154pBloqTitular").checked);
         cerrarModal();
         try{
           await actualizarSolicitudPortal(id, "RECHAZADA", {etapa:"RECHAZADA_PANEL", motivo});
           const usuario = s&&(s.USUARIO||s.USUARIO_JUGADOR||"");
+          if(_bloq && _tit && window.marcarTitularRechazado){
+            window.marcarTitularRechazado(usuario, _tit, 'BLOQUEADO_POR_OPERADOR');
+            try{ toast('🚫 Titular "'+_tit+'" bloqueado para '+usuario,'yellow'); }catch(_e){}
+          }
           if(usuario) await notificarUsuarioEnChat(usuario, "❌ Tu solicitud fue rechazada.\n📝 Motivo: "+motivo);
           toast("Solicitud rechazada","red");
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
@@ -13432,6 +14133,24 @@ window._retiroAjustarASaldo = function(id){
     ? ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nLe sobra'+(sug.ceros>1?'n':'')+' '+sug.ceros+' cero'+(sug.ceros>1?'s':'')+': quiso retirar '+money(sug.monto)+'.\n\n¿Abrir el retiro por '+money(sug.monto)+'?')
     : ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nNo es cuestión de ceros.\n\n¿Abrir el retiro por todo lo que tiene ('+money(sug.monto)+')?');
   if(!confirm(txt)) return;
+  // El monto corregido se escribe EN LA SOLICITUD, que es el único lugar donde tiene que cambiar:
+  // de ahí sale MONTO_REAL y con eso quedan bien la tarjeta del pendiente, el modal, el historial
+  // y lo que se le avisa al cliente. Antes el ajuste vivía solo dentro del modal (st.objetivo), así
+  // que la solicitud seguía pidiendo los $200.000 que el cliente tecleó con el cero de más.
+  try{
+    const S=(window.V154P&&V154P.solicitudes)||[];
+    const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    if(s){
+      s.MONTO_REAL = sug.monto;                       // en memoria, para que repinte ya
+      if(s.metadata) s.metadata.monto_corregido = sug.monto;
+      window.actualizarSolicitudPortal(String(id), String(s.ESTADO||'PENDIENTE'), {
+        monto_corregido: sug.monto,
+        monto_declarado_original: declarado,
+        motivo_correccion: sug.motivo,                 // 'ceros' | 'todo'
+        operador: (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+      }).catch(function(){});
+    }
+  }catch(_e){}
   if(typeof abrirModalRetiroV2!=='function'){ toast('Modal de retiro no disponible.','red'); return; }
   abrirModalRetiroV2(id);
   // Cuando el modal terminó de montar, fijamos el objetivo al monto sugerido.
@@ -13454,6 +14173,25 @@ window._rv2AjustarASaldo = function(montoFijo){
   _rv2Render();
   try{ toast('Retiro ajustado a '+money(nuevo)+' (lo que el usuario tiene)','blue'); }catch(_e){}
   _rv2LeerSaldo();
+};
+// Línea derivada del total: ya pagado / falta pagar. No se edita, se calcula.
+function _rv2DeudaTxt(){
+  const st=window._retiroV2; if(!st) return '';
+  const ya=Number(st.yaPagado||0), tot=Number(st.totalReal||0);
+  const falta=Math.max(0, tot-ya);
+  if(ya<=0.5) return 'Sin pagos todavía · falta pagar <b style="color:#e6edf3">'+money(falta)+'</b>';
+  return 'Ya pagado <b style="color:#22c55e">'+money(ya)+'</b> · falta pagar <b style="color:#f5c518">'+money(falta)+'</b>';
+}
+// Editar el TOTAL cambia la deuda: se recalcula lo que falta y, con eso, lo que se paga ahora.
+window._rv2InputTotal = function(el){
+  const st=window._retiroV2; if(!st) return;
+  const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0);
+  st.totalReal=raw;
+  el.value=_rv2FmtMiles(raw);
+  const falta=Math.max(0, raw-Number(st.yaPagado||0));
+  st.objetivo=falta;                                   // lo que se paga ahora sigue a la deuda
+  try{ const d=document.getElementById('rv2Deuda'); if(d) d.innerHTML=_rv2DeudaTxt(); }catch(_e){}
+  _rv2ActualizarTotal();
 };
 window._rv2SetObjetivo = function(val){ const st=window._retiroV2; if(!st) return; st.objetivo = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 // Formato de miles en vivo (5.000.000) para que no marean los ceros. Parsea solo dígitos.
@@ -13482,8 +14220,12 @@ function _rv2ActualizarTotal(){
   const st=window._retiroV2; if(!st) return;
   const tot=_rv2TotalSel(); const el=document.getElementById('rv2Total');
   if(!el) return;
-  const parcial = tot < st.objetivo-0.5;
-  const paso    = tot > st.objetivo+0.5;
+  // Se mide contra LO QUE FALTA de la deuda (totalReal − yaPagado), no contra st.objetivo, que se
+  // lee al abrir y puede venir del metadata podrido. Si no, esta línea decía "/ $200.000" mientras
+  // el campo de arriba mostraba que faltaban $250.000.
+  const falta = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  const parcial = tot < falta-0.5;
+  const paso    = tot > falta+0.5;
   const ok = tot>0 && !paso;
   let html = 'Seleccionado: <b style="color:'+(ok?'#22c55e':'#f87171')+'">'+money(tot)+'</b> / '+money(st.objetivo)
     + (parcial?' · <span style="color:#f5c518">parcial</span>':(paso?' · <span style="color:#f87171">¡te pasaste!</span>':' ✓'));
@@ -13506,8 +14248,102 @@ function _rv2ActualizarTotal(){
          + 'Sí, transfiero solo esto ahora — quedan '+money(st.objetivo-tot)+' PENDIENTES (la solicitud sigue abierta para pagarlos después)</label>');
   }
   el.innerHTML = html;
+  _rv2ActualizarBotonAprobar();
+  try{
+    const nSel=Object.keys(st.sel||{}).filter(function(k){ return st.sel[k] && Number(st.montos[k])>0; }).length;
+    const modo=document.getElementById('rv2ModoCada');
+    if(modo) modo.style.display = nSel>1 ? 'block' : 'none';
+    // El veredicto y el resumen de arriba tienen que seguir a lo que se toca abajo.
+    const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml();
+    const r=document.getElementById('rv2Resumen');  if(r) r.innerHTML=_rv2ResumenPago();
+  }catch(_e){}
+}
+// El botón dice exactamente lo que va a hacer. Antes decía siempre "Aprobar" y la diferencia
+// entre pagar todo y pagar una parte quedaba escondida en un tilde.
+function _rv2ActualizarBotonAprobar(){
+  const st=window._retiroV2; if(!st) return;
+  const btn=document.getElementById('rv2BtnAprobar'); if(!btn) return;
+  const tot=_rv2TotalSel();
+  // Lo único que TRABA es no haber elegido de dónde pagar. Antes se bloqueaba cuando el monto
+  // superaba "lo que falta", y eso dejaba el botón muerto en "Te pasaste de $0" —sin salida—
+  // cuando el progreso guardado venía mal o el operador todavía no había corregido la deuda.
+  // Pagar de más SÍ importa, pero es un aviso: el que sabe cuánto se debe es el operador.
+  if(tot<=0){ btn.textContent='Elegí de qué billetera pagar'; btn.disabled=true; btn.style.opacity=.55; return; }
+  btn.disabled=false; btn.style.opacity=1;
+  const falta = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  const deMas = tot - falta;
+  if(deMas > 0.5){
+    btn.textContent = 'Pagar '+money(tot)+' · ' + (falta<=0.5
+      ? 'el retiro ya figura saldado — corregí el total arriba'
+      : money(deMas)+' MÁS de lo que falta');
+    btn.style.background = '#b45309';
+    return;
+  }
+  btn.style.background = '#ea580c';
+  btn.textContent = (falta - tot > 0.5)
+    ? ('Pagar '+money(tot)+' ahora · quedan '+money(falta-tot))
+    : ('Pagar y cerrar el retiro · '+money(tot));
 }
 
+// ── Veredicto: lo PRIMERO que se lee, antes de cualquier planilla ──────────────────────────
+// El modal mostraba nueve bloques del mismo peso y el dato que decide todo — si el usuario tiene
+// las fichas — era un subtítulo gris que además cargaba tarde. Acá se resuelve en una línea.
+function _rv2Veredicto(){
+  const st=window._retiroV2; if(!st) return null;
+  const tot=_rv2TotalSel(), falta=Math.max(0, st.objetivo-tot);
+  if(st.saldoReal==null && st.saldoFallo)
+    return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
+      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
+                                     : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
+  if(st.saldoReal==null)
+    return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
+  if(st.saldoReal<=0.5)
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'NO TIENE FICHAS', det:'El saldo en Agentes es '+money(0)+'. No hay nada para retirar.'};
+  if(st.saldoReal < st.objetivo-0.5){
+    const sug = window._retiroMontoSugerido ? window._retiroMontoSugerido(st.objetivo, st.saldoReal) : null;
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'NO TIENE LAS FICHAS',
+      det:'Pidió '+money(st.objetivo)+' y tiene '+money(st.saldoReal)+'.', sug:sug};
+  }
+  if(falta<=0.5)
+    return {n:'ok', c:'#22c55e', ico:'✅',
+      tit: st.yaPagado>0 ? 'SE PUEDE CERRAR EL RETIRO' : 'SE PUEDE PAGAR COMPLETO',
+      det: st.yaPagado>0 ? ('Pagando '+money(tot)+' queda saldado. Tiene '+money(st.saldoReal)+' en fichas.')
+                         : ('Tiene '+money(st.saldoReal)+' en fichas.')};
+  return {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LAS BILLETERAS NO CUBREN EL TOTAL',
+    det:'Se puede pagar '+money(tot)+' ahora · quedan '+money(falta)+' para después.'};
+}
+function _rv2VeredictoHtml(){
+  const v=_rv2Veredicto(); if(!v) return '';
+  const st=window._retiroV2;
+  return '<div style="border-radius:12px;padding:12px 14px;border:1.5px solid '+v.c+'55;background:'+v.c+'12">'
+    + '<div style="font-size:14px;font-weight:900;color:'+v.c+';letter-spacing:.02em">'+v.ico+' '+v.tit+'</div>'
+    + '<div style="font-size:13px;color:#e6edf3;margin-top:3px">'+v.det+'</div>'
+    + (v.sug ? '<button class="mini-btn" style="margin-top:8px;background:#ea580c;color:#fff;font-weight:800;font-size:12px" onclick="_rv2AjustarASaldo('+v.sug.monto+')">'
+        + (v.sug.motivo==='ceros' ? ('✔ Le sobró un cero — pagar '+money(v.sug.monto)) : ('✔ Pagarle todo lo que tiene · '+money(v.sug.monto)))
+        + '</button>' : '')
+    + (st.yaPagado>0 ? '<div style="margin-top:8px;padding-top:7px;border-top:1px solid '+v.c+'33;font-size:12px;color:#f5c518;font-weight:700">'
+        + '🔄 Segunda cuota · ya le transferiste '+money(st.yaPagado)+(st._metaTotal!=null?(' de '+money(st._metaTotal)):'')
+        + ' — abajo va lo que FALTA, no el total</div>' : '')
+    + '</div>';
+}
+// Resumen de UNA línea de con qué se paga. El detalle (elegir/editar) va plegado.
+function _rv2ResumenPago(){
+  const st=window._retiroV2; if(!st) return '';
+  const sel=_rv2BilsUsables().filter(function(b){ return st.sel[String(b.ID_BILLETERA)] && Number(st.montos[String(b.ID_BILLETERA)])>0; });
+  if(!sel.length) return '<div class="small" style="color:#f87171;margin-top:2px">Ninguna billetera elegida — abrí "cambiar" acá abajo.</div>';
+  return sel.map(function(b){
+    return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0">'
+      + '<span style="color:#c9d1d9">💳 '+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
+      + '<b style="color:#e6edf3">'+money(Number(st.montos[String(b.ID_BILLETERA)])||0)+'</b></div>';
+  }).join('');
+}
+window._rv2ToggleDetalle=function(){
+  const d=document.getElementById('rv2Detalle'), t=document.getElementById('rv2DetalleTog');
+  if(!d) return;
+  const abierto = d.style.display!=='none';
+  d.style.display = abierto ? 'none' : 'block';
+  if(t) t.textContent = abierto ? '▸ Cambiar billeteras, monto o pagar sólo una parte' : '▾ Ocultar el detalle';
+};
 function _rv2Render(){
   const st = window._retiroV2; if(!st) return;
   const el = _rv2Modal();
@@ -13569,8 +14405,12 @@ function _rv2Render(){
     + ((window._alertaRetiroHtml ? window._alertaRetiroHtml(st.id, {monto: st.objetivo, expandido:true}) : '') || '')
     + '<div style="border-radius:11px;padding:11px;text-align:center;border:1px solid rgba(251,146,60,.35);background:rgba(251,146,60,.06)">'
     +   '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e">Transferir a</div>'
-    +   '<div style="font-size:22px;font-weight:900;color:#f0f6fc">'+escapeHtml(st.titular||st.usuario)+'</div>'
-    +   '<div id="rv2SaldoReal" class="small" style="color:#8b949e;margin-top:2px">💰 leyendo saldo real…</div>'
+    +   '<div style="font-size:19px;font-weight:900;color:#f0f6fc;line-height:1.2">'+escapeHtml(st.titular||st.usuario)+'</div>'
+    +   cbuHtml
+    +   '<div style="margin-top:9px;padding-top:8px;border-top:1px solid #262d3a">'
+    +     '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e;margin-bottom:2px">Sale de</div>'
+    +     '<div id="rv2Resumen">'+_rv2ResumenPago()+'</div>'
+    +   '</div>'
     + '</div>'
     + cbuHtml
     // En modo PARCIAL este campo es lo que FALTA pagar y va bloqueado. Editable, se prestaba a un
@@ -13605,36 +14445,31 @@ function _rv2Render(){
   _rv2ActualizarTotal();
 }
 
-async function _rv2LeerSaldo(){
+// Sólo LEE el saldo y refresca el veredicto. Antes armaba acá adentro su propio cartel con su
+// propio botón de ajuste, en paralelo al de la tarjeta del pendiente: dos lugares distintos
+// diciendo lo mismo con textos distintos. Ahora hay un solo veredicto y él decide qué mostrar.
+async function _rv2LeerSaldo(intento){
   const st = window._retiroV2; if(!st || !window.ctrlElectron) return;
-  if(!_drexGlobalLock('rv2-saldo')){ const e=document.getElementById('rv2SaldoReal'); if(e) e.innerHTML='⏸ hay una operación en curso · saldo no leído'; return; }
+  const pintar=function(){ try{ const v=document.getElementById('rv2Veredicto'); if(v) v.innerHTML=_rv2VeredictoHtml(); _rv2ActualizarBotonAprobar(); }catch(_e){} };
+  // El agente puede estar tomado por otra operación justo cuando abrís el modal. Antes se
+  // intentaba UNA vez, quedaba en "no pudimos leer sus fichas" y ahí moría — y como _rv2Aprobar
+  // sólo valida el saldo si pudo leerlo, el retiro salía SIN chequear las fichas. Ahora reintenta.
+  intento = Number(intento||0);
+  if(!_drexGlobalLock('rv2-saldo')){
+    if(intento < 6 && window._retiroV2===st){
+      st.saldoFallo='ocupado'; pintar();
+      setTimeout(function(){ if(window._retiroV2===st) _rv2LeerSaldo(intento+1); }, 2500);
+      return;
+    }
+    st.saldoFallo='ocupado'; pintar(); return;
+  }
   _wdLock();
   try{
     const b = await callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    const e=document.getElementById('rv2SaldoReal');
-    if(b && b.exists && typeof b.balance?.value==='number'){
-      st.saldoReal = b.balance.value;
-      if(e){
-        if(st.saldoReal<=0.5) e.innerHTML='<b style="color:#f87171">⚠ Sin fichas para retirar (saldo '+escapeHtml((b.balance.raw||money(0)).trim())+')</b>';
-        else {
-          const _alcanza = st.saldoReal+0.5>=st.objetivo;
-          e.innerHTML='💰 Saldo real: <b style="color:'+(_alcanza?'#22c55e':'#f5c518')+'">'+escapeHtml((b.balance.raw||money(st.saldoReal)).trim())+'</b>';
-          // AUTO-AJUSTE: el usuario declaró MÁS de lo que tiene (típico: un cero de más). Si igual
-          // tiene fichas retirables (≥ RV2_MIN_RETIRABLE), ofrecemos fijar el retiro a lo que HAY:
-          // se respeta su intención de retirar, y como el objetivo pasa a ser el total real, el
-          // retiro cierra COMPLETO (no queda un "parcial" fantasma por la diferencia declarada).
-          const _sug = !_alcanza ? window._retiroMontoSugerido(st.objetivo, st.saldoReal) : null;
-          if(_sug){
-            e.innerHTML += '<div style="margin-top:6px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.1);border:1px solid rgba(245,197,24,.45);text-align:left">'
-              + '<div style="font-size:11px;color:#fde68a;font-weight:700">⚠ Declaró '+money(st.objetivo)+' y tiene '+money(st.saldoReal)
-              +   (_sug.motivo==='ceros' ? (' — le sobra'+(_sug.ceros>1?'n':'')+' '+_sug.ceros+' cero'+(_sug.ceros>1?'s':'')+': quiso '+money(_sug.monto)) : ' — no es cuestión de ceros')+'</div>'
-              + '<button type="button" class="mini-btn" style="margin-top:5px;background:#ea580c;color:#fff;font-weight:800;font-size:11px" onclick="_rv2AjustarASaldo('+_sug.monto+')">✔ Retirar '+money(_sug.monto)+(_sug.motivo==='todo'?' (todo lo que tiene)':'')+'</button></div>';
-          }
-        }
-      }
-    } else if(e){ e.innerHTML='No se pudo leer el saldo del usuario.'; }
-  }catch(_e){}
-  finally{ _wdUnlock(); _drexGlobalUnlock(); }
+    if(b && b.exists && typeof b.balance?.value==='number') st.saldoReal = b.balance.value;
+    else st.saldoFallo='ilegible';
+  }catch(_e){ st.saldoFallo='ilegible'; }
+  finally{ _wdUnlock(); _drexGlobalUnlock(); pintar(); }
 }
 
 // APROBAR: valida, extrae las fichas UPFRONT (para que no se las jueguen) y pasa a
@@ -13647,14 +14482,34 @@ window._rv2Aprobar = async function(){
     .map(function(b){ return { id:String(b.ID_BILLETERA), nombre:b.NOMBRE_VISIBLE||'—', chunior:b.CHUNIOR_UID, saldo:Number(b.SALDO||0), monto:Number(st.montos[String(b.ID_BILLETERA)]||0) }; });
   if(!seleccionadas.length){ toast('Tildá al menos una billetera con monto.','red'); return; }
   if(total<=0){ toast('El total a pagar es 0.','red'); return; }
-  if(total > st.objetivo+0.5){ toast('El total ('+money(total)+') supera el monto real ('+money(st.objetivo)+').','red'); return; }
+  // Se compara contra LO QUE FALTA de la deuda (totalReal − yaPagado), igual que el botón. Antes
+  // comparaba contra st.objetivo, que es un valor que se lee al abrir el modal y puede venir del
+  // metadata podrido: el botón te habilitaba y esta validación te rechazaba con "supera el monto
+  // real ($200.000)" cuando en pantalla decía claramente que faltaban $250.000. Y no corta el
+  // flujo: pagar de más se pregunta, no se prohíbe — el que sabe cuánto se debe es el operador.
+  const _faltaDeuda = Math.max(0, Number(st.totalReal||0) - Number(st.yaPagado||0));
+  if(total > _faltaDeuda + 0.5){
+    if(!confirm('Vas a pagar '+money(total)+' y de esta deuda sólo faltan '+money(_faltaDeuda)+'.\n\n'
+      + 'Son '+money(total-_faltaDeuda)+' de MÁS.\n\n'
+      + 'Si el total del retiro está mal cargado, corregilo arriba en "Total del retiro".\n\n¿Pagar igual?')) return;
+  }
   for(const b of seleccionadas){ if(b.monto > b.saldo+0.5){ toast(b.nombre+' no tiene '+money(b.monto)+' (saldo '+money(b.saldo)+').','red'); return; } }
-  if(st.saldoReal!=null && total > st.saldoReal+0.5){ if(!confirm('El usuario tiene '+money(st.saldoReal)+' de fichas pero vas a retirar '+money(total)+'. ¿Seguir igual?')) return; }
+  // Chequeo de fichas. Si no se pudo leer al abrir el modal, se intenta AHORA — antes se salteaba
+  // en silencio (la condición pedía saldoReal!=null) y el retiro salía sin verificar nada.
+  if(st.saldoReal==null){
+    toast('Leyendo las fichas de '+st.usuario+' antes de pagar…','blue');
+    try{ await _rv2LeerSaldo(99); }catch(_e){}          // 99 = sin reintentos, es el último tiro
+  }
+  if(st.saldoReal==null){
+    if(!confirm('No se pudieron leer las fichas de '+st.usuario+'.\n\nSi seguís, el retiro sale A CIEGAS: no sabemos si tiene el saldo.\n\n¿Continuar igual?')) return;
+  } else if(total > st.saldoReal+0.5){
+    if(!confirm('El usuario tiene '+money(st.saldoReal)+' de fichas pero vas a retirar '+money(total)+'. ¿Seguir igual?')) return;
+  }
   st.obs = (document.getElementById('rv2Obs')?document.getElementById('rv2Obs').value:'').trim();
   st.pagar = seleccionadas; st.totalPagar = total;
 
-  // PARCIAL vs COMPLETO: si es parcial exige el TILDE "Confirmo retiro parcial" (sin popup).
-  // El completo va directo (el botón Aprobar ya es la confirmación).
+  // El botón ya dice "Pagar $X ahora · quedan $Y": esa ES la confirmación. Antes había además un
+  // tilde "confirmo retiro parcial" que sólo repetía lo que el operador acababa de armar a mano.
   const esParcial = total < st.objetivo - 0.5;
   // En modo parcial explícito no se pide confirmar que es parcial: ya se eligió ese camino.
   if(esParcial && !st.parcialAceptado && !st.modoParcial){
@@ -13723,8 +14578,10 @@ function _rv2RenderConfirmar(){
     + '<div class="small" style="color:#8b949e;margin-bottom:8px">Las fichas ('+money(st.totalPagar)+') YA se extrajeron. Transferí desde cada billetera al CBU <b>'+escapeHtml(st.cbu||'—')+'</b> y confirmá cada una.</div>'
     + filas
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">'
+    // Con todas confirmadas el cierre ya salió solo (ver _rv2Confirmar). El botón queda como
+    // reintento manual por si ese cierre automático falló, no como paso obligatorio.
     +   (faltan===0
-         ? '<button class="mini-btn green" style="font-weight:800" onclick="_rv2Finalizar()">Finalizar retiro</button>'
+         ? '<button class="mini-btn green" style="font-weight:800" onclick="_rv2Finalizar()">Cerrar el retiro</button>'
          : '<span class="small" style="color:#8b949e;align-self:center">Faltan '+faltan+' transferencia(s)</span>')
     + '</div></div>';
   el.style.display='block';
@@ -13748,6 +14605,17 @@ window._rv2Confirmar = async function(bid){
     toast('✓ '+b.nombre+': '+money(b.monto),'green');
   }catch(e){ st.hechas[bid]=false; toast('Error en '+b.nombre+': '+(e.message||''),'red'); }
   _rv2RenderConfirmar();
+  // CIERRE AUTOMÁTICO. Con la última billetera confirmada ya está TODO hecho: las fichas salieron,
+  // los movimientos están anotados en Chunior y la plata se transfirió. Lo único que faltaba era
+  // apretar "Finalizar retiro", que no decide nada — sólo registra. Y si el operador cerraba el
+  // modal ahí (o se le colgaba la ventana), la plata YA se había movido pero no quedaba ni la fila
+  // en el historial ni la solicitud actualizada: el retiro existía en Chunior y en ningún lado más.
+  // Pasó de verdad con un parcial. Ahora cierra solo.
+  if(st.pagar.every(function(x){ return st.hechas[x.id]===true; })){
+    try{ await _rv2Finalizar(); }catch(e){
+      try{ toast('⚠ Se transfirió todo pero falló el cierre: '+(e.message||'')+' — revisá el historial','red'); }catch(_e){}
+    }
+  }
 };
 
 // Finaliza: marca la solicitud (parcial/completa), avisa al usuario y registra el historial.
@@ -14335,13 +15203,23 @@ window._rv2Finalizar = async function(){
       .catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
   };
 
+  // La nota lleva SOLO lo que no está en las columnas de la tabla. El monto ya se ve en su columna
+  // y la billetera en la suya: repetirlos hacía que la línea de detalle fuera casi toda ruido, y
+  // lo único que se quería leer —el titular, el alias del cliente— quedaba enterrado al final.
   function portalNotasBase(ctx){
     const {id, solicitud:s, montoAprobado, titular, destino, cbu, obs} = ctx;
-    const notas = ['Solicitud portal #'+id];
-    notas.push('Declarado '+money(Number(s.MONTO_DECLARADO||s.MONTO_REAL||0))+' / aprobado '+money(montoAprobado));
+    const notas = ['#'+id];
+    // El monto va SOLO si el aprobado difiere del declarado. Cuando son iguales —el 95% de los
+    // casos— "Declarado $6.000 / aprobado $6.000" no aporta nada.
+    const _dec = Number(s.MONTO_DECLARADO||s.MONTO_REAL||0);
+    if(Math.abs(_dec - Number(montoAprobado||0)) > 0.5) notas.push('pidió '+money(_dec)+' · se aprobó '+money(montoAprobado));
     if(titular) notas.push('Titular: '+titular);
-    if(destino) notas.push('Destino: '+destino);
-    if(cbu) notas.push('CBU/CVU: '+cbu);
+    // destino suele traer "BILLETERA · alias". La billetera ya está en su columna: va sólo el alias.
+    if(destino){
+      const _d = String(destino).split('·').map(function(x){ return x.trim(); }).filter(Boolean);
+      notas.push('Alias: '+(_d.length>1 ? _d.slice(1).join(' · ') : _d[0]));
+    }
+    if(cbu && String(cbu).trim() !== String(destino||'').trim()) notas.push('CBU/CVU: '+cbu);
     if(obs) notas.push('Obs: '+obs);
     return notas.join(' · ');
   }
@@ -14388,10 +15266,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     _portalSolicitudOperacionEnCurso = true;
     if(btn){ btn.disabled = true; btn.style.opacity = '.65'; btn.textContent = 'Operando...'; }
+    // Marcar la fila QUE SE ESTÁ OPERANDO y bloquear las demás. El guard ya evitaba la doble
+    // ejecución, pero no se veía: apretabas, no pasaba nada visible, apretabas de nuevo y recién
+    // ahí te saltaba un toast amarillo. Ahora la tarjeta muestra que está trabajando y las otras
+    // acciones quedan apagadas mientras tanto.
+    try{
+      document.body.classList.add('op-portal-en-curso');
+      document.body.dataset.opSolicitud = String(id);
+    }catch(_e){}
     _trazaInit((tipo==='CARGA'?'Carga':'Retiro')+' PORTAL · '+usuario+' · '+money(montoAbs)+' (sol. #'+id+')');
 
     const liberar = () => {
       _portalSolicitudOperacionEnCurso = false;
+      try{ document.body.classList.remove('op-portal-en-curso'); delete document.body.dataset.opSolicitud; }catch(_e){}
       _drexGlobalUnlock();
       _wdForceUnlock(); // libera el candado del watchdog tomado al arrancar (mismo fix que en manual)
       if(btn){ btn.disabled = false; btn.style.opacity = ''; btn.textContent = 'Aprobar'; }
@@ -14720,7 +15607,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
           }catch(eb){ console.warn('[bono]', eb); toast('⚠️ Error con el bono: '+(eb.message||''), 'red'); }
         }
         if(tipo === 'CARGA' && busqueda?.user){ try{ _autoregistrarUsuarioSiFalta(busqueda.user); }catch(_e){} }
-        setTimeout(()=>{ cerrarPortalJobModal(); }, 450);
+        // Cerrar SOLO si el modal sigue siendo el de ESTA solicitud. La operación corre en segundo
+        // plano: para cuando esto dispara, el operador ya abrió el modal de la SIGUIENTE carga —
+        // y le cerrábamos ese, en la cara, mientras lo estaba completando.
+        setTimeout(()=>{
+          try{
+            const _m = document.getElementById('portalJobModal');
+            if(_m && Number(_m.dataset && _m.dataset.solicitudId) === Number(id)) cerrarPortalJobModal();
+          }catch(_e){}
+        }, 450);
       }else{
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
         try{ if(typeof colaPendientesAdd==='function') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
@@ -19498,6 +20393,18 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
   box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
 }
 @media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
+/* Qué está haciendo Agentes ahora mismo. Antes el panel contestaba "hay otra operación corriendo"
+   sin decir cuál, desde cuándo, ni cómo salir. Esto aparece solo cuando el agente está tomado. */
+#agentesBadge{position:fixed;left:84px;bottom:46px;z-index:99997;display:none;align-items:center;gap:8px;
+  background:#1b2230;border:1px solid #3a4459;border-radius:999px;padding:6px 10px 6px 12px;
+  font-size:11px;font-weight:700;color:#e6edf3;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#agentesBadge.viejo{border-color:#7a4a1d;background:#2a1f14}
+#agentesBadge .ab-txt{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#agentesBadge .ab-seg{color:#8b949e;font-weight:600}
+#agentesBadge button{background:#3a2027;border:1px solid #5a2a32;color:#ffc8d0;border-radius:999px;
+  font-size:10px;font-weight:800;padding:3px 9px;cursor:pointer}
+#agentesBadge button:hover{background:#4a262f}
+@media(max-width:900px){#agentesBadge{left:12px;bottom:52px}#agentesBadge .ab-txt{max-width:160px}}
 /* ── Barra del chat: UN botón que cambia según dónde estás ───────────────────────────────
    El estado real de "hay una conversación abierta" es body.nodo-chat-open, que lo pone el puente
    del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que

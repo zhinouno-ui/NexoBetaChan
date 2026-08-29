@@ -1092,6 +1092,22 @@ async function _asegurarInicio() {
 }
 
 // ── Login ────────────────────────────────────────────────────────────────────
+// Cartel de error de BET300 (Vuetify). Con clave mala pinta:
+//   <div class="v-alert ... bg-error" role="alert"> … Login failed</div>
+// Se busca por la clase bg-error / role=alert, no por el texto: si mañana lo traducen o cambian el
+// mensaje, el selector sigue sirviendo. El texto se devuelve para mostrárselo al operador tal cual.
+function _bet300ErrorLogin() {
+  try {
+    const nodos = document.querySelectorAll('.v-alert.bg-error, .v-alert[role="alert"].bg-error, [role="alert"].bg-error');
+    for (const n of nodos) {
+      if (!isVisible(n)) continue;
+      const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) return t.slice(0, 120);
+    }
+  } catch (_e) {}
+  return null;
+}
+
 async function iniciarSesion(usuario, clave) {
   if (!pageNeedsLogin()) return { ok: true, message: 'Sesión ya activa.' };
 
@@ -1116,6 +1132,11 @@ async function iniciarSesion(usuario, clave) {
   while (now() - inicio < 15000) {
     await delay(500);
     if (!pageNeedsLogin()) return { ok: true, message: 'Sesión iniciada.' };
+    // Clave mala: BET300 muestra un v-alert rojo con "Login failed". Sin mirarlo, esperábamos los
+    // 15s completos y devolvíamos un error genérico — el operador no sabía si era la clave o la
+    // página. Con el cartel a la vista se corta al toque y se dice qué pasó.
+    const err = _bet300ErrorLogin();
+    if (err) return { ok: false, credenciales: true, message: 'BET300 rechazó el login: ' + err };
     // (NO forzamos navegación acá: cada operación, vía ensureReady, verifica la página y va al inicio
     //  SOLO si no está en la pantalla de carga — así no se recarga al pedo.)
   }
