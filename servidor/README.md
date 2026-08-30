@@ -6,7 +6,7 @@ que entrar a la base para saber qué hay. El bot se buscó en git más de una ve
 no está ni estuvo nunca.
 
 > **La fuente de verdad son las migraciones de Supabase, no estos archivos.**
-> Acá hay una foto tomada el **2026-08-30** con `pg_get_functiondef`, verificada función
+> Acá hay una foto de las **49 funciones**, tomada el **2026-08-30** con `pg_get_functiondef`, verificada función
 > por función comparando el md5 del cuerpo contra la base. No se aplican con `psql` a
 > ciegas: si hay que cambiar algo, va por migración.
 
@@ -64,13 +64,24 @@ incidentes reales.
 | `whaticket-sonda.ts` | verifica un token nuevo antes de escribir nada. |
 | `whaticket-sonda-editar.ts` | temporal: prueba si la API ya permite editar contactos. |
 
+## Admi · tableros — [`admin-tablero.sql`](admin-tablero.sql) · [`admin-tablero-grandes.sql`](admin-tablero-grandes.sql)
+
+**16 funciones.** Son del Admi (`admi-V23-COMPLETO-con-whaticket.html`), no del panel operativo:
+embudo de usuarios, crecimiento, monitor, operación en vivo, rendimiento de operadores,
+movimientos manuales de plata con señales de revisión, y el tablero por oficina.
+
+El control de acceso está en `admin_od_scope_effective`: rol ADMIN o scope ALL ve todas las
+oficinas; a un encargado se le fuerza la suya, ignorando lo que pida.
+
+**Cuidado:** las tres grandes (`dashboard_resumen`, `crecimiento_resumen`, `operacion_vivo`)
+NO pasan por `admin_od_scope_effective` — solo validan la sesión con `nodo_admin_session_ok`.
+El acotado por oficina se lo ponen sus envoltorios `*_v2`. **Llamarlas directo saltea ese
+control** y devuelve datos de todas las oficinas.
+
 ## Lo que NO está copiado acá
 
-- **`admin_od_*` — 16 funciones, ~77k caracteres.** Son los tableros del Admi
-  (`admi-V23-COMPLETO-con-whaticket.html`), no del panel operativo: embudo de usuarios,
-  crecimiento, monitor, operación en vivo, rendimiento de operadores, movimientos.
 - **Los helpers internos** `_panel_data_auth`, `_panel_crm_auth`, `_panel_crm_*_raw`,
-  `_panel_resolver_puesto_raw`.
+  `_panel_resolver_puesto_raw`, `admin_get_scope`, `nodo_admin_session_ok`.
 - **Las tablas.** `whaticket_eventos`, `whaticket_lineas`, `whaticket_contactos_stage`,
   `reconexion_contactos`, `usuarios_portal_eventos`, `vinculo_cambio_telefono`,
   `panel_actividad`, `portal_acceso_links`.
