@@ -135,8 +135,16 @@ begin
   if not public._panel_data_auth(p_secret) then raise exception 'no-auth'; end if;
   if v_pc = '' then return jsonb_build_object('ok', false, 'mensaje', 'falta pc_codigo'); end if;
 
-  select count(*), max(l.visto_at) into v_total, v_visto
-  from public.whaticket_lineas l where l.pc_codigo = v_pc;
+  select max(l.visto_at) into v_visto from public.whaticket_lineas l where l.pc_codigo = v_pc;
+
+  if v_visto is null then
+    return jsonb_build_object('ok', true, 'pc', v_pc, 'sin_monitor', true);
+  end if;
+
+  -- Solo las lineas que el ultimo barrido de la oficina efectivamente trajo.
+  select count(*) into v_total
+  from public.whaticket_lineas l
+  where l.pc_codigo = v_pc and l.visto_at >= v_visto - interval '5 minutes';
 
   if coalesce(v_total,0) = 0 then
     return jsonb_build_object('ok', true, 'pc', v_pc, 'sin_monitor', true);
@@ -147,12 +155,14 @@ begin
     select jsonb_build_object(
              'nombre',  l.nombre,
              'estado',  l.estado,
-             -- 'qrcode' = la sesión se cerró y espera que escaneen el QR
+             -- 'qrcode' = la sesion se cerro y espera que escaneen el QR
              'motivo',  case when lower(l.estado) = 'qrcode' then 'esperando QR' else 'desconectada' end,
              'minutos', greatest(0, round(extract(epoch from (now() - l.cambio_at)) / 60))
            ) as x
     from public.whaticket_lineas l
-    where l.pc_codigo = v_pc and upper(coalesce(l.estado,'')) <> 'CONNECTED'
+    where l.pc_codigo = v_pc
+      and l.visto_at >= v_visto - interval '5 minutes'
+      and upper(coalesce(l.estado,'')) <> 'CONNECTED'
   ) s;
 
   return jsonb_build_object(
@@ -161,8 +171,8 @@ begin
     'conectadas',   v_total - jsonb_array_length(v_caidas),
     'caidas',       v_caidas,
     'ultimo_chequeo', v_visto,
-    -- el monitor corre cada 10 min: más de 25 sin noticias es que dejó de correr
-    'datos_viejos', (v_visto is null or v_visto < now() - interval '25 minutes')
+    -- el monitor corre cada 10 min: mas de 25 sin noticias es que dejo de correr
+    'datos_viejos', (v_visto < now() - interval '25 minutes')
   );
 end $function$
 ;

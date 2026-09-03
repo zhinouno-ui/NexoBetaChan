@@ -367,7 +367,12 @@ begin
         select jsonb_build_object('pc',w.pc_codigo,'nombre',w.nombre,'estado',w.estado,
                  'visto',w.visto_at,'cambio',w.cambio_at,
                  'frenado',(w.visto_at < now() - interval '30 min')) as x
-        from whaticket_lineas w where (v_pc is null or w.pc_codigo = v_pc)) s), '[]'::jsonb),
+        from whaticket_lineas w
+        join (select pc_codigo, max(visto_at) as ultimo
+                from whaticket_lineas group by pc_codigo) u
+          on u.pc_codigo = w.pc_codigo
+       where (v_pc is null or w.pc_codigo = v_pc)
+         and w.visto_at >= u.ultimo - interval '5 minutes') s), '[]'::jsonb),
 
     'lineas_cambios', coalesce((select jsonb_agg(jsonb_build_object('pc',pc_codigo,'nombre',nombre,
              'antes',estado_antes,'ahora',estado_ahora,'cuando',cambio_at) order by cambio_at desc)

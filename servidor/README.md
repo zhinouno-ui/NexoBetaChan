@@ -6,7 +6,7 @@ que entrar a la base para saber qué hay. El bot se buscó en git más de una ve
 no está ni estuvo nunca.
 
 > **La fuente de verdad son las migraciones de Supabase, no estos archivos.**
-> Acá hay una foto de las **49 funciones**, tomada el **2026-08-30** con `pg_get_functiondef`, verificada función
+> Acá hay una foto de las **49 funciones**, tomada el **2026-09-03** con `pg_get_functiondef`, verificada función
 > por función comparando el md5 del cuerpo contra la base. No se aplican con `psql` a
 > ciegas: si hay que cambiar algo, va por migración.
 
@@ -100,9 +100,15 @@ supabase functions download whaticket-agendar
 
 ## Dato importante
 
-Las migraciones de Supabase llegan hasta el **28/08** (`monitor_versiones_por_maquina`,
-`panel_actividad_identidad_de_instalacion`, `tablero_varios_paneles_por_oficina`,
-`versiones_solo_en_linea`), **dos días después del último commit** del repo oficial
-(v1.1.80, 26/08).
+Las migraciones de Supabase llegan hasta el **03/09** (,
+), **un día después del último commit** del repo oficial
+(v1.1.81, 02/09).
 
 El repo no es la foto completa del sistema. Si algo "falta", mirá acá antes que en git.
+
+## Cómo chequear si esta copia quedó vieja
+
+Sin re-bajar nada: se pide a la base el md5 del cuerpo de cada función y se compara contra
+estos archivos. Lo que difiere es lo único que hay que traer.
+
+
