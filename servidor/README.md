@@ -100,15 +100,25 @@ supabase functions download whaticket-agendar
 
 ## Dato importante
 
-Las migraciones de Supabase llegan hasta el **03/09** (,
-), **un día después del último commit** del repo oficial
+Las migraciones de Supabase llegan hasta el **03/09** (`lineas_ignorar_filas_huerfanas`,
+`admi_lineas_ignorar_huerfanas`), **un día después del último commit** del repo oficial
 (v1.1.81, 02/09).
 
 El repo no es la foto completa del sistema. Si algo "falta", mirá acá antes que en git.
 
 ## Cómo chequear si esta copia quedó vieja
 
-Sin re-bajar nada: se pide a la base el md5 del cuerpo de cada función y se compara contra
-estos archivos. Lo que difiere es lo único que hay que traer.
+Sin re-bajar nada: se le pide a la base el md5 del cuerpo de cada función y se compara
+contra estos archivos. Lo que difiere es lo único que hay que traer.
 
+```sql
+select proname,
+       md5(replace(prosrc, chr(13), '')) as md5_cuerpo,
+       length(prosrc)                    as largo
+  from pg_proc
+ where pronamespace = 'public'::regnamespace
+   and proname ~ '^(_?soporte|trg_soporte|whaticket|panel_|nodo_norm|reconexion_clase|admin_od)'
+ order by proname;
+```
 
+El 03/09 ese chequeo dio: 47 idénticas, 2 cambiadas, 0 nuevas, 0 borradas.
