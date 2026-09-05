@@ -14,7 +14,12 @@
 --
 -- NO está acá: `admin_get_scope`, que es de donde sale la sesión.
 --
--- Generado con pg_get_functiondef el 2026-08-30. Verificado por md5 contra la base.
+-- `admin_od_rescate_v1` es la vista de control de la cola de rescate: cuánto hay en cola por
+-- oficina, quién la trabaja y cuánta plata volvió, más una medición de CÓMO escriben los
+-- operadores (largo, cortesía, minúscula) y qué porcentaje de respuestas quedó atribuido.
+--
+-- Generado con pg_get_functiondef el 2026-08-30 (admin_od_rescate_v1, el 2026-09-05).
+-- Verificado por md5 contra la base.
 -- ═══════════════════════════════════════════════════════════════════════════════════════════
 
 
@@ -709,6 +714,110 @@ begin
 end;
 $function$
 ;
+
+-- ══ admin_od_rescate_v1(p_session_token text, p_dias integer)
+CREATE OR REPLACE FUNCTION public.admin_od_rescate_v1(p_session_token text, p_dias integer DEFAULT 14)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_sc jsonb; v_todas boolean; v_pc text; v_d int := greatest(coalesce(p_dias,14),1);
+begin
+  v_sc := public.admin_od_scope_effective(p_session_token, null);
+  if not coalesce((v_sc->>'ok')::boolean,false) then
+    return jsonb_build_object('ok', false, 'error', v_sc->>'error');
+  end if;
+  v_todas := coalesce((v_sc->>'puede_todas')::boolean,false);
+  v_pc    := case when v_todas then null else nullif(v_sc->>'pc_codigo_efectivo','') end;
+
+  return jsonb_build_object('ok', true, 'generado', now(), 'dias', v_d,
+
+    'oficinas', coalesce((select jsonb_agg(x order by (x->>'en_cola')::int desc) from (
+      with cola as (
+        select c.pc_codigo pc, count(*) n, coalesce(sum(c.valor),0) valor
+        from public.rescate_candidatos c
+        left join public.reconexion_contactos m
+               on upper(coalesce(m.pc_codigo,'')) = c.pc_codigo and lower(btrim(m.usuario)) = lower(c.usuario)
+        where length(coalesce(c.telefono,'')) = 10
+          and c.ultima is not null and c.ultima < now() - interval '60 days'
+          and m.usuario is null
+        group by 1
+      ),
+      trab as (
+        select upper(coalesce(m.pc_codigo,'')) pc,
+               count(*) filter (where m.updated_at > now() - make_interval(days => v_d)) trabajados,
+               count(*) filter (where m.estado='CONTACTADO' and m.updated_at > now() - make_interval(days => v_d)) contactados,
+               count(*) filter (where m.estado='CONTACTADO' and m.updated_at > now() - make_interval(days => v_d)
+                                  and exists (select 1 from historial_ops h
+                                              where upper(coalesce(h.pc_codigo,''))=upper(coalesce(m.pc_codigo,''))
+                                                and nodo_norm_usuario_v21(h.usuario)=nodo_norm_usuario_v21(m.usuario)
+                                                and upper(coalesce(h.tipo,''))='CARGA'
+                                                and h.created_at > m.updated_at)) recuperados
+        from reconexion_contactos m group by 1
+      ),
+      pcs as (select pc from cola union select pc from trab)
+      select jsonb_build_object(
+        'pc', p.pc, 'en_cola', coalesce(c.n,0), 'valor_en_cola', round(coalesce(c.valor,0)),
+        'trabajados', coalesce(t.trabajados,0), 'contactados', coalesce(t.contactados,0),
+        'recuperados', coalesce(t.recuperados,0),
+        'pct_recuperado', case when coalesce(t.contactados,0)>0
+                               then round(100.0*t.recuperados/t.contactados,1) else null end) as x
+      from pcs p left join cola c on c.pc=p.pc left join trab t on t.pc=p.pc
+      where p.pc ~ '^P[0-9]+$' and (v_pc is null or p.pc = v_pc)) s), '[]'::jsonb),
+
+    'dedicacion', coalesce((select jsonb_agg(x order by (x->>'trabajados')::int desc) from (
+      select jsonb_build_object(
+        'operador', coalesce(nullif(btrim(m.operador),''),'(sin nombre)'),
+        'pc', upper(coalesce(m.pc_codigo,'')),
+        'trabajados', count(*),
+        'contactados', count(*) filter (where m.estado='CONTACTADO'),
+        'descartados', count(*) filter (where m.estado='DESCARTADO'),
+        'dias_activos', count(distinct (m.updated_at at time zone 'America/Argentina/Buenos_Aires')::date),
+        'hora_tipica', lpad((mode() within group (
+            order by extract(hour from (m.updated_at at time zone 'America/Argentina/Buenos_Aires'))
+          ))::int::text, 2, '0') || ' h') as x
+      from reconexion_contactos m
+      where m.updated_at > now() - make_interval(days => v_d)
+        and (v_pc is null or upper(coalesce(m.pc_codigo,'')) = v_pc)
+      group by coalesce(nullif(btrim(m.operador),''),'(sin nombre)'),
+               upper(coalesce(m.pc_codigo,''))) s), '[]'::jsonb),
+
+    'calidad', coalesce((select jsonb_agg(x order by (x->>'mensajes')::int desc) from (
+      with msg as (
+        select btrim(mm->>'operador') op, upper(coalesce(s.pc_codigo,'')) pc, btrim(mm->>'mensaje') txt
+        from landing_solicitudes s,
+             lateral jsonb_array_elements(coalesce(s.metadata->'chat_thread','[]'::jsonb)) mm
+        where s.created_at > now() - make_interval(days => v_d)
+          and upper(coalesce(mm->>'origen','')) = 'OPERADOR'
+          and btrim(coalesce(mm->>'operador','')) not in ('','NODO','panel')
+          and length(btrim(coalesce(mm->>'mensaje',''))) > 0
+          and (v_pc is null or upper(coalesce(s.pc_codigo,'')) = v_pc)
+      )
+      select jsonb_build_object(
+        'operador', op, 'pc', max(pc), 'mensajes', count(*),
+        'largo_promedio',   round(avg(length(txt))),
+        'pct_minuscula',    round(100.0*count(*) filter (where txt ~ '^[a-záéíóúñ]')/count(*)),
+        'pct_sin_punto',    round(100.0*count(*) filter (where txt !~ '[.!?]$')/count(*)),
+        'pct_muy_corto',    round(100.0*count(*) filter (where length(txt) < 25)/count(*)),
+        'pct_sin_cortesia', round(100.0*count(*) filter (where txt !~* '(hola|buenas|gracias|por favor|saludos|aguard|disculp)')/count(*))
+      ) as x
+      from msg group by op having count(*) >= 5) s), '[]'::jsonb),
+
+    'atribucion', (select jsonb_build_object(
+        'humanos', count(*) filter (where btrim(coalesce(mm->>'operador','')) <> 'NODO'),
+        'con_nombre', count(*) filter (where btrim(coalesce(mm->>'operador','')) not in ('','NODO','panel')),
+        'automaticos', count(*) filter (where btrim(coalesce(mm->>'operador','')) = 'NODO'))
+      from landing_solicitudes s,
+           lateral jsonb_array_elements(coalesce(s.metadata->'chat_thread','[]'::jsonb)) mm
+      where s.created_at > now() - make_interval(days => v_d)
+        and upper(coalesce(mm->>'origen','')) = 'OPERADOR'
+        and (v_pc is null or upper(coalesce(s.pc_codigo,'')) = v_pc))
+  );
+end $function$
+;
+
 
 -- ══ admin_od_scope_effective(p_session_token text, p_pc_codigo text)
 CREATE OR REPLACE FUNCTION public.admin_od_scope_effective(p_session_token text, p_pc_codigo text DEFAULT NULL::text)

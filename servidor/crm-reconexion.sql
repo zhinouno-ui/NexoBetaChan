@@ -12,10 +12,19 @@
 --   panel_prevalidar_usuario       antes de crear un usuario: ¿ese teléfono ya tiene cuenta acá,
 --                                  ya cobró bonos, comparte CBU con otras? Devuelve un veredicto.
 --   panel_usuarios_contacto        datos de contacto de una lista de usuarios, en una sola consulta.
+--   panel_rescate_cola             la cola de rescate: cruza las 160 mil operaciones importadas de
+--                                  Agentes contra NODO y ordena por lo que depositó cada uno.
+--                                  Dos segmentos: RESCATE (>60 días sin cargar) e INTENTO
+--                                  (pidió cargar y nunca completó una).
+--   panel_rescate_tomar            reserva un contacto a nombre de un operador por 30 minutos,
+--                                  para que dos de la misma oficina no le escriban al mismo.
+--   rescate_refrescar              rearma rescate_candidatos. Lo dispara pg_cron cada 30 min.
 --
 -- Todas piden p_secret y validan con _panel_data_auth: el panel manda PANEL_DATA_SECRET.
+-- La excepción es rescate_refrescar, que no la llama el panel sino el cron.
 --
--- Generado con pg_get_functiondef el 2026-08-30. Verificado por md5 contra la base.
+-- Generado con pg_get_functiondef el 2026-08-30 (las tres de rescate, el 2026-09-05).
+-- Verificado por md5 contra la base.
 -- ═══════════════════════════════════════════════════════════════════════════════════════════
 
 
@@ -497,6 +506,102 @@ end;
 $function$
 ;
 
+-- ══ panel_rescate_cola(p_secret text, p_pc_codigo text, p_segmento text, p_dias integer, p_operador text, p_limit integer)
+CREATE OR REPLACE FUNCTION public.panel_rescate_cola(p_secret text, p_pc_codigo text, p_segmento text DEFAULT 'RESCATE'::text, p_dias integer DEFAULT 60, p_operador text DEFAULT NULL::text, p_limit integer DEFAULT 200)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_pc  text := upper(btrim(coalesce(p_pc_codigo,'')));
+  v_seg text := upper(btrim(coalesce(p_segmento,'RESCATE')));
+  v_d   int  := greatest(coalesce(p_dias,60), 7);
+  v_lim int  := least(greatest(coalesce(p_limit,200),1),500);
+  v_op  text := coalesce(nullif(btrim(coalesce(p_operador,'')),''),'panel');
+  v_res jsonb;
+begin
+  if not public._panel_data_auth(p_secret) then raise exception 'no-auth'; end if;
+  if v_pc = '' then return jsonb_build_object('ok',false,'error','FALTA_PC'); end if;
+  if v_seg not in ('RESCATE','INTENTO') then v_seg := 'RESCATE'; end if;
+
+  with clasif as (
+    select c.*, lower(c.usuario) as u_low,
+           case when c.ultima is null then null
+                else floor(extract(epoch from (now() - c.ultima))/86400)::int end as dias,
+           case when not c.alguna_vez_cargo and c.intento_veces is not null then 'INTENTO'
+                when c.ultima is not null and c.ultima < now() - make_interval(days => v_d) then 'RESCATE'
+                else 'OTRO' end as segmento
+    from public.rescate_candidatos c
+    where c.pc_codigo = v_pc and length(coalesce(c.telefono,'')) = 10
+  ),
+  filtrado as (
+    select c.*, r.operador as reservado_por
+    from clasif c
+    left join public.reconexion_contactos m
+           on m.pc_codigo = v_pc and m.usuario = c.u_low
+          and (m.estado <> 'NO_CONTESTA' or m.reabrir_at is null or m.reabrir_at > now())
+    left join public.reconexion_reservas r
+           on r.pc_codigo = v_pc and r.usuario = c.u_low
+          and r.tomado_at > now() - interval '30 minutes'
+    where c.segmento = v_seg and m.usuario is null
+  )
+  select jsonb_build_object(
+    'ok', true, 'pc_codigo', v_pc, 'segmento', v_seg, 'dias', v_d,
+    'total', (select count(*) from filtrado),
+    'tomados_por_otros', (select count(*) from filtrado where reservado_por is not null and reservado_por <> v_op),
+    'lista', coalesce((select jsonb_agg(jsonb_build_object(
+        'usuario', f.usuario, 'telefono', f.telefono, 'titular', f.titular, 'app', f.app,
+        'valor_historico', round(f.valor), 'ops', f.ops, 'cargas_en_nodo', f.cargas_nodo,
+        'dias_sin_cargar', f.dias, 'ultima', f.ultima, 'segmento', f.segmento,
+        'intento_veces', f.intento_veces, 'intento_ultimo', f.intento_ultimo,
+        'monto_pedido', f.monto_pedido, 'fue_rechazada', f.fue_rechazada,
+        'reservado_por', case when f.reservado_por = v_op then null else f.reservado_por end,
+        'es_mio', (f.reservado_por = v_op))
+        order by (case when v_seg='INTENTO' then extract(epoch from f.intento_ultimo) else f.valor end) desc nulls last)
+      from (select * from filtrado
+             order by (case when v_seg='INTENTO' then extract(epoch from intento_ultimo) else valor end) desc nulls last
+             limit v_lim) f), '[]'::jsonb)
+  ) into v_res;
+  return v_res;
+end $function$
+;
+
+
+-- ══ panel_rescate_tomar(p_secret text, p_pc_codigo text, p_usuario text, p_operador text)
+CREATE OR REPLACE FUNCTION public.panel_rescate_tomar(p_secret text, p_pc_codigo text, p_usuario text, p_operador text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_pc  text := upper(btrim(coalesce(p_pc_codigo,'')));
+  v_u   text := lower(btrim(coalesce(p_usuario,'')));
+  v_op  text := coalesce(nullif(btrim(coalesce(p_operador,'')),''),'panel');
+  v_due text;
+begin
+  if not public._panel_data_auth(p_secret) then raise exception 'no-auth'; end if;
+  if v_pc = '' or v_u = '' then return jsonb_build_object('ok',false,'error','FALTAN_DATOS'); end if;
+
+  insert into public.reconexion_reservas (pc_codigo, usuario, operador, tomado_at)
+  values (v_pc, v_u, v_op, now())
+  on conflict (pc_codigo, usuario) do update
+     set operador = excluded.operador, tomado_at = now()
+   where public.reconexion_reservas.operador = excluded.operador
+      or public.reconexion_reservas.tomado_at < now() - interval '30 minutes';
+
+  select operador into v_due from public.reconexion_reservas
+   where pc_codigo = v_pc and usuario = v_u;
+
+  if v_due is distinct from v_op then
+    return jsonb_build_object('ok', false, 'error', 'YA_LO_TIENE_OTRO', 'operador', v_due);
+  end if;
+  return jsonb_build_object('ok', true, 'usuario', v_u, 'operador', v_op);
+end $function$
+;
+
+
 -- ══ panel_usuarios_contacto(p_secret text, p_pc_codigo text, p_usuarios text[])
 CREATE OR REPLACE FUNCTION public.panel_usuarios_contacto(p_secret text, p_pc_codigo text, p_usuarios text[])
  RETURNS jsonb
@@ -574,4 +679,85 @@ begin
   return jsonb_build_object('ok',true,'usuarios',coalesce(v_out,'[]'::jsonb));
 end;
 $function$
+;
+
+
+-- ══ rescate_refrescar()
+CREATE OR REPLACE FUNCTION public.rescate_refrescar()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare v_n integer;
+begin
+  -- Se arma completo y recien al final se reemplaza, dentro de la misma transaccion: si algo
+  -- falla a mitad, la tabla vieja queda intacta y las colas siguen andando con datos de hace
+  -- media hora en vez de quedar vacias.
+  create temp table _nuevo on commit drop as
+  with vinc as (
+    select upper(coalesce(v.pc_codigo,'')) pc, nodo_norm_usuario_v21(v.usuario) u,
+           max(v.usuario) usuario_real,
+           max(right(regexp_replace(coalesce(v.telefono_canon,''),'\D','','g'),10)) tel,
+           max(nullif(btrim(coalesce(v.titular,'')),'')) titular,
+           bool_or(coalesce(v.app_instalada,false)) app
+    from public.usuarios_portal_vinculos v
+    where coalesce(v.estado_vinculo,'') <> 'DUPLICADO'
+    group by 1,2
+  ),
+  ag as (
+    select upper(coalesce(a.pc_codigo,'')) pc, nodo_norm_usuario_v21(a.alias) u,
+           count(*) ops, max(a.fecha) ultima,
+           coalesce(sum(a.cantidad) filter (where a.cantidad > 0),0) dep
+    from public.agente_operaciones_importadas a
+    where coalesce(a.alias,'') <> '' and upper(coalesce(a.tipo,'')) = 'DEPOSITO DE UN JUGADOR'
+    group by 1,2
+  ),
+  nodo as (
+    select upper(coalesce(h.pc_codigo,'')) pc, nodo_norm_usuario_v21(h.usuario) u,
+           count(*) filter (where upper(coalesce(h.tipo,''))='CARGA') cargas,
+           max(h.created_at) filter (where upper(coalesce(h.tipo,''))='CARGA') ultima,
+           coalesce(sum(h.monto) filter (where upper(coalesce(h.tipo,''))='CARGA'),0) monto
+    from public.historial_ops h group by 1,2
+  ),
+  intentos as (
+    select upper(coalesce(s.pc_codigo,'')) pc, nodo_norm_usuario_v21(s.usuario) u,
+           count(*) veces, max(s.created_at) ultimo, max(s.monto) monto_pedido,
+           bool_or(s.estado = 'RECHAZADA') rechazada
+    from public.landing_solicitudes s
+    where upper(coalesce(s.tipo,''))='CARGA' and coalesce(btrim(s.usuario),'') <> ''
+    group by 1,2
+  )
+  select coalesce(v.pc, a.pc, i.pc)                    as pc_codigo,
+         coalesce(v.u,  a.u,  i.u)                     as u,
+         coalesce(v.usuario_real, a.u, i.u)            as usuario,
+         v.tel, v.titular, v.app,
+         round(coalesce(a.dep,0) + coalesce(n.monto,0), 2) as valor,
+         (coalesce(a.ops,0) + coalesce(n.cargas,0))::int   as ops,
+         nullif(greatest(coalesce(a.ultima,'-infinity'::timestamptz),
+                         coalesce(n.ultima,'-infinity'::timestamptz)),
+                '-infinity'::timestamptz)              as ultima,
+         coalesce(n.cargas,0)::int                     as cargas_nodo,
+         i.veces::int                                  as intento_veces,
+         i.ultimo                                      as intento_ultimo,
+         i.monto_pedido, i.rechazada                   as fue_rechazada,
+         (coalesce(n.cargas,0) > 0)                    as alguna_vez_cargo
+  from vinc v
+  full join ag  a on a.pc = v.pc and a.u = v.u
+  full join intentos i on i.pc = coalesce(v.pc,a.pc) and i.u = coalesce(v.u,a.u)
+  left join nodo n on n.pc = coalesce(v.pc,a.pc,i.pc) and n.u = coalesce(v.u,a.u,i.u)
+  where coalesce(v.pc, a.pc, i.pc) ~ '^P[0-9]+$'
+    and coalesce(v.u, a.u, i.u) is not null;
+
+  delete from public.rescate_candidatos;
+  insert into public.rescate_candidatos
+    (pc_codigo,u,usuario,telefono,titular,app,valor,ops,ultima,cargas_nodo,
+     intento_veces,intento_ultimo,monto_pedido,fue_rechazada,alguna_vez_cargo)
+  select pc_codigo,u,usuario,tel,titular,app,valor,ops,ultima,cargas_nodo,
+         intento_veces,intento_ultimo,monto_pedido,fue_rechazada,alguna_vez_cargo
+  from _nuevo;
+  get diagnostics v_n = row_count;
+
+  return jsonb_build_object('ok', true, 'candidatos', v_n, 'cuando', now());
+end $function$
 ;

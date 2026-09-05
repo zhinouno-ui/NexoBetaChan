@@ -1,8 +1,14 @@
-// Verifica el token nuevo ANTES de escribir nada:
-//   1. Qué permisos trae y de qué companyId es
-//   2. Baja una muestra de la agenda y compara los teléfonos contra los usuarios de
-//      cada oficina. La que dé alto porcentaje es la cuenta de verdad.
-// Solo GET. No crea nada.
+// Sonda de diagnostico. SOLO GET: no crea, no modifica, no manda mensajes.
+//
+// Sirve para dos cosas:
+//   1. Verificar un token nuevo antes de usarlo (que permisos trae, de que companyId es,
+//      y a que oficina pertenecen los telefonos de su agenda).
+//   2. Averiguar QUE SE PUEDE LEER con ese token. Puntualmente si se pueden traer las
+//      conversaciones: la idea de auditar como responden los operadores depende de eso.
+//      Whaticket documenta webhooks ENTRANTES (n8n -> Whaticket) pero no salientes, asi
+//      que si no se pueden leer los mensajes por API, no hay forma de verlos.
+//
+//   { "pc": "P5" }   por defecto P4
 const B  = "https://api.whaticket.com/api/v1";
 const SB = Deno.env.get("SUPABASE_URL")!;
 const SK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -15,22 +21,66 @@ function datosToken(jwt: string) {
     const pad = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
     const j = JSON.parse(new TextDecoder().decode(
       Uint8Array.from(atob(pad), (c) => c.charCodeAt(0))));
-    return { companyId: j.companyId, scope: j.scope };
+    return { companyId: j.companyId, scope: j.scope, exp: j.exp };
   } catch { return null; }
 }
 
-Deno.serve(async () => {
-  const T = (Deno.env.get("WHATICKET_TOKEN_P4") ?? "").trim();
-  const info = datosToken(T);
+// Prueba un endpoint y cuenta que devolvio, sin volcar datos de clientes.
+async function probar(T: string, ruta: string) {
+  try {
+    const r = await fetch(`${B}${ruta}`, {
+      headers: { Authorization: `Bearer ${T}`, Accept: "application/json" },
+    });
+    if (!r.ok) {
+      let e = ""; try { e = String((await r.json())?.error ?? "").slice(0, 90); } catch { /* */ }
+      return { ruta, status: r.status, error: e || null };
+    }
+    const j = await r.json();
+    // La forma de la respuesta cambia segun el endpoint: array suelto, {tickets}, {data}...
+    const lista = Array.isArray(j) ? j
+      : (j.tickets ?? j.messages ?? j.contacts ?? j.whatsapps ?? j.data ?? null);
+    const campos = Array.isArray(lista) && lista.length
+      ? Object.keys(lista[0] ?? {}).sort() : Object.keys(j ?? {}).sort();
+    return {
+      ruta, status: 200,
+      cuantos: Array.isArray(lista) ? lista.length : null,
+      campos: campos.slice(0, 25),
+    };
+  } catch (e) { return { ruta, error: String(e).slice(0, 80) }; }
+}
 
-  // Muestra de la agenda: 5 páginas alcanzan para identificar la cuenta.
+Deno.serve(async (req) => {
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* */ }
+  const pc = String(body.pc ?? "P4").toUpperCase();
+
+  const T = (Deno.env.get(`WHATICKET_TOKEN_${pc}`) ?? "").trim();
+  if (!T) return Response.json({ ok: false, error: `Falta WHATICKET_TOKEN_${pc}` }, { status: 400 });
+
+  // Lo que interesa saber: ¿se pueden LEER conversaciones? Si /tickets y /messages
+  // contestan 200, se pueden traer por consulta y no hace falta ningun webhook.
+  const rutas = [
+    "/contacts?pageNumber=1",
+    "/whatsapps",
+    "/tickets",
+    "/tickets?pageNumber=1",
+    "/messages",
+    "/queues",
+    "/users",
+  ];
+  const endpoints = [];
+  for (const r of rutas) {
+    endpoints.push(await probar(T, r));
+    await new Promise((s) => setTimeout(s, 150));
+  }
+
+  // De paso: ¿de que oficina es la agenda? (el candado de siempre)
   const tels: string[] = [];
-  let estadoLineas: unknown = null;
-  for (let p = 1; p <= 5; p++) {
+  for (let p = 1; p <= 3; p++) {
     const r = await fetch(`${B}/contacts?pageNumber=${p}`, {
       headers: { Authorization: `Bearer ${T}`, Accept: "application/json" },
     });
-    if (!r.ok) { tels.push(`__error_${r.status}__`); break; }
+    if (!r.ok) break;
     const j = await r.json();
     for (const c of (j.contacts ?? [])) {
       const t = String(c.number ?? "").replace(/\D/g, "").slice(-10);
@@ -38,32 +88,6 @@ Deno.serve(async () => {
     }
     await new Promise((s) => setTimeout(s, 150));
   }
-
-  // De paso, ¿ahora sí anda read:whatsapps?
-  try {
-    const r = await fetch(`${B}/whatsapps`, {
-      headers: { Authorization: `Bearer ${T}`, Accept: "application/json" },
-    });
-    if (r.ok) {
-      const j = await r.json();
-      const lista = Array.isArray(j) ? j : (j.whatsapps ?? j.data ?? []);
-      const campos = new Set<string>();
-      for (const x of lista) for (const k of Object.keys(x ?? {})) campos.add(k);
-      const est: Record<string, number> = {};
-      for (const k of [...campos].filter((c) => /status|state|connect/i.test(c))) {
-        for (const x of lista) {
-          const v = String((x as Record<string, unknown>)[k] ?? "?").slice(0, 24);
-          est[`${k}=${v}`] = (est[`${k}=${v}`] ?? 0) + 1;
-        }
-      }
-      estadoLineas = { lineas: lista.length, campos: [...campos].sort(), estados: est };
-    } else {
-      let e = ""; try { e = String((await r.json())?.error ?? ""); } catch { /* */ }
-      estadoLineas = `${r.status} ${e}`;
-    }
-  } catch (e) { estadoLineas = String(e).slice(0, 60); }
-
-  // ¿De qué oficina son esos teléfonos?
   let pertenece: unknown = "(no se pudo calcular)";
   try {
     const r = await fetch(`${SB}/rest/v1/rpc/whaticket_identificar_oficina`, {
@@ -72,13 +96,12 @@ Deno.serve(async () => {
       body: JSON.stringify({ p_telefonos: tels }),
     });
     if (r.ok) pertenece = await r.json();
-    else pertenece = `${r.status} ${(await r.text()).slice(0, 120)}`;
-  } catch (e) { pertenece = String(e).slice(0, 80); }
+  } catch (_e) { /* */ }
 
   return Response.json({
-    token: info,
-    telefonos_de_muestra: tels.length,
+    pc,
+    token: datosToken(T),
     a_que_oficina_pertenece: pertenece,
-    read_whatsapps: estadoLineas,
+    endpoints,
   });
 });
