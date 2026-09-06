@@ -1,9 +1,18 @@
 {
   "name": "nodo-operativo",
-  "version": "1.1.84",
+  "version": "1.1.85",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
+    "panel:build": "node scripts/build-panel.cjs",
+    "panel:check": "node scripts/build-panel.cjs --check",
+    "panel:smoke": "node scripts/smoke-panel.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "prestart": "npm run panel:build",
+    "predev": "npm run panel:build",
+    "prebuild": "npm run panel:build",
+    "prebuild:win": "npm run panel:build",
+    "prerelease": "npm run panel:build",
     "start": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --remote-debugging-port=9222",
     "dev": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --dev --remote-debugging-port=9222",
     "build": "electron-builder",
@@ -30,6 +39,8 @@
     ],
     "files": [
       "main.js",
+      "main/**/*",
+      "renderer/generated/**/*",
       "app-preload.js",
       "agent-preload.js",
       "agent-preload-bet300.js",

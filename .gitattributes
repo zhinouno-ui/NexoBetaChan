@@ -1,0 +1,5 @@
+# El ensamblado conserva los saltos CRLF del panel original en cada plataforma.
+renderer/**/*.js text eol=crlf
+renderer/**/*.css text eol=crlf
+renderer/*.html text eol=crlf
+*.htm text eol=crlf

@@ -14,7 +14,7 @@
 <title>NODO · OPERATIVO LITE</title>
 <link rel="icon" href="icons/icon-n.png">
 
-<link rel="stylesheet" href="renderer/generated/css-base.css">
+<style>{{nodo:css:base}}</style>
 </head>
 
 <body>
@@ -557,14 +557,10 @@
      el bloque entero muere y TODOS los let/const globales quedan en TDZ: la app arranca
      "viva" pero cada función explota con "Cannot access X before initialization". -->
 <script src="node_modules/@supabase/supabase-js/dist/umd/supabase.js"></script>
-<script>
-  if(!(window.supabase && window.supabase.createClient)){
-    document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/scr'+'ipt>');
-  }
-</script>
+<script>{{nodo:js:supabase-fallback}}</script>
 
-<script src="renderer/generated/js-modules.js"></script>
-<script src="renderer/generated/js-core.js"></script>
+<script>{{nodo:js:modules}}</script>
+<script>{{nodo:js:core}}</script>
 
 
 
@@ -572,81 +568,81 @@
    V15.4 PLUS · Portal + Chat bridge
    Agregado sin tocar core Chunior/Agentes/Operación rápida.
    ============================================================ -->
-<link rel="stylesheet" href="renderer/generated/css-portal.css">
+<style>{{nodo:css:portal}}</style>
 
-<script src="renderer/generated/js-portal-modules.js"></script>
-<script src="renderer/generated/js-portal-bridge.js"></script>
-
-
-<script src="renderer/generated/js-billeteras-rail.js"></script>
-
-<script src="renderer/generated/js-chat-render.js"></script>
+<script>{{nodo:js:portal-modules}}</script>
+<script>{{nodo:js:portal-bridge}}</script>
 
 
+<script>{{nodo:js:billeteras-rail}}</script>
 
-<script src="renderer/generated/js-billeteras-oficina.js"></script>
-
-
-<script src="renderer/generated/js-portal-chat-unificado.js"></script>
-
-<script src="renderer/generated/js-portal-seleccion.js"></script>
+<script>{{nodo:js:chat-render}}</script>
 
 
-<script src="renderer/generated/js-chat-local.js"></script>
+
+<script>{{nodo:js:billeteras-oficina}}</script>
 
 
-<script src="renderer/generated/js-chat-pantalla-completa.js"></script>
+<script>{{nodo:js:portal-chat-unificado}}</script>
+
+<script>{{nodo:js:portal-seleccion}}</script>
 
 
-<script src="renderer/generated/js-chat-ancho.js"></script>
+<script>{{nodo:js:chat-local}}</script>
 
 
-<script src="renderer/generated/js-chat-actualizar-solicitud.js"></script>
+<script>{{nodo:js:chat-pantalla-completa}}</script>
 
 
-<script src="renderer/generated/js-chat-apertura.js"></script>
+<script>{{nodo:js:chat-ancho}}</script>
 
 
-<script src="renderer/generated/js-chat-hilos.js"></script>
+<script>{{nodo:js:chat-actualizar-solicitud}}</script>
 
 
-<script src="renderer/generated/js-chat-no-leidos.js"></script>
+<script>{{nodo:js:chat-apertura}}</script>
 
 
-<script src="renderer/generated/js-chat-estabilidad.js"></script>
+<script>{{nodo:js:chat-hilos}}</script>
 
 
-<script src="renderer/generated/js-historial-filtros.js"></script>
+<script>{{nodo:js:chat-no-leidos}}</script>
 
 
-<script src="renderer/generated/js-chat-macros.js"></script>
+<script>{{nodo:js:chat-estabilidad}}</script>
 
 
-<script src="renderer/generated/js-chat-macros-visibles.js"></script>
+<script>{{nodo:js:historial-filtros}}</script>
 
 
-<script src="renderer/generated/js-jugadores-crm.js"></script>
+<script>{{nodo:js:chat-macros}}</script>
 
 
-<link id="nodoBasePilotoCss" rel="stylesheet" href="renderer/generated/css-piloto.css">
-
-<script id="nodoBasePilotoJs" src="renderer/generated/js-piloto.js"></script>
+<script>{{nodo:js:chat-macros-visibles}}</script>
 
 
-<link id="nodoValidacionSoftCss" rel="stylesheet" href="renderer/generated/css-validacion.css">
-
-<link id="nodoChatMin" rel="stylesheet" href="renderer/generated/css-chat-minimizado.css">
-
-<link id="nodoEstetica" rel="stylesheet" href="renderer/generated/css-estetica.css">
-
-<script id="nodoValidacionSoftJs" src="renderer/generated/js-validacion-cola.js"></script>
+<script>{{nodo:js:jugadores-crm}}</script>
 
 
-<script id="nodoValidacionScopeStrictJs" src="renderer/generated/js-validacion-scope.js"></script>
+<style id="nodoBasePilotoCss">{{nodo:css:piloto}}</style>
+
+<script id="nodoBasePilotoJs">{{nodo:js:piloto}}</script>
 
 
-<script id="nodoValidacionPcDetectFixFinal" src="renderer/generated/js-validacion-pc.js"></script>
+<style id="nodoValidacionSoftCss">{{nodo:css:validacion}}</style>
 
-<script id="v15BotonesChatInicio" src="renderer/generated/js-chat-inicio-botones.js"></script>
+<style id="nodoChatMin">{{nodo:css:chat-minimizado}}</style>
+
+<style id="nodoEstetica">{{nodo:css:estetica}}</style>
+
+<script id="nodoValidacionSoftJs">{{nodo:js:validacion-cola}}</script>
+
+
+<script id="nodoValidacionScopeStrictJs">{{nodo:js:validacion-scope}}</script>
+
+
+<script id="nodoValidacionPcDetectFixFinal">{{nodo:js:validacion-pc}}</script>
+
+<script id="v15BotonesChatInicio">{{nodo:js:chat-inicio-botones}}</script>
 
 </body></html>

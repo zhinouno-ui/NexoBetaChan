@@ -1,0 +1,8 @@
+
+/* Minimizar la bandeja de chat (solo desktop): oculta el panel y el main ocupa todo el ancho,
+   para ver bien el historial. Se restaura tocando "Chat" en el menú. No afecta a mobile. */
+@media(min-width:1101px){
+  body.chat-min .layout{ grid-template-columns:66px minmax(0,1fr)!important; padding:9px!important; }
+  body.chat-min .main{ grid-column:2!important; }
+  body.chat-min #viewChat{ display:none!important; }
+}

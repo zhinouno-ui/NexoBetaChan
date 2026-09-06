@@ -42,6 +42,7 @@ portal.html
 portal.zip
 sw.js
 manifest.json
+!renderer/manifest.json
 vercel.json
 api/
 importar-whaticket.js

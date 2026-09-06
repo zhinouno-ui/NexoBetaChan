@@ -1,0 +1,79 @@
+
+/* ============================================================
+   NODO · BASE PILOTO OPERATIVO · CSS FINAL
+   Limpieza visual sin tocar motor.
+   ============================================================ */
+:root{
+  --prod-bg:#070a0f;
+  --prod-panel:#101621;
+  --prod-card:#121926;
+  --prod-card2:#161e2d;
+  --prod-line:rgba(255,255,255,.09);
+  --prod-muted:#9aa6b8;
+}
+body{background:var(--prod-bg)!important}
+.card,.stat-card,.chat-list,.chat-panel,.wallet-card,.bil-mini-card{box-shadow:0 8px 28px rgba(0,0,0,.18)}
+.card-title{letter-spacing:-.2px}
+#viewInicio .top-grid{gap:8px!important;margin-bottom:9px!important}
+#viewInicio .stat-card{min-height:82px!important;padding:10px 12px!important}
+#viewInicio .stat-title{font-size:11px!important;margin-bottom:5px!important}
+#viewInicio .stat-value{font-size:22px!important;line-height:1.05!important}
+#viewInicio .stat-sub{font-size:11px!important}
+#billerasInicioGrid{scrollbar-width:thin}
+#billerasInicioGrid .bil-mini-card{transition:.15s ease}
+#billerasInicioGrid .bil-mini-card:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.16)!important}
+.hist-filters{background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:9px}
+.hist-filters select,.hist-filters input{border:1px solid rgba(255,255,255,.08)!important}
+#histFilterSummary,#histFilterTotal{opacity:.95}
+#viewChat{background:rgba(16,22,33,.96)!important}
+#viewChat .chat-layout{background:#0b0f17!important}
+#viewChat .chat-list,#viewChat .chat-panel{background:#0d131d!important}
+#chatList{background:#0d131d!important}
+.chat-head,.chat-list-head{background:#121a29!important}
+.chat-body,#chatBody{background:#080d14!important}
+.wq2-wrap{background:#0d131d!important}
+.wq2-item{transition:.12s ease}
+.wq2-item:hover{background:#142032!important}
+body.nodo-chat-open #viewChat .chat-layout{display:block!important;width:100%!important;height:calc(100% - 67px)!important}
+body.nodo-chat-open #viewChat .chat-list{display:none!important}
+body.nodo-chat-open #viewChat .chat-panel{display:flex!important;flex-direction:column!important;width:100%!important;height:100%!important;min-height:unset!important}
+body.nodo-chat-open #chatBody{flex:1 1 0!important;width:100%!important;min-height:0!important;max-height:none!important;overflow-y:auto!important}
+body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!important}
+#nodoMacroVisibleBar{display:flex!important;gap:8px;margin-bottom:8px}
+#nodoMacroBtnVisible{background:#334155!important;color:white!important}
+#viewJugadores .card{background:linear-gradient(180deg,#121926,#0f1520)}
+.crm-table-wrap table th{background:#1b2434!important}
+.mini-btn,.btn,.nav-btn{transition:.14s ease!important}
+.mini-btn:hover,.btn:hover,.nav-btn:hover{filter:brightness(1.08)}
+#nodoPilotoBadge{
+  position:fixed;left:84px;bottom:12px;z-index:9990;
+  background:rgba(18,24,35,.92);border:1px solid rgba(18,183,106,.38);
+  color:#b9f7cb;border-radius:999px;padding:6px 10px;font-size:10px;font-weight:900;
+  box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
+}
+@media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
+/* Qué está haciendo Agentes ahora mismo. Antes el panel contestaba "hay otra operación corriendo"
+   sin decir cuál, desde cuándo, ni cómo salir. Esto aparece solo cuando el agente está tomado. */
+#agentesBadge{position:fixed;left:84px;bottom:46px;z-index:99997;display:none;align-items:center;gap:8px;
+  background:#1b2230;border:1px solid #3a4459;border-radius:999px;padding:6px 10px 6px 12px;
+  font-size:11px;font-weight:700;color:#e6edf3;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#agentesBadge.viejo{border-color:#7a4a1d;background:#2a1f14}
+#agentesBadge .ab-txt{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#agentesBadge .ab-seg{color:#8b949e;font-weight:600}
+#agentesBadge button{background:#3a2027;border:1px solid #5a2a32;color:#ffc8d0;border-radius:999px;
+  font-size:10px;font-weight:800;padding:3px 9px;cursor:pointer}
+#agentesBadge button:hover{background:#4a262f}
+@media(max-width:900px){#agentesBadge{left:12px;bottom:52px}#agentesBadge .ab-txt{max-width:160px}}
+/* ── Barra del chat: UN botón que cambia según dónde estás ───────────────────────────────
+   El estado real de "hay una conversación abierta" es body.nodo-chat-open, que lo pone el puente
+   del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que
+   ese chat NUNCA setea: el botón no cambiaba nunca y encima "← Bandeja" se veía siempre, incluso
+   estando ya en la bandeja, donde no lleva a ningún lado. */
+/* Con una conversación abierta, la cabecera "Chat interno / Bandeja / Marcar leídas" no pinta
+   nada: no estás en la bandeja. Se oculta entera y el volver queda donde ya estaba y funcionaba
+   bien, dentro de la conversación (.nodo-chat-back-hint) — así deja de estar duplicado. */
+body.nodo-chat-open #viewChat > div:first-child{display:none!important}
+/* ── Updater ───────────────────────────────────────────────────────────────────────────────
+   Vuelve a la esquina de arriba a la derecha. Lo único: el borde derecho se apoya en el panel de
+   chat (que arranca donde termina la tarjeta de fichas), así queda justo arriba de "Rechequear",
+   que es espacio libre, y no le pisa nada al chat. Lo calcula _updaterAnclar(). */

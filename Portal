@@ -1,0 +1,2576 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0c">
+<!-- Preconexión temprana a la plataforma (iframe) y a Supabase → arranca DNS/TLS antes de necesitarlos. -->
+<link rel="preconnect" href="https://bet-300.pw">
+<link rel="dns-prefetch" href="https://bet-300.pw">
+<link rel="preconnect" href="https://pjvvyvfcwjoocjqvdror.supabase.co" crossorigin>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BET300">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<title>BET300 · Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+/* ════════════════════════════════════════════════════════════════════════
+   BET300 · Cajero V18 — "Oscuro premium pulido"
+   • Panel a PANTALLA COMPLETA (sin gestos, sin deslizar).
+   • BARRA INFERIOR FIJA: las 5 acciones siempre visibles en toda pantalla.
+   • Estilo nuevo: grafito sólido, dorado sobrio, bordes definidos, tipo grande.
+   • Backend INTACTO: mismas RPC, mismas claves de localStorage, mismo polling.
+   ════════════════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#08080a; --panel:#0e0e12; --surface:#16161c; --surface-2:#1e1e26;
+  --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.13);
+  --text:#f4f4f7; --muted:#8b8b97; --muted-2:#6a6a76;
+  --gold:#e9c25c; --gold-2:#f3d588; --gold-deep:#c79f33;
+  --green:#3ad07f; --green-soft:rgba(58,208,127,.14);
+  --blue:#5b78ff; --danger:#ff5468;
+  --r:16px; --r-sm:12px;
+  --safe-b:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px);
+  --font:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+button,input,textarea{font-family:var(--font)}
+::selection{background:rgba(233,194,92,.28)}
+.hidden{display:none!important}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+#appFrame{position:fixed;inset:0;width:100vw;height:100vh;border:0;background:var(--bg);z-index:1}
+
+/* ── Launcher (FAB premium) ─────────────────────────────────────────────── */
+.launcher{position:fixed;right:18px;bottom:calc(78px + var(--safe-b));z-index:20;border:1px solid var(--gold-deep);cursor:pointer;
+  display:flex;align-items:center;gap:11px;padding:0 18px 0 13px;height:54px;border-radius:14px;
+  background:#121216;color:var(--gold-2);font-weight:800;font-size:14.5px;
+  box-shadow:0 10px 28px rgba(0,0,0,.55);transition:transform .16s,border-color .16s}
+.launcher:hover{transform:translateY(-2px);border-color:var(--gold)}.launcher:active{transform:scale(.97)}
+.launcher .fb-ico{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9px;background:rgba(233,194,92,.14);border:1px solid rgba(233,194,92,.3);font-size:17px}
+.launcher .fb-sub{display:block;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;margin-top:0}
+.launcher .float-badge{position:absolute;top:-6px;right:-6px;min-width:22px;height:22px;border-radius:999px;background:var(--danger);color:#fff;font-size:11px;font-weight:900;display:flex;align-items:center;justify-content:center;padding:0 5px;border:2px solid var(--bg)}
+.launcher.mini{width:54px;padding:0;justify-content:center}
+.launcher.mini .fb-text{display:none}
+.launcher-min{position:fixed;right:13px;bottom:calc(126px + var(--safe-b));z-index:21;width:40px;height:40px;border-radius:999px;border:1px solid var(--gold-deep);background:#1a1a20;color:var(--gold-2);font-size:22px;font-weight:900;line-height:36px;text-align:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);padding:0}
+.launcher-min:active{transform:scale(.92)}
+/* Dock colapsable: esconde los botones del portal (Pantalla completa + Cajero) detrás del handle
+   para no tapar la vista del juego. El iframe es cross-origin → no se puede autodetectar el juego,
+   así que arranca COLAPSADO y se auto-oculta; un toque en el handle los muestra. */
+#fullscreenBtn,#floatBtn{transition:opacity .22s,transform .22s}
+body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;pointer-events:none;transform:translateY(16px) scale(.9)}
+.launcher-min.has-unread::after{content:"";position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:999px;background:var(--danger);border:2px solid var(--bg)}
+/* Botón "pantalla completa": abre la plataforma en pestaña propia (first-party) para que las
+   imágenes carguen en TODOS los navegadores (Safari/Samsung/Firefox cortan las cookies de
+   terceros dentro del iframe). Bottom-left para no chocar con el launcher del cajero. */
+.fullscreen-btn{position:fixed;left:14px;bottom:calc(78px + var(--safe-b));z-index:20;display:flex;align-items:center;gap:6px;padding:9px 13px;border-radius:999px;border:1px solid var(--gold-deep);background:#1a1a20;color:var(--gold-2);font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5);text-decoration:none}
+.fullscreen-btn:active{transform:scale(.96)}
+.fullscreen-btn .fs-ico{font-size:15px;line-height:1}
+/* Launcher auto-detectado: pantalla de entrada para navegadores que rompen las imágenes del
+   iframe (iPhone/Safari, Samsung Internet, Firefox). Los manda a pantalla completa (first-party)
+   y deja el cajero a un toque, así no ven el iframe con imágenes rotas ("rechazo visual"). */
+.launcher-overlay{position:fixed;inset:0;z-index:40;background:radial-gradient(120% 100% at 50% 0%,#15161d,#0a0a0e 70%);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:30px 24px;text-align:center}
+.launcher-overlay.show{display:flex}
+.lo-logo{font-size:14px;font-weight:900;letter-spacing:.6px;color:var(--gold-2)}
+.lo-title{font-size:22px;font-weight:900;color:var(--text);line-height:1.22;max-width:340px}
+.lo-sub{font-size:13px;color:var(--muted);max-width:320px;line-height:1.5;margin-bottom:6px}
+.lo-btn{width:100%;max-width:340px;padding:16px;border-radius:14px;border:1px solid var(--gold-deep);background:var(--gold);color:#1a1a20;font-size:16px;font-weight:900;cursor:pointer}
+.lo-btn:active{transform:scale(.98)}
+.lo-btn.sec{background:var(--surface-2);color:var(--gold-2)}
+.lo-dismiss{margin-top:4px;background:none;border:0;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer}
+
+/* ── Scrim (solo desktop) ───────────────────────────────────────────────── */
+.scrim{position:fixed;inset:0;z-index:25;background:rgba(3,3,6,.6);opacity:0;pointer-events:none;transition:opacity .26s}
+.scrim.show{opacity:1;pointer-events:auto}
+
+/* ── Panel a pantalla completa ──────────────────────────────────────────── */
+.panel{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--panel);
+  transform:translateY(100%);visibility:hidden;transition:transform .3s cubic-bezier(.22,.9,.28,1),visibility 0s linear .3s}
+.panel.open{transform:none;visibility:visible;transition:transform .32s cubic-bezier(.22,.9,.28,1)}
+
+/* Header */
+.panel-head{flex-shrink:0;display:flex;align-items:center;gap:12px;
+  padding:calc(13px + var(--safe-t)) 14px 13px;border-bottom:1px solid var(--line);background:#0c0c10}
+.head-avatar{width:42px;height:42px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:#15151a;border:1px solid var(--gold-deep);color:var(--gold-2);font-weight:900;font-size:12px;letter-spacing:.5px}
+.head-info{flex:1;min-width:0}
+.brand-logo{font-size:16.5px;font-weight:900;letter-spacing:-.2px;line-height:1.1}.brand-logo span:first-child{color:var(--gold-2)}
+.head-sub{font-size:11.5px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:6px}
+.head-sub .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(58,208,127,.16)}
+.icon-btn{border:1px solid var(--line);background:#15151a;color:#cfcfd8;border-radius:10px;width:40px;height:40px;cursor:pointer;font-size:20px;line-height:1;transition:background .15s,transform .12s;flex-shrink:0}
+.icon-btn:hover{background:#20202a}.icon-btn:active{transform:scale(.92)}
+
+#connBanner{background:#2a0d11;color:#ffb3bd;font-size:12px;font-weight:700;padding:9px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,84,104,.25);flex-shrink:0}
+
+/* Cuerpo (pantallas) */
+.panel-body{flex:1;position:relative;overflow:hidden}
+.screen{position:absolute;inset:0;overflow-y:auto;padding:18px;padding-bottom:24px;background:var(--panel)}
+.screen::-webkit-scrollbar{width:8px}.screen::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+.screen.in{animation:fadeIn .22s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+#screenChat{padding:0;display:flex;flex-direction:column}
+.screen-title{font-size:21px;font-weight:900;letter-spacing:-.4px;margin-bottom:6px}
+.screen-desc{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px}
+
+/* ── BARRA INFERIOR FIJA (siempre visible) ──────────────────────────────── */
+.panel-nav{flex-shrink:0;display:flex;background:#0a0a0d;border-top:1px solid var(--line-2);padding-bottom:var(--safe-b)}
+.nav-item{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:11px 2px 9px;border:none;background:none;color:var(--muted-2);font-size:11px;font-weight:800;cursor:pointer;transition:color .15s}
+.nav-item .n-ico{font-size:21px;line-height:1;filter:grayscale(.4);opacity:.85;transition:.15s}
+.nav-item:hover{color:var(--muted)}
+.nav-item.active{color:var(--gold-2)}
+.nav-item.active .n-ico{filter:none;opacity:1;transform:translateY(-1px)}
+.nav-item.active::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);width:30px;height:3px;border-radius:0 0 4px 4px;background:var(--gold)}
+.nav-item .badge{position:absolute;top:5px;right:calc(50% - 22px);min-width:18px;height:18px;border-radius:999px;background:var(--danger);color:#fff;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center;padding:0 5px;border:2px solid #0a0a0d}
+
+/* ── Inicio: login ──────────────────────────────────────────────────────── */
+.gate-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(233,194,92,.1);border:1px solid rgba(233,194,92,.28);color:var(--gold-2);border-radius:999px;padding:7px 13px;font-size:12px;font-weight:800;margin-bottom:16px}
+.gate-title{font-weight:900;font-size:24px;letter-spacing:-.5px;margin-bottom:10px}
+.gate-txt{font-size:14px;color:#c9c9d2;line-height:1.55;margin-bottom:18px}
+.trust-row{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.trust{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#b3b3bf;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 11px}
+.flow-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:14px}
+
+/* ── Inicio: dashboard ──────────────────────────────────────────────────── */
+.greet{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.greet-hi{font-size:13px;color:var(--muted);font-weight:700}
+.greet-user{font-size:20px;font-weight:900;letter-spacing:-.3px;margin-top:3px;display:flex;align-items:center;gap:8px}
+.link-btn{border:1px solid var(--line);background:var(--surface);color:var(--gold-2);font-size:12.5px;font-weight:800;cursor:pointer;padding:8px 12px;border-radius:10px;transition:.15s}
+.link-btn:hover{background:#20202a}
+.section-label{font-size:12px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin:6px 2px 11px}
+
+.big-btn{width:100%;display:flex;align-items:center;gap:14px;text-align:left;cursor:pointer;
+  border:1px solid var(--line-2);background:var(--surface);color:var(--text);border-radius:var(--r);padding:17px 15px;margin-bottom:12px;
+  transition:transform .14s,border-color .14s,background .14s}
+.big-btn:hover{background:#1b1b22;border-color:var(--line-2)}.big-btn:active{transform:scale(.99)}
+.big-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.big-btn.gold{border-color:rgba(233,194,92,.4);background:linear-gradient(180deg,#1a160e,#15151a)}
+.big-btn.gold .bb-ico{background:rgba(233,194,92,.16);border-color:rgba(233,194,92,.45);color:var(--gold-2)}
+.big-btn.green{border-color:rgba(58,208,127,.35)}
+.big-btn.green .bb-ico{background:var(--green-soft);border-color:rgba(58,208,127,.4);color:var(--green)}
+.bb-ico{width:50px;height:50px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:25px;background:rgba(255,255,255,.05);border:1px solid var(--line);flex-shrink:0}
+.bb-tx{flex:1;min-width:0;font-weight:800;font-size:16.5px}.bb-tx small{display:block;color:var(--muted);font-weight:600;font-size:12.5px;margin-top:3px;line-height:1.35}
+.bb-arrow{color:var(--muted-2);font-size:24px;flex-shrink:0}
+
+.row-btn{width:100%;display:flex;align-items:center;gap:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:var(--r);padding:15px;font-weight:800;font-size:14.5px;cursor:pointer;transition:.14s}
+.row-btn:hover{background:#1b1b22}.row-btn .rb-ico{font-size:19px}.row-btn .rb-arrow{margin-left:auto;color:var(--muted-2);font-size:22px}
+
+.pending-banner{display:flex;align-items:center;gap:12px;cursor:pointer;
+  background:#1a160e;border:1px solid rgba(233,194,92,.4);border-radius:var(--r);padding:15px;margin-bottom:16px}
+.pending-banner .pb-ico{width:42px;height:42px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;background:rgba(233,194,92,.14);border:1px solid rgba(233,194,92,.35)}
+.pending-title{font-weight:900;color:var(--gold-2);font-size:14.5px;display:flex;align-items:center;gap:7px}
+.pending-text{font-size:12.5px;color:#cfcfd8;margin-top:3px;line-height:1.4}
+.pending-banner .chev{margin-left:auto;font-size:24px;color:var(--gold-2)}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);animation:pulse 1.5s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(233,194,92,.5)}70%{box-shadow:0 0 0 7px rgba(233,194,92,0)}100%{box-shadow:0 0 0 0 rgba(233,194,92,0)}}
+
+/* ── Formularios ────────────────────────────────────────────────────────── */
+.user-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line-2);color:var(--gold-2);border-radius:10px;padding:8px 13px;font-size:13px;font-weight:800;margin-bottom:14px}
+.form-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+/* Aclaración bajo un campo que se presta a confusión. Chica y gris: guía sin gritar. */
+.campo-ayuda{font-size:11.5px;color:#8b8b97;margin:-6px 0 12px;padding-left:2px}
+/* El botón de enviar quedaba a 187px por debajo del pliegue: había que descubrir que se
+   scrollea. Pegado al fondo del área que scrollea (no a la ventana), así nunca tapa la barra
+   de abajo. El degradado deja ver que hay contenido pasando por detrás. */
+.acciones-fijas{position:sticky;bottom:-16px;display:flex;flex-direction:column;gap:9px;
+  padding:10px 0 16px;margin-top:4px;
+  background:linear-gradient(to bottom,transparent,var(--surface) 22%,var(--surface))}
+.acciones-fijas .action-btn{margin-top:0}
+/* "Necesito ayuda" era un botón del mismo peso que el de enviar y ocupaba 65px compitiendo
+   con la acción principal. Como enlace pesa 22px y se entiende igual. */
+.link-btn{background:none;border:0;color:var(--gold-2);font-size:13px;font-weight:800;
+  padding:4px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.link-btn:active{opacity:.6}
+label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#a3a3b0;font-weight:800;margin-bottom:7px}
+input,textarea{width:100%;border:1px solid var(--line-2);background:#0c0c11;color:var(--text);border-radius:var(--r-sm);padding:14px;font-size:16px;margin-bottom:12px;transition:border-color .15s,box-shadow .15s}
+input::placeholder,textarea::placeholder{color:#56565f}
+input:focus,textarea:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(233,194,92,.14)}
+/* Campo que falta completar. Antes solo salía un cartelito abajo que duraba 2,4 s: la persona
+   no sabía CUÁL faltaba. Ahora se marca el campo y se lo lleva a la vista.
+   La sacudida es corta y una sola vez — con "reducir movimiento" del sistema no corre (línea 43). */
+input.falta{border-color:#e5484d;box-shadow:0 0 0 3px rgba(229,72,77,.16);animation:sacudir .3s ease}
+@keyframes sacudir{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+textarea{resize:vertical;min-height:76px}
+/* ── Titular pre-rellenado ────────────────────────────────────────────────
+   El campo trae puesto el titular de la vez pasada. Tiene que leerse como
+   "esto ya está listo", NO como un error ni como un placeholder gris que no se
+   sabe si cuenta. Por eso: texto en blanco pleno (es un valor real, no una
+   sugerencia), un fondo verde muy tenue y la marca "✓ Guardado" adentro del
+   campo. Al tocarlo se vacía y todo eso desaparece: queda un campo común. */
+.titular-wrap{position:relative}
+.titular-wrap input{margin-bottom:0}
+input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.42);
+  color:#fff;font-weight:700;padding-right:104px}
+/* Botón real, no un cartelito pasivo. "Volvé a tocar el campo" obliga a adivinar que el campo
+   hace algo al tocarlo — nadie lo descubre, menos alguien grande. Un botón que dice CAMBIAR se
+   entiende sin explicación. 44px de alto: se toca con el pulgar sin errarle. */
+.titular-cambiar{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  min-height:38px;background:rgba(255,255,255,.06);border:1px solid var(--line-2);
+  color:var(--gold-2);border-radius:10px;padding:0 14px;font-size:13px;font-weight:800;
+  cursor:pointer;font-family:inherit;white-space:nowrap}
+.titular-cambiar:active{transform:translateY(-50%) scale(.94)}
+.titular-aviso{font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,.09);
+  border:1px solid rgba(251,191,36,.28);border-radius:9px;padding:7px 9px;margin:8px 0 0}
+.muted-line{color:var(--muted);font-size:13px;padding:8px 0}
+.welcome-txt{font-size:13.5px;color:#c9c9d2;line-height:1.55}
+
+/* Una sola fila que se desliza, en vez de dos que se apilan: ahorra ~44px y con eso el campo
+   del titular sube por encima del pliegue. Se corta el scrollbar porque en el teléfono estorba. */
+.chips{display:flex;flex-wrap:nowrap;gap:8px;margin:-2px 0 12px;overflow-x:auto;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.chips::-webkit-scrollbar{display:none}
+.chips .chip{flex:0 0 auto}
+.chip{border:1px solid var(--line-2);background:#101015;color:#e2e2ea;border-radius:10px;padding:10px 14px;font-size:13.5px;font-weight:800;cursor:pointer;transition:.14s}
+.chip:hover{border-color:var(--gold-deep);color:var(--gold-2)}.chip:active{transform:scale(.96)}
+.chip.on{background:rgba(233,194,92,.14);border-color:var(--gold);color:var(--gold-2)}
+
+.action-btn{width:100%;border:1px solid var(--gold-deep);border-radius:var(--r-sm);padding:16px;font-weight:900;font-size:15.5px;cursor:pointer;margin-top:2px;
+  background:var(--gold);color:#1a1500;transition:transform .14s,filter .14s,background .14s}
+.action-btn:hover{filter:brightness(1.05)}
+/* El hundido era de .985: en un celular no se percibe y la gente toca dos veces porque no sabe
+   si registró. .955 con una transición corta se siente sin verse aparatoso. */
+.action-btn{transition:transform .09s ease,filter .15s,opacity .15s}
+.action-btn:active{transform:scale(.955)}
+.action-btn:disabled{opacity:.55;cursor:default;transform:none}
+.chip{transition:transform .09s ease,background .14s,border-color .14s}
+.chip:active{transform:scale(.93)}
+.copy-btn:active{transform:scale(.9)}
+.secondary-btn{background:var(--surface);color:var(--text);border:1px solid var(--line-2)}.secondary-btn:hover{background:#20202a;filter:none}
+
+/* ── Transferencia ──────────────────────────────────────────────────────── */
+.transfer-card{background:var(--surface);border:1px solid rgba(233,194,92,.4);border-radius:var(--r);padding:15px;margin-bottom:14px}
+.transfer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:13px}
+.transfer-title{font-weight:900;color:var(--gold-2);font-size:15.5px}
+.share-btn{border:1px solid rgba(233,194,92,.4);background:rgba(233,194,92,.1);color:var(--gold-2);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;transition:.14s}
+.share-btn:hover{background:rgba(233,194,92,.18)}.share-btn:active{transform:scale(.95)}
+.transfer-field{background:#0c0c11;border-radius:12px;padding:9px 11px;margin-bottom:7px;border:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.transfer-field .tf-main{flex:1;min-width:0}
+.transfer-label{font-size:10px;color:#8b8b97;text-transform:uppercase;font-weight:800;letter-spacing:.5px;margin-bottom:4px}
+.transfer-value{font-size:15.5px;font-weight:800;color:#fff;word-break:break-all}
+/* Copiar es LA acción de esta pantalla: la persona viene a buscar el alias y el CBU para
+   llevárselos al banco. El botón era chico y del mismo gris que el fondo. Ahora tiene el borde
+   dorado de la marca, 46px de alto (pulgar, no uña) y no compite con nada más de la tarjeta. */
+.copy-btn{flex-shrink:0;border:1px solid rgba(233,194,92,.45);border-radius:10px;
+  background:rgba(233,194,92,.12);color:var(--gold-2);padding:0 16px;min-height:46px;
+  font-size:13.5px;font-weight:800;cursor:pointer;transition:.14s}
+.copy-btn:hover{background:#2a2a36}.copy-btn.done{background:var(--green);border-color:var(--green);color:#04210f}.copy-btn:active{transform:scale(.94)}
+/* El titular de NUESTRA cuenta: dato de referencia, no algo para copiar al formulario.
+   Antes era un campo igual a los demás y la gente lo confundía con el titular que se le pide. */
+/* Plegada: quedan el título y el botón para reabrirla. De 237px a ~70px, y el formulario
+   entero sube por encima del pliegue justo cuando la persona vuelve del banco a completarlo. */
+.transfer-card.plegada .transfer-field,
+.transfer-card.plegada .transfer-owner{display:none}
+.transfer-card.plegada .transfer-head{margin-bottom:0}
+.ver-datos{margin-top:9px;width:100%;background:none;border:1px dashed var(--line-2);color:#9a9aa6;
+  border-radius:10px;padding:8px;font-size:12.5px;font-weight:800;cursor:pointer}
+.ver-datos:active{opacity:.6}
+.transfer-owner{font-size:12px;color:#8b8b97;margin-top:2px;padding-left:2px;line-height:1.45}
+.transfer-owner b{color:#c9c9d4;font-weight:800}
+.transfer-hint{font-size:12.5px;color:#cdb878;line-height:1.5;margin-top:8px;display:flex;gap:7px}
+
+/* Skeleton */
+.sk{position:relative;overflow:hidden;background:rgba(255,255,255,.05);border-radius:10px}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);animation:shimmer 1.3s infinite}
+@keyframes shimmer{100%{transform:translateX(100%)}}
+.sk-card{border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+.sk-line{height:14px;margin-bottom:11px}.sk-line.lg{height:36px}.sk-line.w60{width:60%}.sk-line.w40{width:40%}.sk-line.w80{width:80%}
+
+/* ── Estado ─────────────────────────────────────────────────────────────── */
+.estado-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:24px 18px;text-align:center}
+.estado-card.pending{border-color:rgba(233,194,92,.4)}
+.estado-card.ok{border-color:rgba(58,208,127,.45)}
+.estado-card.bad{border-color:rgba(255,84,104,.42)}
+.estado-ico{font-size:44px;margin-bottom:12px}
+.estado-h{font-weight:900;font-size:19px;margin-bottom:6px}
+.estado-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+.estado-tx{font-size:13.5px;color:#c9c9d2;line-height:1.55;margin-bottom:16px}
+.estado-live{font-size:12.5px;font-weight:800;color:var(--gold-2);background:rgba(233,194,92,.1);border:1px solid rgba(233,194,92,.28);border-radius:999px;padding:8px 14px;display:inline-flex;align-items:center;gap:8px;margin-bottom:18px}
+.estado-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.estado-actions .action-btn{margin:0}
+.steps{display:flex;align-items:center;gap:6px;justify-content:center;margin:4px 0 18px}
+.step .dot{width:12px;height:12px;border-radius:50%;background:rgba(255,255,255,.16)}
+.step.on .dot{background:var(--gold);box-shadow:0 0 0 4px rgba(233,194,92,.16)}
+.step.done .dot{background:var(--green)}
+.bar{width:28px;height:3px;border-radius:3px;background:rgba(255,255,255,.12)}
+.step.done + .bar{background:var(--green)}
+/* Barra de progreso de retiro parcial (punto 3): pagos por partes de un retiro grande */
+.rp-wrap{margin:12px 0 4px;text-align:left}
+.rp-top{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted);margin-bottom:6px}
+.rp-nums{font-weight:800;color:var(--text);font-size:13px}
+.rp-track{height:12px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+.rp-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--gold-deep),var(--gold));transition:width .6s ease;min-width:6px}
+.rp-pct{font-size:11px;color:var(--gold-2);margin-top:6px;font-weight:700;text-align:center}
+.rp-list{margin-top:11px;display:flex;flex-direction:column;gap:5px}
+.rp-item{display:flex;justify-content:space-between;gap:8px;font-size:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
+.rp-item .rp-m{font-weight:800;color:var(--green);white-space:nowrap}
+.rp-item .rp-f{color:var(--muted)}
+
+/* ── Chat ───────────────────────────────────────────────────────────────── */
+.messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;background:var(--panel)}
+.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+.msg{display:flex;flex-direction:column;margin-bottom:12px;max-width:90%;animation:msgIn .2s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg.bot,.msg.sys{align-items:flex-start;margin-right:auto}.msg.user{align-items:flex-end;margin-left:auto}
+.bubble{padding:12px 14px;border-radius:14px;font-size:14px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+.msg.bot .bubble,.msg.sys .bubble{background:var(--surface-2);color:#eef0f7;border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.user .bubble{background:var(--gold);color:#1a1500;font-weight:600;border-bottom-right-radius:5px}
+.meta{font-size:10.5px;color:var(--muted);padding:4px 5px 0}
+.bubble img.chat-img{max-width:100%;border-radius:10px;margin-top:8px;display:block;cursor:pointer;border:1px solid var(--line-2)}
+.status-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:800;background:rgba(233,194,92,.14);color:var(--gold-2);border:1px solid rgba(233,194,92,.3);margin:8px 0 2px}
+
+/* Compose */
+.widget-compose{flex-shrink:0;border-top:1px solid var(--line);background:#0c0c10;padding:11px 12px;display:grid;grid-template-columns:44px 1fr 46px;gap:9px;align-items:end}
+#freeInput{min-height:44px;height:44px;max-height:96px;overflow:auto;margin:0;resize:none;border-radius:12px;font-size:16px;padding:11px 13px}
+.send-btn{height:44px;width:46px;padding:0;border:1px solid var(--gold-deep);border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--gold);color:#1a1500;transition:transform .14s}
+.send-btn:active{transform:scale(.92)}
+.clip-btn{height:44px;width:44px;padding:0;border:1px solid var(--line);border-radius:12px;background:#15151a;color:#aeb3c6;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:.15s}
+.clip-btn:hover{background:#20202a}
+#imgPreviewBar{display:flex;align-items:center;background:#0c0c10;padding:8px 12px;border-top:1px solid var(--line);flex-shrink:0}
+#imgPreviewBar .img-bar-inner{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 9px;width:100%}
+#imgPreviewBar img{width:36px;height:36px;object-fit:cover;border-radius:8px;flex-shrink:0}
+#imgPreviewBar span{font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#imgPreviewBar button{border:none;background:none;color:var(--muted);cursor:pointer;font-size:21px;line-height:1;padding:0 2px;flex-shrink:0}
+
+/* Toast */
+.toast{position:fixed;left:50%;bottom:calc(86px + var(--safe-b));transform:translateX(-50%) translateY(10px);z-index:60;background:#16161c;color:#fff;border:1px solid var(--line-2);box-shadow:0 16px 40px rgba(0,0,0,.6);padding:14px 18px;border-radius:12px;font-weight:800;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:320px;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── Desktop: panel acotado a la derecha ────────────────────────────────── */
+@media(min-width:760px){
+  .panel{left:auto;right:24px;top:auto;bottom:24px;width:420px;height:min(720px,calc(100vh - 48px));
+    border:1px solid var(--line-2);border-radius:20px;overflow:hidden;
+    transform:translateY(calc(100% + 24px))}
+  .panel.open{transform:none}
+  .panel-head{padding-top:15px}
+}
+</style>
+</head>
+<body>
+<iframe id="appFrame" src="https://bet-300.pw" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+
+<button id="floatBtn" class="launcher" onclick="toggleWidget(true)" aria-label="Abrir cajero y soporte">
+  <span class="fb-ico">💬</span>
+  <span class="fb-text">Cajero<span class="fb-sub">Cargas · Retiros · Ayuda</span></span>
+  <span id="floatUnread" class="float-badge hidden">0</span>
+</button>
+<button id="floatMin" class="launcher-min" onclick="toggleDock(event)" aria-label="Mostrar u ocultar los botones del cajero" title="Mostrar / ocultar botones">⋯</button>
+<!-- Botón "Pantalla completa": link DIRECTO a la plataforma (first-party, pestaña propia).
+     Es un <a> puro, no window.open → ningún bloqueador de popups lo frena.
+     El overlay auto-detectado de iPhone NO vuelve: tapaba el iframe y confundía. -->
+<a id="fullscreenBtn" class="fullscreen-btn" href="https://bet-300.pw" target="_blank" rel="noopener"
+   aria-label="Abrir la plataforma a pantalla completa" title="Abrir la plataforma a pantalla completa">
+  <span class="fs-ico">⛶</span><span>Pantalla completa</span>
+</a>
+
+<div id="scrim" class="scrim" onclick="toggleWidget(false)"></div>
+
+<section id="widget" class="panel" role="dialog" aria-modal="true" aria-label="Cajero BET300">
+  <div class="panel-head">
+    <button id="backBtn" class="icon-btn hidden" onclick="goHome()" aria-label="Volver">←</button>
+    <div class="head-avatar">B300</div>
+    <div class="head-info">
+      <div class="brand-logo"><span>BET</span>300 · Cajero</div>
+      <div class="head-sub"><span class="dot"></span> En línea · respondemos al instante</div>
+    </div>
+    <button class="icon-btn" onclick="toggleWidget(false)" aria-label="Cerrar">×</button>
+  </div>
+
+  <div id="connBanner" style="display:none"><span>⚠</span><span>Sin conexión · Reconectando...</span></div>
+
+  <div class="panel-body">
+    <div id="screenHome"   class="screen"></div>
+    <div id="screenCarga"  class="screen hidden"></div>
+    <div id="screenRetiro" class="screen hidden"></div>
+    <div id="screenClave"  class="screen hidden"></div>
+    <div id="screenEstado" class="screen hidden"></div>
+    <div id="screenChat"   class="screen hidden">
+      <div id="messages" class="messages"></div>
+    </div>
+  </div>
+
+  <div id="imgPreviewBar" class="hidden"><div class="img-bar-inner"><img id="imgPreviewThumb" src="" alt=""><span id="imgPreviewName"></span><button onclick="clearComposerImage()">×</button></div></div>
+
+  <div id="composeBox" class="widget-compose hidden">
+    <button class="clip-btn" onclick="$('composeFileInput').click()" title="Adjuntar imagen">📎</button>
+    <input id="composeFileInput" type="file" accept="image/*" style="display:none" onchange="queueComposerFile(this)">
+    <textarea id="freeInput" rows="1" placeholder="Escribí tu mensaje..."></textarea>
+    <button class="send-btn" onclick="sendFreeMessage()">➤</button>
+  </div>
+
+  <nav class="panel-nav" id="panelNav">
+    <button class="nav-item" data-screen="home"   onclick="goHome()"><span class="n-ico">🏠</span>Inicio</button>
+    <button class="nav-item" data-screen="carga"  onclick="goCarga()"><span class="n-ico">💳</span>Cargar</button>
+    <button class="nav-item" data-screen="retiro" onclick="goRetiro()"><span class="n-ico">🏧</span>Retirar</button>
+    <button class="nav-item" data-screen="estado" onclick="goEstado()"><span class="n-ico">🧾</span>Estado</button>
+    <button class="nav-item" data-screen="chat"   onclick="goChat()"><span class="n-ico">💬</span>Chat<span id="navUnread" class="badge hidden">0</span></button>
+  </nav>
+</section>
+
+<div id="toast" class="toast"></div>
+<script>
+const SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
+const DEFAULT_ROUTE = "rt-a8f31"; // Solo compatibilidad/dev — NO usar como fallback en producción (hoy NO se referencia en ningún lado).
+const PLATFORM_URL = "https://bet-300.pw";
+let sb=null;try{if(SUPABASE_ANON_KEY&&!SUPABASE_ANON_KEY.includes("PEGAR_"))sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)}catch(e){console.warn(e)}
+
+const state={
+  publicCode:(new URLSearchParams(location.search).get("r")||"").trim() || localStorage.getItem("bet300_public_code") || "",
+  pcCodigo:null,
+  usuario:localStorage.getItem("bet300_usuario")||"",
+  telefono:localStorage.getItem("bet300_telefono")||"",
+  nivelAcceso:localStorage.getItem("bet300_nivel_acceso")||"",
+  motivoSoporte:localStorage.getItem("bet300_motivo_soporte")||"",
+  solicitudId:localStorage.getItem("bet300_solicitud_id")||"",
+  chatId:localStorage.getItem("bet300_chat_id")||"",
+  chatToken:localStorage.getItem("bet300_chat_token")||"",
+  selectedFile:null, billetera:null, chatLibre:false, composerImage:null,
+  pendingTipo:localStorage.getItem("bet300_pending_tipo")||"",
+  seenMsgIds:new Set(),
+  portalThreadSeen:new Set(JSON.parse(localStorage.getItem("bet300_portal_thread_seen")||"[]")),
+  shownTexts:new Set(),
+  solicitudStartedAt:Number(localStorage.getItem("bet300_solicitud_started_at")||0),
+  promoActiva:false,
+  screen:"home", unread:0, chatGreeted:false
+};
+
+let chatPollTimer=null, estadoPollTimer=null, portalThreadTimer=null, estadoFinalNotificado=false, rechazadoStreak=0;
+
+function $(id){return document.getElementById(id)}
+function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
+function esc(t){return String(t??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
+function escMsg(t){return esc(t).replace(/\n/g,"<br>")}
+function now(){return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}
+function tipoLabel(){const t=state.pendingTipo||"Solicitud";return t.charAt(0)+t.slice(1).toLowerCase()}
+function tiempoEspera(){
+  const started=Number(state.solicitudStartedAt||localStorage.getItem("bet300_solicitud_started_at")||0);
+  if(!started)return "";
+  const mins=Math.round((Date.now()-started)/60000);
+  if(mins<2)return "Hace unos instantes";
+  if(mins<60)return `Hace ${mins} min`;
+  const hs=Math.round(mins/60);
+  return `Hace ${hs} hora${hs>1?"s":""}`;
+}
+function toast(t){const el=$("toast");el.textContent=t;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2400)}
+
+// Abre la plataforma en una pestaña propia (first-party) → las imágenes cargan en TODOS los
+// navegadores. Dentro del iframe es contenido de terceros y Safari/Samsung/Firefox le cortan la
+// cookie de sesión → imágenes rotas. Top-level = como entrar por el link directo (que sí anda).
+// No podemos poner un "volver" en la página de la plataforma (es cross-origin): el regreso es la
+// flecha "←"/"Listo" de la Custom Tab (PWA) o el cambiador de pestañas. Del lado del portal, al
+// volver queda todo a mano; la primera vez avisamos cómo regresar.
+function abrirPlataformaFullscreen(){
+  let w=null;
+  try{ w=window.open(PLATFORM_URL,"_blank","noopener"); }catch(_e){}
+  try{
+    if(!localStorage.getItem("bet300_fs_hint")){
+      localStorage.setItem("bet300_fs_hint","1");
+      setTimeout(function(){ try{ toast('Para volver al portal, tocá la flecha ← / “Listo” de arriba.'); }catch(_e){} },500);
+    }
+  }catch(_e){}
+  // Si el navegador bloqueó la ventana emergente, caemos a navegación directa (igual first-party).
+  if(!w){ try{ location.href=PLATFORM_URL; }catch(_e){} }
+}
+
+// ── Launcher auto-detectado (punto 4) ──────────────────────────────────────
+// Navegadores que bloquean cookies de terceros en el iframe → las imágenes de los juegos NO
+// cargan embebidas (Safari/iOS, Samsung Internet, Firefox). Para esos mostramos un launcher que
+// los lleva a pantalla completa (first-party) y deja el cajero a un toque.
+function _navBloqueaImagenes(){
+  try{
+    const ua=navigator.userAgent||"";
+    const iOS=/iphone|ipad|ipod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints||0)>1);
+    const samsung=/SamsungBrowser/i.test(ua);
+    const firefox=/Firefox|FxiOS/i.test(ua);
+    // Safari "de verdad" (no Chrome/Edge/Opera/CriOS/FxiOS que también matchean 'Safari')
+    const safari=/Safari/i.test(ua) && !/Chrome|CriOS|Chromium|Edg|OPR|SamsungBrowser|FxiOS|Android/i.test(ua);
+    return iOS || samsung || firefox || safari;
+  }catch(_e){ return false; }
+}
+function mostrarLauncherSiHaceFalta(){
+  try{
+    if(!_navBloqueaImagenes()) return;
+    if(sessionStorage.getItem("bet300_launcher_seen")==="1") return;
+    $("launcherOverlay")?.classList.add("show");
+  }catch(_e){}
+}
+function cerrarLauncher(){ try{ $("launcherOverlay")?.classList.remove("show"); sessionStorage.setItem("bet300_launcher_seen","1"); }catch(_e){} }
+function launcherJugar(){ cerrarLauncher(); abrirPlataformaFullscreen(); }
+function launcherCajero(){ cerrarLauncher(); try{ toggleWidget(true); }catch(_e){} }
+function haptic(ms){try{navigator.vibrate&&navigator.vibrate(ms||10)}catch(e){}}
+
+// ── Monitor de conexión ────────────────────────────────────────────────────
+let _connFails=0;
+function _showOffline(){const b=$("connBanner");if(b)b.style.display="flex";}
+function _hideOffline(){const b=$("connBanner");if(b)b.style.display="none";_connFails=0;}
+function _onPollOk(){if(_connFails>0)_hideOffline();_connFails=0;}
+function _onPollFail(){_connFails++;if(_connFails>=3)_showOffline();}
+window.addEventListener("offline",()=>_showOffline());
+window.addEventListener("online",()=>{
+  _hideOffline();
+  if(!$("widget")?.classList.contains("open"))return;
+  if(state.chatId)startChatPoll();
+  if(state.usuario)startPortalThreadPoll();
+  if(tieneSolicitudPendiente())startEstadoPoll();
+});
+
+// ── Router de pantallas ────────────────────────────────────────────────────
+const SCREENS=["home","carga","retiro","clave","estado","chat"];
+function showScreen(name){
+  state.screen=name;
+  SCREENS.forEach(s=>{const el=$("screen"+cap(s));if(el)el.classList.toggle("hidden",s!==name);});
+  $("composeBox").classList.toggle("hidden",name!=="chat");
+  if(name!=="chat")$("imgPreviewBar").classList.add("hidden");
+  // barra inferior: marcar activa ("clave" vive bajo Inicio)
+  const navName=(name==="clave")?"home":name;
+  document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.screen===navName));
+  // back solo en la sub-pantalla de clave
+  if($("backBtn"))$("backBtn").classList.toggle("hidden",name!=="clave");
+  const sc=$("screen"+cap(name));
+  if(sc&&name!=="chat"){sc.scrollTop=0;sc.classList.remove("in");void sc.offsetWidth;sc.classList.add("in");}
+  if(name==="chat"){state.chatLibre=true;clearUnread();setTimeout(scrollChat,30);}
+  else state.chatLibre=false;
+}
+function goHome(){renderHome();showScreen("home");}
+function _bloqueoSoporte(){ if((state.nivelAcceso||"")==="SOPORTE"){ toast("Validá tu usuario + teléfono para operar. Mientras tanto, escribinos por chat."); goHome(); return true; } return false; }
+function goCarga(){if(_bloqueoSoporte())return;if(bloquearNuevaSolicitud("CARGA"))return;showScreen("carga");renderCarga();}
+function goRetiro(){if(_bloqueoSoporte())return;if(bloquearNuevaSolicitud("RETIRO"))return;const r=retiroCooldownRestanteMs();if(r>0){toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(r)+".");return;}showScreen("retiro");renderRetiro();}
+function goClave(){if(_bloqueoSoporte())return;showScreen("clave");renderClave();}
+function goEstado(){showScreen("estado");renderEstado();}
+function goChat(){ try{hideOperatorBubble();}catch(_e){} showScreen("chat");renderChat();}
+// Alta de usuario NUEVO: abre el chat y auto-envía un mensaje predeterminado con el apodo y el
+// teléfono que el cliente ingresó → el operador ya sabe que es alta y con qué datos vincular.
+function escribirSoporteAlta(tipo){
+  goChat();
+  if(state._altaSoporteEnviado) return; // ya lo mandamos, no duplicar
+  const apodo=(state.usuario||"").trim(), tel=(state.telefono||"").trim();
+  const msg = (tipo==="ayuda")
+    ? `Hola 👋 Tengo usuario pero no puedo entrar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
+    : (tipo==="registro")
+    ? `Hola 👋 Soy nuevo, quiero registrarme.${apodo?` Apodo: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
+    : (tipo==="validar")
+    ? `Hola 👋 Quiero validar mi acceso para operar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
+    : `Hola 👋 Necesito ayuda con mi cuenta.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`;
+  state._altaSoporteEnviado=true;
+  try{ addMsg(esc(msg),"user"); state.shownTexts.add("u|"+msg.substring(0,200)); }catch(_e){}
+  setTimeout(()=>{ try{ enviarMensajeSoporte(msg, null); }catch(_e){} }, 250);
+}
+
+// ── No leídos ──────────────────────────────────────────────────────────────
+function updateUnreadUI(){
+  const els=[$("floatUnread"),$("homeUnread"),$("navUnread")];
+  els.forEach(el=>{if(el){el.textContent=state.unread>99?"99+":state.unread;el.classList.toggle("hidden",!state.unread);}});
+  // Si el dock está colapsado, el badge del cajero no se ve → mostramos un punto en el handle.
+  const m=$("floatMin"); if(m) m.classList.toggle("has-unread", state.unread>0);
+}
+function bumpUnread(){state.unread++;updateUnreadUI();}
+function clearUnread(){state.unread=0;updateUnreadUI();}
+
+// ── Dock colapsable (botones del portal sobre el iframe) ────────────────────
+// El iframe de la plataforma es cross-origin: NO se puede saber si el usuario está en el lobby o
+// dentro de un juego. En vez de autodetectar, escondemos los botones del portal (Pantalla completa
+// + Cajero) detrás de un handle chico; arranca COLAPSADO y se auto-oculta a los ~4s para no tapar
+// el juego. Un toque en el handle los muestra.
+let _dockTimer=null;
+function armDockAutohide(){
+  clearTimeout(_dockTimer);
+  _dockTimer=setTimeout(function(){ collapseDock(); }, 4000);
+}
+function collapseDock(){
+  clearTimeout(_dockTimer);
+  document.body.classList.add("dock-collapsed");
+  const m=$("floatMin"); if(m){ m.textContent="⋯"; m.title="Mostrar botones del cajero"; }
+}
+function expandDock(){
+  document.body.classList.remove("dock-collapsed");
+  const m=$("floatMin"); if(m){ m.textContent="–"; m.title="Ocultar botones"; }
+  // Sin auto-ocultar: queda expandido hasta que el usuario lo minimice.
+}
+function toggleDock(e){
+  if(e){ try{ e.stopPropagation(); e.preventDefault(); }catch(_e){} }
+  if(document.body.classList.contains("dock-collapsed")) expandDock(); else collapseDock();
+}
+// Arranca colapsado por defecto y re-arma el auto-ocultar si el usuario toca los botones expandidos.
+// (Nombre viejo por compatibilidad con la llamada del init.)
+function restoreLauncherMini(){
+  // Arranca EXPANDIDO (cajero visible) y NO se auto-minimiza: solo el usuario lo minimiza con el handle.
+  document.body.classList.remove("dock-collapsed");
+  const m=$("floatMin"); if(m){ m.textContent="–"; m.title="Ocultar botones"; }
+}
+function toggleWidget(open){
+  const w=$("widget"),scrim=$("scrim");
+  w.classList.toggle("open",!!open);
+  if(scrim)scrim.classList.toggle("show",!!open);
+  document.body.style.overflow=open?"hidden":"";
+  if(open){
+    haptic(8);
+    renderHome();
+    showScreen(state.screen||"home");
+    if(state.chatId)startChatPoll();
+    if(state.usuario)startPortalThreadPoll();
+    if(tieneSolicitudPendiente())startEstadoPoll();
+  }else{
+    stopChatPoll();stopPortalThreadPoll();stopEstadoPoll();
+  }
+}
+
+// ── Chat (mensajes) ────────────────────────────────────────────────────────
+function scrollChat(){const m=$("messages");if(m)m.scrollTop=m.scrollHeight;}
+function scrollBottom(){scrollChat();}
+function addMsg(text,who="bot",imgUrl=null){
+  const wrap=document.createElement("div");
+  wrap.className="msg "+(who==="user"?"user":"bot");
+  const imgHtml=imgUrl?`<img class="chat-img" src="${esc(imgUrl)}" onclick="window.open('${esc(imgUrl)}','_blank')" onerror="this.style.display='none'" alt="imagen">`:""
+  let cuerpo=String(text);
+  if(who!=="user"){ const card=parseTransferCard(text); if(card) cuerpo=renderTransferCardHtml(card); }   // tarjeta solo en bot/sistema
+  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+'</div><div class="meta">'+(who==="user"?"Vos":"BET300")+" · "+now()+'</div>';
+  $("messages").appendChild(wrap);scrollChat();
+}
+function incomingOperatorMsg(texto,imgUrl){
+  texto=String(texto==null?"":texto);
+  // ── Marca oculta de validación: el operador validó la cuenta desde el panel y manda
+  //    ⟦INGRESAR:usuario⟧ dentro del mensaje. No mostramos la marca cruda: mostramos el
+  //    texto (sin la marca) + un botón "Ingresar" para que entre directo desde el chat.
+  let _ingresarUser=null, _ingresarTel="";
+  const _mIng=texto.match(/⟦INGRESAR:([^⟧]*)⟧/);
+  if(_mIng){ const _p=String(_mIng[1]||"").split("|"); _ingresarUser=(_p[0]||"").trim(); _ingresarTel=(_p[1]||"").trim(); texto=texto.replace(/⟦INGRESAR:[^⟧]*⟧/g,"").trim(); }
+  // Dedup central por contenido: el mismo mensaje del operador puede llegar por pollPortalThread
+  // Y por pollOperatorMessages (dos fuentes, con claves distintas). Así no se duplica.
+  const k=(String(texto||"").trim().slice(0,160))+"|"+(String(imgUrl||"").slice(0,120));
+  if(k!=="|"){ if(!state._opMsgSeen) state._opMsgSeen=new Set(); if(state._opMsgSeen.has(k)){ if(_ingresarUser) mostrarBotonIngresar(_ingresarUser,_ingresarTel); return; } state._opMsgSeen.add(k); }
+  if(texto||imgUrl) addMsg(escMsg(texto),"bot",imgUrl||null);
+  const fueraDelChat = state.screen!=="chat" || !$("widget")?.classList.contains("open");
+  if(fueraDelChat){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} }
+  if(_ingresarUser) mostrarBotonIngresar(_ingresarUser,_ingresarTel);
+}
+// Botón "Ingresar" dentro del chat: aparece cuando el operador validó la cuenta (por la marca
+// ⟦INGRESAR⟧ o por el auto-chequeo del cotejo). Al tocarlo, revalida y entra directo al home.
+function mostrarBotonIngresar(usuario,telefono){
+  usuario=String(usuario||"").trim() || (state.usuario||"");
+  telefono=String(telefono||"").trim();
+  if((state.nivelAcceso||"")==="OK") return;                 // ya está adentro
+  if(state._ingresarUserShown===usuario && $("btnIngresarValidado")) return; // no duplicar
+  state._ingresarUserShown=usuario;
+  const prev=$("btnIngresarValidado"); if(prev){ const pm=prev.closest(".msg"); if(pm) pm.remove(); }
+  const msgs=$("messages"); if(!msgs) return;
+  const wrap=document.createElement("div");
+  wrap.className="msg bot";
+  wrap.innerHTML='<div class="bubble" style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.42)">'
+    +'<div style="font-weight:800;color:#86efac;margin-bottom:6px">✅ ¡Tu cuenta ya está activa!</div>'
+    +'<div style="font-size:13px;line-height:1.4;margin-bottom:10px">Ya podés entrar'+(usuario?' con el usuario <b>'+esc(usuario)+'</b>':'')+' y empezar a operar.</div>'
+    +'<button id="btnIngresarValidado" class="action-btn" style="margin:0" onclick="confirmarIngresoValidado(\''+usuario.replace(/'/g,"")+'\',\''+telefono.replace(/'/g,"")+'\')">Ingresar ›</button>'
+    +'</div><div class="meta">BET300 · '+now()+'</div>';
+  msgs.appendChild(wrap); scrollChat();
+  const fueraDelChat = state.screen!=="chat" || !$("widget")?.classList.contains("open");
+  if(fueraDelChat){ bumpUnread(); try{ showOperatorBubble("✅ ¡Ya te activamos! Tocá para ingresar.",null); }catch(_e){} }
+}
+async function confirmarIngresoValidado(usuario,telefono){
+  usuario=String(usuario||"").trim();
+  telefono=String(telefono||"").trim();
+  // La marca ⟦INGRESAR:usuario|telefono⟧ trae los datos CORREGIDOS por el operador. Los adoptamos
+  // ANTES de revalidar: si el operador cambió el tel/usuario, el cotejo ahora corre con lo bueno.
+  if(usuario){ state.usuario=usuario; try{localStorage.setItem("bet300_usuario",usuario);}catch(_e){} }
+  if(telefono){ state.telefono=telefono; try{localStorage.setItem("bet300_telefono",telefono);}catch(_e){} }
+  const btn=$("btnIngresarValidado"); if(btn){ btn.disabled=true; btn.textContent="Ingresando..."; }
+  try{
+    const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario,p_telefono:state.telefono});
+    const d=normalize(r.data)||r.data||{};
+    const verdict=d.verdict||"";
+    // Conflicto DURO (los datos figuran con OTRA cuenta) → no forzamos: puede ser otra persona.
+    if(verdict==="CONFLICTO_TELEFONO"||verdict==="CONFLICTO_USUARIO"||verdict==="BLOQUEADO"){
+      toast("⚠️ "+(d.mensaje||"Escribinos por chat.")); if(btn){btn.disabled=false;btn.textContent="Reintentar ingreso";}
+      return;
+    }
+    // El operador YA validó desde el panel (por eso llegó ⟦INGRESAR⟧, por un canal autenticado):
+    // si el cotejo da ACCESO, perfecto; si todavía no propagó, igual confiamos en esa validación y
+    // lo dejamos entrar. Así el botón funciona aunque el cotejo automático tarde en reflejar el cambio.
+    state.nivelAcceso="OK"; try{localStorage.setItem("bet300_nivel_acceso","OK");}catch(_e){}
+    state.motivoSoporte=""; try{localStorage.removeItem("bet300_motivo_soporte");}catch(_e){}
+    try{ toggleWidget(false); }catch(_e){}
+    goHome();
+    toast("✅ ¡Listo! Ya podés operar.");
+  }catch(_e){ toast("No pudimos ingresar ahora. Probá de nuevo."); if(btn){btn.disabled=false;btn.textContent="Ingresar ›";} }
+}
+function renderChat(){
+  if(!state.chatGreeted&&!$("messages").children.length){
+    state.chatGreeted=true;
+    addMsg("Hola 👋 Escribinos tu consulta o mandá tu comprobante. Un operador te responde por acá.","bot");
+  }
+  // Hidratar el historial YA (no esperar el próximo tick del poll ~3.5s). Así al abrir el chat
+  // el usuario ve la conversación previa y, si el operador ya validó, el botón "Ingresar".
+  if(state.usuario){ try{ pollPortalThread(); }catch(_e){} }
+  setTimeout(()=>$("freeInput")?.focus(),80);
+  setTimeout(()=>subscribePush(),1200);
+}
+
+async function rpc(fn,params){if(!sb)return{data:null,error:{message:"Supabase no configurado"}};const{data,error}=await sb.rpc(fn,params||{});return{data,error}}
+function normalize(data){if(!data)return null;if(Array.isArray(data))return data[0]||null;if(data.data)return Array.isArray(data.data)?data.data[0]:data.data;return data}
+
+// Navegador + SO + si es PWA → se manda en la metadata de la solicitud para que el operador lo vea.
+function _infoNavegador(){
+  try{
+    const ua=navigator.userAgent||"";
+    let n="Navegador";
+    if(/SamsungBrowser/i.test(ua)) n="Samsung Internet";
+    else if(/Edg[A-Z]?\//i.test(ua)) n="Edge";
+    else if(/OPR\/|Opera/i.test(ua)) n="Opera";
+    else if(/CriOS|Chrome/i.test(ua)) n="Chrome";
+    else if(/FxiOS|Firefox/i.test(ua)) n="Firefox";
+    else if(/Safari/i.test(ua)) n="Safari";
+    let os="";
+    if(/iPhone|iPad|iPod/i.test(ua)) os="iOS";
+    else if(/Android/i.test(ua)) os="Android";
+    else if(/Windows/i.test(ua)) os="Windows";
+    else if(/Mac OS X|Macintosh/i.test(ua)) os="Mac";
+    const pwa=((window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||navigator.standalone)?" · app":"";
+    return (n+(os?" ("+os+")":"")+pwa)||ua.slice(0,120);
+  }catch(_e){ return (navigator.userAgent||"").slice(0,120); }
+}
+
+// ── Chat poll ─────────────────────────────────────────────────────────────
+function startChatPoll(){stopChatPoll();if(!state.chatId)return;chatPollTimer=setInterval(pollOperatorMessages,5000);}
+function stopChatPoll(){if(chatPollTimer){clearInterval(chatPollTimer);chatPollTimer=null;}}
+async function pollOperatorMessages(){
+  if(!state.chatId||!$("widget")?.classList.contains("open"))return;
+  const res=await rpc("landing_leer_chat_v2",{p_chat_id:Number(state.chatId),p_chat_token:state.chatToken});
+  if(res.error||!Array.isArray(res.data)){_onPollFail();return;}
+  _onPollOk();
+  res.data.forEach(m=>{
+    const msgKey=String(m.id||m.created_at||JSON.stringify(m));
+    if(state.seenMsgIds.has(msgKey))return;
+    state.seenMsgIds.add(msgKey);
+    const emisor=String(m.tipo_emisor||m.emisor||"").toUpperCase();
+    const isOp=emisor.includes("OPER")||emisor.includes("ADMIN")||emisor.includes("PANEL")||emisor.includes("SIST")||emisor.includes("BOT")||emisor.includes("AUTO");
+    const texto=m.mensaje||m.texto||"";
+    if(isOp&&(texto||m.imagen_url)){const tk=(texto||m.imagen_url||"").substring(0,200);if(state.shownTexts.has(tk))return;state.shownTexts.add(tk);incomingOperatorMsg(texto,m.imagen_url||null);if(texto)notificarLocal("BET300 · Operador",texto.substring(0,100),"/","bet300-op");}
+  });
+}
+
+// ── Portal metadata thread poll (respuestas desde panel/NODO) ─────────────
+function savePortalThreadSeen(){
+  try{localStorage.setItem("bet300_portal_thread_seen",JSON.stringify([...state.portalThreadSeen].slice(-400)));}catch(e){}
+}
+function startPortalThreadPoll(){
+  stopPortalThreadPoll();
+  if(!state.usuario)return;
+  portalThreadTimer=setInterval(pollPortalThread,5000);
+  setTimeout(pollPortalThread,900);
+}
+function stopPortalThreadPoll(){
+  if(portalThreadTimer){clearInterval(portalThreadTimer);portalThreadTimer=null;}
+}
+// Re-chequeo silencioso del cotejo: si dio ACCESO, ofrece el botón "Ingresar" en el chat.
+async function autoChequeoValidacion(){
+  if(state._autoRevalBusy) return; state._autoRevalBusy=true;
+  try{
+    const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario,p_telefono:state.telefono});
+    const d=normalize(r.data)||r.data||{};
+    if((d.verdict||"")==="ACCESO"){ mostrarBotonIngresar(state.usuario); }
+  }catch(_e){}
+  finally{ state._autoRevalBusy=false; }
+}
+function threadKey(m){
+  return String((m?.origen||"")+"|"+(m?.solicitud_id||"")+"|"+(m?.fecha||"")+"|"+(m?.mensaje||""));
+}
+// Render de UN mensaje del thread (historial o nuevo), del operador o del propio usuario.
+// notificar=true SOLO para mensajes que no vimos en una sesión previa → recién ahí bumpeamos
+// unread / burbuja / notificación (y solo si el chat no está enfocado). Así el historial completo
+// se pinta al abrir el chat sin spamear notificaciones.
+function renderThreadMsg(m, notificar){
+  const origen=String(m.origen||"").toUpperCase();
+  const rawTexto=m.mensaje||"";
+  const imgUrl=m.imagen_url||m.imagen||null;
+  if(!rawTexto&&!imgUrl)return;
+  if(origen==="OPERADOR"){
+    // Marca oculta de validación ⟦INGRESAR:usuario⟧ → botón "Ingresar" (se saca del texto visible).
+    let ing=null, ingTel="", texto=rawTexto;
+    const mm=rawTexto.match(/⟦INGRESAR:([^⟧]*)⟧/);
+    if(mm){ const _p=String(mm[1]||"").split("|"); ing=(_p[0]||"").trim(); ingTel=(_p[1]||"").trim(); texto=rawTexto.replace(/⟦INGRESAR:[^⟧]*⟧/g,"").trim(); }
+    // Dedup por contenido, compartido con pollOperatorMessages (misma clave, texto crudo).
+    const tk=rawTexto?rawTexto.substring(0,200):((m.fecha||"")+"|img|"+(imgUrl||"").substring(0,80));
+    if(!state.shownTexts.has(tk)){
+      state.shownTexts.add(tk);
+      if(texto||imgUrl) addMsg(escMsg(texto),"bot",imgUrl||null);
+      if(notificar){
+        const fuera=state.screen!=="chat"||!$("widget")?.classList.contains("open");
+        if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · Operador",texto.substring(0,100),"/","bet300-op"); }catch(_e){} } }
+      }
+    }
+    if(ing) mostrarBotonIngresar(ing,ingTel);
+  } else {
+    // Mensaje del propio usuario (historial). Dedup por contenido contra lo ya mostrado en vivo.
+    const uk=rawTexto?("u|"+rawTexto.substring(0,200)):("uimg|"+(imgUrl||"").substring(0,80));
+    if(state.shownTexts.has(uk))return;
+    state.shownTexts.add(uk);
+    addMsg(rawTexto?escMsg(rawTexto):"","user",imgUrl||null);
+  }
+}
+async function pollPortalThread(){
+  if(!state.usuario||!$("widget")?.classList.contains("open"))return;
+  // Respaldo: si el operador validó desde el panel pero la marca ⟦INGRESAR⟧ no llegó/no se vio
+  // (p.ej. tras recargar la página), re-chequeamos el cotejo cada ~10s SOLO mientras el usuario
+  // todavía no entró. Al detectar ACCESO, mostramos el botón "Ingresar" igual.
+  if((state.nivelAcceso||"")!=="OK" && state.telefono){
+    state._revalTick=(state._revalTick||0)+1;
+    if(state._revalTick===1 || state._revalTick%3===0){ autoChequeoValidacion(); }
+  }
+  const res=await rpc("landing_portal_chat_thread_get",{p_usuario:state.usuario,p_public_code:state.publicCode,p_telefono:state.telefono||""});
+  if(res.error){console.warn("[chat_thread]",res.error);_onPollFail();return;}
+  _onPollOk();
+  const d=normalize(res.data)||res.data||{};
+  const thread=Array.isArray(d.chat_thread)?d.chat_thread:[];
+  if(!thread.length)return;
+
+  // _threadRendered = set de SESIÓN (lo que ya está en el DOM ahora). Al recargar arranca vacío,
+  // así que el historial completo se vuelve a pintar. portalThreadSeen (persistido) solo decide si
+  // el mensaje es "nuevo" (para notificar) o parte del historial ya visto.
+  if(!state._threadRendered) state._threadRendered=new Set();
+  thread.forEach(m=>{
+    const key=threadKey(m);
+    if(state._threadRendered.has(key))return;
+    state._threadRendered.add(key);
+    const nuevo=!state.portalThreadSeen.has(key);
+    state.portalThreadSeen.add(key);
+    renderThreadMsg(m, nuevo);
+  });
+  savePortalThreadSeen();
+}
+
+function setComposeEnabled(enabled){state.chatLibre=!!enabled;}
+
+// ── Inicio (login / dashboard) ─────────────────────────────────────────────
+function renderHome(){
+  const home=$("screenHome");
+  if(!home)return;
+  if(!state.usuario){
+    state._gateModo="login";
+    home.innerHTML=`<div class="gate-badge">🎰 BET300 · Cajero</div>
+      <div class="gate-title">Bienvenido 👋</div>
+      <div class="gate-txt" id="gateTxt">Para cargar, retirar o pedir soporte, ingresá tu usuario de plataforma y tu teléfono.</div>
+      <label id="lblUsuarioInicial">Usuario de plataforma</label>
+      <input id="usuarioInicial" placeholder="Ej: usuario123" autocomplete="username" inputmode="text" onkeydown="if(event.key==='Enter')document.getElementById('telefonoInicial').focus()">
+      <label>Teléfono (WhatsApp, con código de área)</label>
+      <input id="telefonoInicial" placeholder="Ej: 11 2345 6789" inputmode="tel" autocomplete="tel" onkeydown="if(event.key==='Enter')onGateSubmit()">
+      <button class="action-btn" id="gateBtn" onclick="onGateSubmit()">Ingresar al portal</button>
+      <div id="gateError" style="display:none;margin-top:12px;background:rgba(255,84,104,.1);border:1px solid rgba(255,84,104,.3);color:#ffb3bd;border-radius:12px;padding:11px;font-size:13px;font-weight:700;line-height:1.45"></div>
+      <div id="gatePaths" style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
+        <button class="link-btn" id="pathRegistro" style="width:100%;text-align:center" onclick="setGateModo('registro')">✨ Soy nuevo · Registrarme</button>
+        <button class="link-btn" id="pathAyuda" style="width:100%;text-align:center" onclick="setGateModo('ayuda')">😕 Tengo usuario pero no puedo entrar</button>
+      </div>
+      <button class="link-btn" id="gateVolver" style="display:none;margin-top:12px;width:100%;text-align:center" onclick="setGateModo('login')">‹ Volver a ingresar con mi usuario</button>
+      <div class="trust-row">
+        <span class="trust">🔒 Datos solo en este equipo</span>
+        <span class="trust">⚡ Respuesta al instante</span>
+      </div>
+      <div class="flow-note">Tu usuario y teléfono quedan vinculados, para tu seguridad.</div>`;
+    setTimeout(()=>$("usuarioInicial")?.focus(),120);
+    return;
+  }
+  const pend=tieneSolicitudPendiente();
+  const nivel = state.nivelAcceso || "PENDIENTE";
+  const soporte = (nivel === "SOPORTE");
+  const semIcon = nivel==="OK"?"🟢":soporte?"🔴":"🟡";
+  const semTxt  = nivel==="OK"?"Verificado":soporte?"Sin validar":"Pendiente de verificación";
+  const semCol  = nivel==="OK"?"#22c55e":soporte?"#ef4444":"#fbbf24";
+  home.innerHTML=`
+    <div class="greet">
+      <div><div class="greet-hi">Hola de nuevo</div><div class="greet-user">👤 ${esc(state.usuario)}</div>
+        <div style="font-size:12px;margin-top:3px;color:${semCol};font-weight:700">${semIcon} ${semTxt}</div></div>
+      <button class="link-btn" onclick="cambiarUsuario()">Cambiar</button>
+    </div>
+    ${pend?`<div class="pending-banner" onclick="goEstado()">
+      <div class="pb-ico">⏳</div>
+      <div><div class="pending-title"><span class="live-dot"></span>${esc(tipoLabel())} en revisión</div>
+      <div class="pending-text">${esc(tiempoEspera()||"En proceso")} · tocá para ver el estado</div></div>
+      <span class="chev">›</span></div>`:""}
+    ${soporte?`
+      <div class="pending-banner" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.28);cursor:default">
+        <div class="pb-ico">🔴</div>
+        <div><div class="pending-title">${esc(state.motivoSoporte?"Activación pendiente":"No pudimos validar tus datos")}</div>
+        <div class="pending-text">${esc(state.motivoSoporte||"Para cargar o retirar necesitás validar usuario + teléfono. Reintentá o escribinos por chat.")}</div></div>
+      </div>
+      <button class="action-btn" onclick="escribirSoporteAlta()" style="margin-top:12px">💬 Escribir a soporte</button>
+      <button class="link-btn" id="revalBtn" onclick="reintentarValidacion()" style="margin-top:10px;width:100%;text-align:center">🔄 Ya me activaron · Reintentar</button>
+      <div class="screen-desc" style="margin-top:8px;text-align:center;font-size:11px">¿Sos nuevo? Cuando el operador te pase tu <b>usuario</b>, tocá <b>Cambiar</b> (arriba) e ingresá con ese usuario + tu teléfono.</div>`
+    :`
+    <div class="section-label">¿Qué necesitás hacer?</div>
+    <button class="big-btn gold" ${pend?"disabled":""} onclick="goCarga()">
+      <span class="bb-ico">💳</span><span class="bb-tx">Cargar saldo<small>Avisá tu transferencia y te acreditamos</small></span><span class="bb-arrow">›</span>
+    </button>
+    <button class="big-btn green" ${pend?"disabled":""} onclick="goRetiro()">
+      <span class="bb-ico">🏧</span><span class="bb-tx">Retirar<small>Pedí tu retiro a revisión</small></span><span class="bb-arrow">›</span>
+    </button>
+    <button class="row-btn" onclick="goClave()"><span class="rb-ico">🔑</span> Reiniciar clave de juego <span class="rb-arrow">›</span></button>
+    ${renderBonoBienvenidaCard()}
+    <div class="flow-note" style="margin-top:14px">💬 ¿Dudas? Tenés <b>Chat</b> y <b>Estado</b> siempre a mano en la barra de abajo.</div>`}`;
+  updateUnreadUI();
+}
+async function reintentarValidacion(){
+  if(!state.usuario||!state.telefono){ state.usuario=""; renderHome(); return; }
+  const b=$("revalBtn"); if(b){b.disabled=true;b.textContent="Validando...";}
+  try{
+    const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario,p_telefono:state.telefono});
+    const d=normalize(r.data)||r.data||{};
+    const verdict=d.verdict||"";
+    if(verdict==="CONFLICTO_TELEFONO"||verdict==="CONFLICTO_USUARIO"||verdict==="BLOQUEADO"){ toast("⚠️ "+(d.mensaje||"Contactá a soporte.")); return; }
+    state.motivoSoporte = (verdict==="NO_REGISTRADO") ? (d.mensaje||state.motivoSoporte||"") : "";
+    if(state.motivoSoporte) localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte); else localStorage.removeItem("bet300_motivo_soporte");
+    const nivel=(verdict==="ACCESO")?"OK":(verdict==="ERROR"||verdict==="NO_REGISTRADO")?"SOPORTE":"PENDIENTE";
+    state.nivelAcceso=nivel; localStorage.setItem("bet300_nivel_acceso",nivel);
+    renderHome();
+    toast(nivel==="OK"?"✅ Validado":nivel==="SOPORTE"?"Seguimos sin poder validar. Escribinos por chat.":"Listo, ya podés operar.");
+  }catch(e){ toast("No pudimos validar ahora. Probá de nuevo en un momento."); }
+  finally{ const bb=$("revalBtn"); if(bb){bb.disabled=false;bb.textContent="🔄 Reintentar validación";} }
+}
+
+function _gateError(msg){
+  const e=$("gateError");
+  if(e){ e.textContent=msg; e.style.display="block"; }
+  else toast(msg);
+}
+// Gate de 3 caminos: "login" (ya tengo usuario) · "registro" (soy nuevo, alta) ·
+// "ayuda" (tengo usuario pero no puedo entrar). Cada uno cambia el texto/label/botón y manda
+// al operador una señal DISTINTA (así no se mezclan altas nuevas con problemas de acceso).
+function setGateModo(modo){
+  state._gateModo = modo || "login";
+  const txt=$("gateTxt"), lbl=$("lblUsuarioInicial"), inp=$("usuarioInicial"), btn=$("gateBtn"),
+        paths=$("gatePaths"), volver=$("gateVolver"), err=$("gateError");
+  if(err) err.style.display="none";
+  if(modo==="registro"){
+    if(txt) txt.textContent="Sos nuevo 👤 Te creamos el usuario. Dejanos tu nombre o apodo y tu teléfono, y un operador te contacta.";
+    if(lbl) lbl.textContent="Tu nombre o apodo";
+    if(inp){ inp.placeholder="Ej: Juan / Juancito"; inp.value=""; }
+    if(btn) btn.textContent="Registrarme y hablar con soporte";
+    if(paths) paths.style.display="none";
+    if(volver) volver.style.display="block";
+  } else if(modo==="ayuda"){
+    if(txt) txt.textContent="¿Tenés usuario pero no podés entrar? Contanos tus datos y un operador valida tu cuenta.";
+    if(lbl) lbl.textContent="Tu usuario (si lo tenés)";
+    if(inp){ inp.placeholder="Ej: usuario123"; }
+    if(btn) btn.textContent="Contactar a soporte";
+    if(paths) paths.style.display="none";
+    if(volver) volver.style.display="block";
+  } else { // login
+    if(txt) txt.textContent="Para cargar, retirar o pedir soporte, ingresá tu usuario de plataforma y tu teléfono.";
+    if(lbl) lbl.textContent="Usuario de plataforma";
+    if(inp){ inp.placeholder="Ej: usuario123"; }
+    if(btn) btn.textContent="Ingresar al portal";
+    if(paths) paths.style.display="flex";
+    if(volver) volver.style.display="none";
+  }
+  setTimeout(()=>$("usuarioInicial")?.focus(),50);
+}
+// Despacha el botón principal según el modo del gate.
+function onGateSubmit(){
+  const m=state._gateModo||"login";
+  if(m==="registro") return pedirRegistro();
+  if(m==="ayuda")    return pedirAyudaAcceso();
+  return guardarUsuarioInicial();
+}
+// Canal de soporte/alta SIN validación: para usuarios nuevos (no están en la base) o
+// que recién quieren registrarse (un pariente les pasó el link). Entran al chat directo
+// y el operador los registra/vincula desde el panel. NO pelea con el cotejo.
+function _persistSoporte(){
+  try{
+    localStorage.setItem("bet300_usuario",state.usuario);
+    localStorage.setItem("bet300_telefono",state.telefono);
+    localStorage.setItem("bet300_nivel_acceso","SOPORTE");
+    localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte);
+  }catch(_e){}
+}
+// REGISTRO: usuario NUEVO (publicidad / derivado). Pide nombre/apodo + tel y manda al operador
+// un ticket CLARO de alta nueva. No pelea con el cotejo (no tiene usuario aún).
+// OJO: el bono de bienvenida NO es de "nuevos" — es para la PRIMERA carga de CUALQUIERA, y lo
+// maneja la tarjeta de bono en Inicio (renderBonoBienvenidaCard). Este flujo NO lo menciona.
+function pedirRegistro(){
+  const nombre=String($("usuarioInicial")?.value||"").trim();
+  const telefono=String($("telefonoInicial")?.value||"").trim();
+  if(!telefono || telefono.replace(/\D/g,"").length<6){ return _gateError("Dejanos tu teléfono (con código de área) para crearte el usuario y contactarte."); }
+  state.usuario = nombre || ("nuevo-"+telefono.replace(/\D/g,""));
+  state.telefono = telefono;
+  state.nivelAcceso = "SOPORTE";
+  state.motivoSoporte = "Registro en proceso · Un operador te crea el usuario y te avisa por el chat.";
+  _persistSoporte();
+  renderHome();
+  escribirSoporteAlta("registro"); // abre el chat Y auto-envía el pedido de alta nueva
+}
+// AYUDA DE ACCESO: el que YA tiene usuario pero no puede entrar (datos mal / no validado).
+// Ticket distinto para que el operador no lo confunda con un alta nueva.
+function pedirAyudaAcceso(){
+  const usuario=String($("usuarioInicial")?.value||"").trim();
+  const telefono=String($("telefonoInicial")?.value||"").trim();
+  if(!telefono || telefono.replace(/\D/g,"").length<6){ return _gateError("Dejanos tu teléfono (con código de área) para poder ayudarte a validar tu cuenta."); }
+  state.usuario = usuario || ("ayuda-"+telefono.replace(/\D/g,""));
+  state.telefono = telefono;
+  state.nivelAcceso = "SOPORTE";
+  state.motivoSoporte = "Estamos viendo por qué no podés entrar. Un operador valida tus datos y te avisa por el chat.";
+  _persistSoporte();
+  renderHome();
+  escribirSoporteAlta("ayuda"); // abre el chat Y auto-envía el pedido de ayuda de acceso
+}
+// Normaliza el usuario de plataforma antes de mandarlo a validar: saca espacios/acentos, baja a
+// minúsculas y, si vino un email (autorelleno del navegador), se queda con lo de antes del @.
+// NO bloquea ni pelea con el cliente: si igual quedó mal, el operador lo corrige con la marca
+// ⟦INGRESAR:usuario⟧ (autologueo, sin que la persona vuelva a cargar sus datos).
+function normalizarUsuarioPlataforma(raw){
+  let u=String(raw||"").trim();
+  if(!u) return "";
+  if(u.includes("@")) u=u.split("@")[0];                       // email autorellenado → nombre de usuario
+  u=u.normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]","g"),"");  // saca acentos
+  u=u.replace(/\s+/g,"");                                      // sin espacios (nombres pegados quedan legibles)
+  u=u.toLowerCase();
+  u=u.replace(/[^a-z0-9._-]/g,"");                             // solo lo típico de un usuario de plataforma
+  return u;
+}
+async function guardarUsuarioInicial(){
+  const usuario=normalizarUsuarioPlataforma($("usuarioInicial")?.value||"");
+  const telefono=String($("telefonoInicial")?.value||"").trim();
+  const err=$("gateError"); if(err)err.style.display="none";
+  if(!usuario)return _gateError("Indicá tu usuario de plataforma (el nombre con el que entrás a jugar, no tu email).");
+  if(!telefono || telefono.replace(/\D/g,"").length<6)return _gateError("Indicá tu teléfono con código de área (sin 0 ni 15).");
+  if(!state.pcCodigo)return _gateError("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte.");
+
+  const btn=$("gateBtn"); if(btn){btn.disabled=true;btn.textContent="Verificando...";}
+  let d={};
+  try{
+    const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:usuario,p_telefono:telefono});
+    d=normalize(r.data)||r.data||{};
+    if(r.error){ console.warn("[vinculo]",r.error); d={verdict:"ERROR"}; }
+  }catch(e){ console.warn("[vinculo]",e); d={verdict:"ERROR"}; }
+  if(btn){btn.disabled=false;btn.textContent="Ingresar al portal";}
+
+  const verdict=d.verdict||"";
+  // Datos vacíos / teléfono inválido → corregilo acá mismo, en el gate.
+  if(verdict==="SIN_USUARIO"||verdict==="TEL_INVALIDO"){
+    return _gateError(d.mensaje||"Revisá tu usuario y teléfono.");
+  }
+
+  state.usuario=usuario;
+  state.telefono=telefono;
+  localStorage.setItem("bet300_usuario",usuario);
+  localStorage.setItem("bet300_telefono",telefono);
+  if(d.estado)localStorage.setItem("bet300_vinculo_estado",d.estado);
+
+  // ✅ Cotejo OK → validado desde el inicio, entra directo a operar.
+  if(verdict==="ACCESO"){
+    state.nivelAcceso="OK"; localStorage.setItem("bet300_nivel_acceso","OK");
+    state.motivoSoporte=""; localStorage.removeItem("bet300_motivo_soporte");
+    renderHome();
+    setTimeout(()=>subscribePush(),1500);
+    setTimeout(()=>marcarAppInstalada(),1700);
+    toast("✅ "+(d.mensaje||"Acceso verificado."));
+    return;
+  }
+
+  // ⚠️ Cualquier otro caso (no validó al toque, dato mal escrito, usuario aún sin activar, conflicto o
+  // error de cotejo): NO lo dejamos en un 🟡 sin salida ni obligamos a "Cambiar usuario" + reloguear.
+  // Lo mandamos al MISMO canal de validación con operador (ticket con usuario+tel + chat) para que lo
+  // valide/CORRIJA y le habilite el botón "Ingresar" (autologueo con el usuario correcto, sin re-login).
+  // En paralelo corre el auto-chequeo del cotejo: si da ACCESO solo, aparece el botón "Ingresar" igual.
+  const conflicto=(verdict==="CONFLICTO_TELEFONO"||verdict==="CONFLICTO_USUARIO"||verdict==="BLOQUEADO");
+  state.nivelAcceso="SOPORTE";
+  state.motivoSoporte = conflicto
+    ? (d.mensaje||"Tus datos figuran con otra cuenta. Un operador lo revisa y te habilita el ingreso por acá.")
+    : (d.mensaje||"Estamos validando tu usuario. En un momento te habilitamos el botón para ingresar por acá — no hace falta que vuelvas a cargar tus datos.");
+  localStorage.setItem("bet300_nivel_acceso","SOPORTE");
+  localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte);
+  renderHome();
+  setTimeout(()=>subscribePush(),1500);
+  setTimeout(()=>marcarAppInstalada(),1700);
+  iniciarValidacionUsuarioBackground(usuario);   // cotejo en agentes (autohabilita "Ingresar" si da ACCESO)
+  escribirSoporteAlta("validar");                 // ticket claro para el operador + abre el chat
+}
+
+// Modal CENTRADO (position:fixed) — antes se insertaba al final del home y quedaba fuera de pantalla
+// sin scroll: nadie lo encontraba. Ahora aparece al medio, por encima de todo.
+function cambiarUsuario(){
+  const existing=document.getElementById("cambioConfirm");
+  if(existing){existing.remove();return}
+  const ov=document.createElement("div");
+  ov.id="cambioConfirm";
+  ov.style.cssText="position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px";
+  ov.innerHTML=`<div style="background:#0f1720;border:1px solid rgba(239,68,68,.35);border-radius:16px;padding:20px;max-width:340px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="font-size:15px;font-weight:800;color:#fca5a5;margin-bottom:6px">¿Cambiar de usuario?</div>
+    <div style="font-size:13px;color:#c0cad8;line-height:1.45;margin-bottom:16px">Vas a salir del usuario <b>${esc(state.usuario||"")}</b> en este dispositivo e ingresar con otro. Casi nunca hace falta: si escribiste mal tu usuario, un operador te lo corrige y te habilita el botón <b>Ingresar</b> sin que tengas que volver a cargar nada.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="action-btn secondary-btn" style="margin:0" onclick="document.getElementById('cambioConfirm').remove()">Cancelar</button>
+      <button class="action-btn" style="margin:0;background:#ef4444;color:#fff;border-color:#ef4444" onclick="_confirmarCambioUsuario()">Sí, cambiar</button>
+    </div>
+  </div>`;
+  ov.addEventListener("click",e=>{ if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function _confirmarCambioUsuario(){
+  try{ document.getElementById("cambioConfirm")?.remove(); }catch(_e){}
+  stopChatPoll();stopEstadoPoll();stopPortalThreadPoll();
+  ["bet300_usuario","bet300_telefono","bet300_vinculo_estado","bet300_nivel_acceso","bet300_motivo_soporte","bet300_chat_id","bet300_solicitud_id","bet300_pending_tipo","bet300_chat_token","bet300_portal_thread_seen","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
+  Object.assign(state,{usuario:"",telefono:"",nivelAcceso:"",motivoSoporte:"",solicitudId:"",pendingTipo:"",chatId:"",chatToken:"",chatLibre:false,seenMsgIds:new Set(),portalThreadSeen:new Set(),shownTexts:new Set(),_threadRendered:new Set(),_ingresarUserShown:null,_altaSoporteEnviado:false,composerImage:null,unread:0,chatGreeted:false});
+  clearComposerImage();
+  $("messages").innerHTML="";
+  goHome();
+}
+
+// ── Pendiente ─────────────────────────────────────────────────────────────
+function tieneSolicitudPendiente(){return !!(state.solicitudId||state.pendingTipo);}
+function bloquearNuevaSolicitud(tipo){
+  if(!tieneSolicitudPendiente())return false;
+  toast("Ya tenés una solicitud en revisión");
+  goEstado();
+  return true;
+}
+function setPendiente(tipo,solicitudId){
+  state.pendingTipo=tipo||state.pendingTipo||"SOLICITUD";
+  if(solicitudId)state.solicitudId=String(solicitudId);
+  state.solicitudStartedAt=Date.now();
+  estadoFinalNotificado=false;
+  localStorage.setItem("bet300_pending_tipo",state.pendingTipo);
+  if(state.solicitudId)localStorage.setItem("bet300_solicitud_id",state.solicitudId);
+  localStorage.setItem("bet300_solicitud_started_at",String(state.solicitudStartedAt));
+}
+// Se sacó el paso de confirmación: "¿Marcar como resuelta? Hacelo solo si la solicitud ya fue
+// procesada" le pedía a la persona un criterio que no tiene — no sabe si se procesó, por eso
+// está mirando la pantalla de estado. Y el botón que hoy dice "Cancelar solicitud" hace lo que
+// dice: no hay nada que confirmar dos veces.
+function limpiarPendienteManual(){ _confirmarLimpiarPendiente(); }
+function _confirmarLimpiarPendiente(){
+  const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
+  stopChatPoll();stopEstadoPoll();
+  Object.assign(state,{pendingTipo:"",solicitudId:"",chatId:"",chatToken:"",seenMsgIds:new Set()});
+  ["bet300_pending_tipo","bet300_solicitud_id","bet300_chat_id","bet300_chat_token","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
+  // El retiro se canceló SIN efectuarse (este botón solo aparece mientras está pendiente/sin pagar)
+  // → liberamos el cooldown de 24h para que pueda enviar uno nuevo (dato/monto corregido).
+  if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
+  toast(eraRetiro?"Retiro cancelado. Ya podés enviar uno nuevo.":"Solicitud cancelada. Ya podés enviar una nueva.");
+  goHome();
+}
+
+// ── Estado poll ───────────────────────────────────────────────────────────
+function estadoNormalizado(v){return String(v||"").trim().toUpperCase();}
+function esEstadoFinalAprobado(v){
+  const e=estadoNormalizado(v);
+  return ["ACREDITADA","PAGADA","COMPLETADA"].includes(e);
+}
+function esEstadoFinalRechazado(v){
+  const e=estadoNormalizado(v);
+  return ["RECHAZADA","CANCELADA","ERROR"].includes(e);
+}
+// Sólo un id NUMÉRICO sirve: la RPC de estado recibe un bigint. Antes se devolvía el string crudo
+// (p. ej. "pendiente-local-1757…") y los dos consumidores terminaban preguntando por la solicitud
+// 0 cada 6 segundos — un poll eterno contra una solicitud que no existe.
+function solicitudIdValido(){
+  const raw=String(state.solicitudId||"").trim();
+  return /^\d+$/.test(raw) ? Number(raw) : null;
+}
+function stopEstadoPoll(){if(estadoPollTimer){clearInterval(estadoPollTimer);estadoPollTimer=null;}}
+function startEstadoPoll(){
+  stopEstadoPoll();
+  if(!solicitudIdValido())return;
+  estadoPollTimer=setInterval(()=>consultarEstadoSolicitud(false),6000);
+  setTimeout(()=>consultarEstadoSolicitud(false),800);
+}
+function setEstadoLive(txt){const e=$("estadoLive");if(e)e.innerHTML='<span class="live-dot"></span>'+esc(txt);}
+
+// ── Estado (pantalla) ──────────────────────────────────────────────────────
+// ── Historial del usuario (últimos 7 días) ───────────────────────────────────
+async function cargarHistorialUsuario(){
+  if(!state.usuario||!state.telefono) return [];
+  const res=await rpc("landing_historial_usuario",{p_usuario:state.usuario,p_telefono:state.telefono,p_public_code:state.publicCode||""});
+  if(res.error||!Array.isArray(res.data)) return [];
+  return res.data;
+}
+function _fechaCorta(iso){
+  // 24 h y con año corto: "06/08 09:01" — exacto y sin el "a. m." con espacios de es-AR.
+  try{
+    const d=new Date(iso); if(isNaN(d.getTime())) return "";
+    const p=n=>String(n).padStart(2,"0");
+    return p(d.getDate())+"/"+p(d.getMonth()+1)+" "+p(d.getHours())+":"+p(d.getMinutes());
+  }catch(_e){ return ""; }
+}
+function _estadoBadge(e){
+  const u=String(e||"").toUpperCase();
+  const ok=["OK","APROBADA","ACREDITADA","PAGADA","COMPLETADA"].includes(u);
+  const rech=["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(u);
+  const col=ok?"#22c55e":rech?"#ef4444":"#f5c518", txt=ok?"Confirmada":rech?"Rechazada":"En revisión";
+  return '<span style="font-size:11px;font-weight:800;color:'+col+'">'+txt+'</span>';
+}
+// ── Motivo del rechazo anterior, antes de volver a mandar ──────────────────
+// Si la operación anterior se rechazó DENTRO DEL MISMO TURNO, se lo mostramos arriba del
+// formulario. Sin esto la persona vuelve a mandar exactamente lo mismo y la vuelve a comer el
+// mismo rechazo — y el operador la vuelve a rechazar. Pasado el turno no se muestra: ya es otra
+// jornada, el motivo perdió contexto y sólo asusta.
+// Los turnos son bloques de 8 h (00-08 / 08-16 / 16-24), que es como se etiquetan TM/TT/TN.
+// Si en la operación se usan otros límites, se cambia SOLO esta constante.
+const TURNO_HORAS=8;
+function _turnoDe(d){ return Math.floor(d.getHours()/TURNO_HORAS); }
+function _mismoTurno(iso){
+  try{
+    const d=new Date(iso); if(isNaN(d.getTime())) return false;
+    const h=new Date();
+    return d.toDateString()===h.toDateString() && _turnoDe(d)===_turnoDe(h);
+  }catch(_e){ return false; }
+}
+async function pintarRechazoPrevio(slotId,tipo){
+  const slot=$(slotId); if(!slot) return;
+  let rows=[]; try{ rows=await cargarHistorialUsuario(); }catch(_e){ return; }
+  const r=(rows||[]).find(function(x){
+    return String(x.tipo||"").toUpperCase()===tipo
+      && ["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(String(x.estado||"").toUpperCase())
+      && String(x.motivo||"").trim()
+      && _mismoTurno(x.fecha);
+  });
+  if(!r) return;
+  slot.innerHTML='<div style="background:rgba(239,68,68,.09);border:1px solid rgba(239,68,68,.3);border-radius:14px;padding:12px 13px;margin-bottom:14px">'
+    +'<div style="font-size:13px;font-weight:800;color:#fca5a5;margin-bottom:5px">🚫 Tu '+(tipo==="RETIRO"?"retiro":"carga")+' anterior no se pudo procesar</div>'
+    +'<div style="font-size:12.5px;color:#e8c9c9;line-height:1.45">'+esc(r.motivo)+'</div>'
+    +'<div style="font-size:11.5px;color:#8b8b97;margin-top:7px">'+esc(_fechaCorta(r.fecha))+' · '+_money(Number(r.monto)||0)+' · revisá esto antes de volver a enviar.</div>'
+    +'</div>';
+}
+// El contenedor se re-crea solo: las tarjetas de estado final (aprobada/rechazada) sobrescriben
+// el innerHTML de #screenEstado y se llevaban puesto el historial.
+function _histBox(){
+  let box=$("histUsuario");
+  if(!box){
+    const s=$("screenEstado"); if(!s) return null;
+    box=document.createElement("div"); box.id="histUsuario"; s.appendChild(box);
+  }
+  return box;
+}
+async function pintarHistorialUsuario(){
+  const box=_histBox(); if(!box) return;
+  box.innerHTML='<div style="text-align:center;color:#8b95a5;font-size:12px;padding:10px">Cargando historial…</div>';
+  const rows=await cargarHistorialUsuario();
+  if(!rows.length){ box.innerHTML='<div style="text-align:center;color:#8b95a5;font-size:12px;padding:12px">Sin operaciones en los últimos 7 días.</div>'; return; }
+  const filas=rows.map(function(r){
+    const esRetiro=String(r.tipo||"").toUpperCase()==="RETIRO";
+    const rech=["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(String(r.estado||"").toUpperCase());
+    return '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px;background:#12141b;border:1px solid #23262f;border-radius:12px;padding:10px 12px;margin-top:8px">'
+      + '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">'+(esRetiro?"🏧":"💳")+'</span>'
+      +   '<div><div style="font-weight:800;font-size:14px;color:#e8edf4">'+(esRetiro?"Retiro":"Carga")+'</div>'
+      +   '<div style="font-size:11px;color:#8b95a5">'+esc(_fechaCorta(r.fecha))+'</div></div></div>'
+      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado)+'</div>'
+      + (rech && r.motivo ? '<div style="width:100%;font-size:11.5px;color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:6px 8px;margin-top:2px">🚫 '+esc(r.motivo)+'</div>' : '')
+      + '</div>';
+  }).join("");
+  box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días</div>'+filas;
+}
+
+function renderEstado(){
+  const s=$("screenEstado");
+  if(!s)return;
+  if(tieneSolicitudPendiente()){
+    s.innerHTML=`<div class="screen-title">Estado de tu solicitud</div>
+      <div class="estado-card pending">
+        <div class="estado-ico">⏳</div>
+        <div class="estado-h">${esc(tipoLabel())} en revisión</div>
+        <div class="estado-sub">${esc(tiempoEspera()||"Procesando")}</div>
+        <div class="steps">
+          <div class="step done"><span class="dot"></span></div><div class="bar"></div>
+          <div class="step on"><span class="dot"></span></div><div class="bar"></div>
+          <div class="step"><span class="dot"></span></div>
+        </div>
+        <div id="retiroProgreso"></div>
+        <div class="estado-tx">Un operador la está revisando. Te avisamos acá y por el chat cuando se confirme.</div>
+        <div id="estadoLive" class="estado-live"><span class="live-dot"></span>Consultando estado…</div>
+        <div class="estado-actions">
+          <button class="action-btn" onclick="goChat()">💬 Abrir chat</button>
+          <button class="action-btn secondary-btn" onclick="verEstado()">Actualizar</button>
+        </div>
+        <button class="link-btn" style="width:100%;margin-top:4px" onclick="_confirmarLimpiarPendiente()">Cancelar solicitud</button>
+      </div>
+      <div id="histUsuario"></div>`;
+    if(solicitudIdValido())consultarEstadoSolicitud(true);
+    else setEstadoLive("Sin nº de solicitud para consultar");
+    if(String(state.pendingTipo||"").toUpperCase()==="RETIRO") cargarProgresoRetiro().catch(()=>{});
+  }else{
+    s.innerHTML=`<div class="screen-title">Estado</div>
+      <div class="estado-card">
+        <div class="estado-ico">✅</div>
+        <div class="estado-h">No tenés solicitudes activas</div>
+        <div class="estado-tx">Cuando envíes una carga o un retiro, vas a poder seguir su estado acá en tiempo real.</div>
+        <div class="estado-actions">
+          <button class="action-btn" onclick="goCarga()">💳 Cargar</button>
+          <button class="action-btn secondary-btn" onclick="goHome()">Inicio</button>
+        </div>
+      </div>
+      <div id="histUsuario"></div>`;
+  }
+  pintarHistorialUsuario();
+}
+
+function limpiarPendienteAprobado(obs){
+  if(estadoFinalNotificado)return;
+  estadoFinalNotificado=true;
+  stopEstadoPoll();stopChatPoll();
+  const tipoFinal=state.pendingTipo||"CARGA";
+  state.pendingTipo="";state.solicitudId="";state.chatId="";state.chatToken="";state.seenMsgIds=new Set();state.shownTexts=new Set();
+  ["bet300_pending_tipo","bet300_solicitud_id","bet300_chat_id","bet300_chat_token","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
+  const esRetiro=tipoFinal==="RETIRO";
+  if(!esRetiro){ try{ localStorage.setItem("bet300_bono_usado","1"); }catch(_e){} } // 1ª carga acreditada → el bono de ingreso ya se usó → la tarjeta del bono desaparece
+  const titulo=esRetiro?"¡Retiro procesado!":"¡Carga acreditada!";
+  const sub=esRetiro?"Revisá tu cuenta bancaria.":"Ya podés jugar.";
+  const s=$("screenEstado");
+  if(s)s.innerHTML=`<div class="screen-title">Estado</div>
+    <div class="estado-card ok">
+      <div class="estado-ico">🎉</div>
+      <div class="estado-h">${titulo}</div>
+      <div class="estado-sub">${sub}</div>
+      ${obs?`<div class="estado-tx">${escMsg(obs)}</div>`:""}
+      <div class="estado-actions"><button class="action-btn" onclick="goHome()">Volver al inicio</button><button class="action-btn secondary-btn" onclick="goChat()">Chat</button></div>
+    </div>`;
+  haptic([30,40,30]);
+  try{ pintarHistorialUsuario(); }catch(_e){}   // la operación recién confirmada ya figura en el historial
+  renderHome();
+  if($("widget")?.classList.contains("open"))showScreen("estado");
+  const notifTitulo=esRetiro?"BET300 · ¡Retiro procesado!":"BET300 · ¡Carga acreditada!";
+  const notifCuerpo=obs||(esRetiro?"Tu retiro fue transferido. Revisá tu cuenta.":"¡Tus fichas ya están disponibles! Revisá tu cuenta.");
+  // El tag del retiro es el MISMO que usa el push del panel ("bet300-retiro"): así el SO colapsa
+  // las dos en una sola notificación en vez de mostrar "Retiro procesado" + "Pago de tu retiro".
+  notificarLocal(notifTitulo,notifCuerpo,"/",esRetiro?"bet300-retiro":"bet300-acreditada");
+}
+function esConfirmacionDemasiadoTemprana(){
+  const started=Number(state.solicitudStartedAt||localStorage.getItem("bet300_solicitud_started_at")||0);
+  if(!started)return false;
+  return (Date.now()-started)<8000;
+}
+async function consultarEstadoSolicitud(mostrarMensaje=true){
+  const sid=solicitudIdValido();
+  if(!sid){if(mostrarMensaje)toast("No hay una solicitud válida para consultar.");return null;}
+  const chatIdNum=/^\d+$/.test(String(state.chatId||""))?Number(state.chatId):null;
+  const res=await rpc("landing_estado_solicitud_segura",{
+    p_solicitud_id:sid,
+    p_chat_id:chatIdNum,
+    p_chat_token:state.chatToken||""
+  });
+  if(res.error){if(mostrarMensaje)toast("No pude consultar el estado ahora.");return null;}
+  const d=normalize(res.data)||res.data||{};
+  if(d.ok===false){setEstadoLive("⏳ En verificación");return "PENDIENTE";}
+  const estado=estadoNormalizado(d.estado||d.status||d.estado_solicitud);
+  // Motivo del rechazo: la RPC landing_estado_solicitud_segura lo devuelve en `mensaje` cuando el
+  // estado es final-rechazado (lo carga el operador al rechazar y queda en landing_solicitudes.metadata).
+  // Ignoramos el "OK" que la RPC devuelve en los casos normales (no es un motivo).
+  const _motivoMsg=(d.mensaje && String(d.mensaje).trim().toUpperCase()!=="OK") ? String(d.mensaje).trim() : "";
+  const obs=String(d.obs||d.observacion||d.motivo||d.razon||_motivoMsg||"").trim();
+  if(esEstadoFinalAprobado(estado)){
+    if(esConfirmacionDemasiadoTemprana()){setEstadoLive("⏳ En verificación");return "PENDIENTE";}
+    limpiarPendienteAprobado(obs);
+    return estado;
+  }
+  if(esEstadoFinalRechazado(estado)){
+    rechazadoStreak++;
+    if(rechazadoStreak < 3){setEstadoLive("⏳ En verificación");return "PENDIENTE";}
+    stopEstadoPoll();
+    rechazadoStreak=0;
+    const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
+    state.pendingTipo="";state.solicitudId="";
+    ["bet300_pending_tipo","bet300_solicitud_id","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
+    // Retiro rechazado/cancelado por el operador → no se efectuó → liberar el cooldown de 24h.
+    if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
+    const s=$("screenEstado");
+    if(s)s.innerHTML=`<div class="screen-title">Estado</div>
+      <div class="estado-card bad">
+        <div class="estado-ico">⚠️</div>
+        <div class="estado-h">Tu solicitud no pudo procesarse</div>
+        ${obs?`<div class="estado-tx">${escMsg(obs)}</div>`:`<div class="estado-tx">Escribinos por el chat y un operador te ayuda.</div>`}
+        <div class="estado-actions"><button class="action-btn" onclick="goChat()">💬 Consultar</button><button class="action-btn secondary-btn" onclick="goCarga()">Nueva carga</button></div>
+      </div>`;
+    try{ pintarHistorialUsuario(); }catch(_e){}   // el rechazo (con su motivo) ya figura en el historial
+    renderHome();
+    if($("widget")?.classList.contains("open"))showScreen("estado");
+    return estado;
+  }
+  rechazadoStreak=0;
+  const _esRetiroPend = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
+  if(_esRetiroPend) cargarProgresoRetiro().catch(()=>{});
+  // EN_PROCESO: SOLO para RETIRO es "pago por partes". Para una CARGA es "acreditando" — antes se
+  // pegaba la pantalla de retiro en proceso sobre una carga y confundía (bug reportado).
+  if(estado==="EN_PROCESO"){
+    try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); const sub=s&&s.querySelector(".estado-sub"); const tx=s&&s.querySelector(".estado-tx");
+      if(_esRetiroPend){
+        if(h)h.textContent="🔄 Retiro en proceso";
+        if(sub)sub.textContent="Te lo estamos pagando por partes — vas a ver cada pago acá";
+        if(tx)tx.textContent="Tu retiro es grande y lo abonamos por tramos. Cada transferencia aparece abajo y te avisamos.";
+      }else{
+        if(h)h.textContent="⏳ Procesando tu carga";
+        if(sub)sub.textContent="Estamos acreditando tus fichas";
+        if(tx)tx.textContent="Ya estamos procesando tu carga. En un momento vas a ver tus fichas acreditadas.";
+      }
+    }catch(_e){}
+  }
+  setEstadoLive(estado==="EN_PROCESO"?(_esRetiroPend?"💸 Te estamos pagando por partes":"⏳ Acreditando tu carga"):"⏳ En verificación");
+  return estado||"PENDIENTE";
+}
+
+// Retiros parciales (punto 3): trae total/pagado/pagos y pinta la barra + la lista en el estado.
+// Muestra un toast in-app cuando sube lo pagado; el aviso de fondo lo dispara el panel por push.
+async function cargarProgresoRetiro(){
+  const sid=solicitudIdValido(); if(!sid) return;
+  const box=$("retiroProgreso"); if(!box) return;
+  const res=await rpc("landing_retiro_progreso",{p_solicitud_id: sid, p_chat_id:null, p_chat_token:state.chatToken||""});
+  if(res.error) return;
+  const prog=normalize(res.data)||res.data||{};
+  if(!prog || prog.ok===false) return;
+  const total=Number(prog.total||0), pagado=Number(prog.pagado||0);
+  let pct=Number(prog.pct||0); if(pct<0)pct=0; if(pct>100)pct=100;
+  if(!(total>0) || !(pagado>0)){ box.innerHTML=""; return; }   // sin parciales aún → sin barra
+  try{
+    const k="bet300_retiro_pagado_"+sid, last=Number(localStorage.getItem(k)||0);
+    if(pagado>last){ localStorage.setItem(k,String(pagado));
+      if(last>0) toast("💸 Pago parcial: +"+_money(pagado-last)+" · van "+_money(pagado)+" de "+_money(total)); }
+  }catch(_e){}
+  try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); if(h)h.textContent="Retiro en proceso";
+       const sub=s&&s.querySelector(".estado-sub"); if(sub)sub.textContent="Te lo estamos pagando por partes"; }catch(_e){}
+  let pagos=prog.pagos; if(typeof pagos==="string"){ try{pagos=JSON.parse(pagos);}catch(_e){pagos=[];} } if(!Array.isArray(pagos)) pagos=[];
+  const lista=pagos.slice().reverse().map(p=>{
+    const m=_money(Number(p.monto||0));
+    let f=""; try{ f=new Date(p.fecha).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(_e){}
+    return `<div class="rp-item"><span class="rp-m">+${m}</span><span class="rp-f">${esc(f)}</span></div>`;
+  }).join("");
+  box.innerHTML=`<div class="rp-wrap">
+    <div class="rp-top"><span>Pagado</span><span class="rp-nums">${_money(pagado)} / ${_money(total)}</span></div>
+    <div class="rp-track"><div class="rp-fill" style="width:${pct}%"></div></div>
+    <div class="rp-pct">${pct}% · faltan ${_money(Math.max(total-pagado,0))}</div>
+    ${lista?`<div class="rp-list">${lista}</div>`:""}
+  </div>`;
+}
+async function verEstado(){
+  if($("screenEstado").classList.contains("hidden"))goEstado();
+  else { await consultarEstadoSolicitud(true); try{ pintarHistorialUsuario(); }catch(_e){} }
+}
+
+// ── Validación usuario (agentes, en background) ────────────────────────────
+async function iniciarValidacionUsuarioBackground(usuario){
+  const u=String(usuario||"").trim();
+  if(!u)return;
+  try{
+    const r=await rpc("landing_validar_usuario_login",{p_usuario:u,p_pc_codigo:state.pcCodigo});
+    if(r.error)return;
+    const row=normalize(r.data)||r.data||{};
+    const validacionId=row.validacion_id||row.id||null;
+    if(validacionId)localStorage.setItem("bet300_validacion_id",String(validacionId));
+    if(validacionId){
+      let intentos=0;
+      const t=setInterval(async()=>{
+        intentos++;
+        if(intentos>8){clearInterval(t);return;}
+        const st=await rpc("landing_estado_validacion_usuario",{p_validacion_id:Number(validacionId)});
+        if(st.error)return;
+        const sr=normalize(st.data)||st.data||{};
+        const estado=estadoNormalizado(sr.estado||sr.status);
+        if(["EXISTE","EXISTIR","NO_EXISTE","ERROR","RECHAZADO"].includes(estado)){clearInterval(t);localStorage.setItem("bet300_validacion_estado",estado);}
+      },2500);
+    }
+  }catch(e){}
+}
+
+// ── Ruta e inicialización ─────────────────────────────────────────────────
+async function initRoute(){
+  // 1) ?r= explícito (compatibilidad vieja / override) → se persiste para la PWA.
+  const qp=(new URLSearchParams(location.search).get("r")||"").trim();
+  if(qp){ state.publicCode=qp; try{ localStorage.setItem("bet300_public_code", qp); }catch(_e){} }
+  // 2) Por subdominio/host (modo producción) si no vino ?r=.
+  if(!qp){
+    try{
+      const rh=await rpc("landing_resolver_ruta_por_host",{p_host:location.host});
+      const dh=normalize(rh.data)||rh.data||{};
+      if(dh && dh.ok && (dh.pc_codigo||dh.public_code)){
+        state.pcCodigo=dh.pc_codigo||null;
+        if(dh.public_code){ state.publicCode=dh.public_code; try{localStorage.setItem("bet300_public_code",dh.public_code);}catch(_e){} }
+        console.log("[BET300] agente por host",location.host,"->",state.pcCodigo,state.publicCode);
+        if(state.pcCodigo) return;
+      }
+    }catch(_e){}
+  }
+  // 3) Ruta guardada (PWA instalada que abre sin ?r= ni subdominio).
+  if(!state.publicCode){ state.publicCode = localStorage.getItem("bet300_public_code") || ""; }
+  if(!state.publicCode){ state.pcCodigo=null; console.warn("[BET300] sin ruta de agente"); return; }
+  // 4) Resolver agente por public_code (DB-driven). Sin default P1 en producción.
+  const r=await rpc("landing_resolver_ruta_publica",{p_public_code:state.publicCode});
+  const row = r.error ? null : normalize(r.data);
+  if(row){ state.pcCodigo=row.pc_codigo||row.pc||row.codigo_pc||null; }
+
+  // Si llegaron por el dominio genérico pero la agencia tiene el suyo, nos mudamos ANTES de
+  // canjear el token. Motivo: la sesión se guarda por origen — quedaba en el dominio de Vercel
+  // y la persona aparecía deslogueada al entrar después por el dominio de su agencia. Además
+  // en WhatsApp un ".vercel.app" no se lee como algo de la marca.
+  // Va antes del canje a propósito: el token viaja intacto y se gasta en el dominio correcto.
+  try{
+    const propio = String(row && row.host || "").trim().toLowerCase();
+    if(propio && location.hostname.toLowerCase() !== propio){
+      // La bandera guarda A QUÉ dominio ya intentamos ir, no un simple "sí". Con un "sí" pelado,
+      // quien abría un segundo enlace en la misma sesión del navegador ya no se mudaba y quedaba
+      // en el genérico. Así solo se frena el bucle real: intentar dos veces el MISMO destino.
+      if(sessionStorage.getItem("bet300_redirigido") !== propio){
+        sessionStorage.setItem("bet300_redirigido", propio);
+        location.replace("https://" + propio + location.pathname + location.search + location.hash);
+        await new Promise(()=>{});                          // frenar el arranque mientras navega
+      }
+    }
+  }catch(_e){}
+
+  // Ya estamos en el dominio de la agencia y la ruta quedó guardada, así que el ?r= no aporta:
+  // el dominio solo alcanza para saber la oficina. Se limpia para que la barra de direcciones
+  // quede prolija — si no, un enlace que vino del genérico deja el ?r= colgado para siempre.
+  // Solo se toca si hay dominio propio: en el genérico el ?r= es lo único que dice la oficina.
+  try{
+    const propioOk = String(row && row.host || "").trim().toLowerCase() === location.hostname.toLowerCase();
+    if(propioOk && new URLSearchParams(location.search).has("r")){
+      const u=new URL(location.href); u.searchParams.delete("r");
+      history.replaceState(null,"",u.pathname+(u.search||"")+(u.hash||""));
+    }
+  }catch(_e){}
+
+  console.log("[BET300 V18] canal",state.pcCodigo,"ruta",state.publicCode);
+}
+
+// ── Enlace de acceso (?t=) ─────────────────────────────────────────────────
+// El operador verifica a la persona en el CRM y recién ahí le manda por WhatsApp un enlace
+// que la deja adentro YA VALIDADA y en la pantalla que corresponde (cargar o retirar), sin
+// pedirle usuario ni teléfono. No se reparten sueltos: cada uno vale para un solo uso y vence.
+//
+// Si vuelven a tocar el mismo enlace más tarde (pasa: la gente reabre el mensaje de WhatsApp)
+// el canje falla con YA_USADO, pero la sesión quedó guardada en el teléfono → entran igual y
+// NO les mostramos ningún error. El aviso sale solo si además no tienen sesión.
+async function canjearEnlaceAcceso(){
+  const t=(new URLSearchParams(location.search).get("t")||"").trim();
+  if(!t) return null;
+
+  // Sacamos el token de la barra de direcciones antes de usarlo: así no queda en el historial
+  // del navegador ni viaja si comparten la pantalla o reenvían el link ya abierto.
+  try{
+    const u=new URL(location.href); u.searchParams.delete("t");
+    history.replaceState(null,"",u.pathname+(u.search||"")+(u.hash||""));
+  }catch(_e){}
+
+  let d=null;
+  try{ const r=await rpc("landing_acceso_link_usar",{p_token:t}); d=normalize(r.data)||r.data||null; }catch(_e){}
+
+  if(!d||!d.ok){
+    if(state.usuario) return null;              // ya estaba adentro: el enlace sobraba
+    const motivo=String((d&&d.motivo)||"");
+    toast(motivo==="VENCIDO"||motivo==="YA_USADO"
+      ? "Este enlace ya se usó o venció. Pedile uno nuevo al operador."
+      : "No pudimos validar el enlace. Escribinos por chat y te ayudamos.");
+    return null;
+  }
+
+  state.usuario=String(d.usuario||"");
+  state.telefono=String(d.telefono||"");
+  state.pcCodigo=d.pc_codigo||state.pcCodigo;
+  if(d.public_code){ state.publicCode=d.public_code; try{localStorage.setItem("bet300_public_code",d.public_code);}catch(_e){} }
+  state.nivelAcceso="OK"; state.motivoSoporte="";
+  try{
+    localStorage.setItem("bet300_usuario",state.usuario);
+    localStorage.setItem("bet300_telefono",state.telefono);
+    localStorage.setItem("bet300_nivel_acceso","OK");
+    localStorage.removeItem("bet300_motivo_soporte");
+  }catch(_e){}
+  setTimeout(()=>subscribePush(),1500);
+  setTimeout(()=>marcarAppInstalada(),1700);
+  return { destino:String(d.destino||"").toUpperCase() };
+}
+
+// Promo de bienvenida: solo se muestra si la agente la tiene activada (landing_rutas_publicas.promo_activa).
+async function cargarPromoActiva(){
+  state.promoActiva=false;
+  if(!state.pcCodigo)return;
+  try{
+    const r=await rpc("landing_promo_activa",{p_pc_codigo:state.pcCodigo});
+    const d=normalize(r.data);
+    state.promoActiva = r.data===true || d===true || !!(d&&(d.activa||d.promo_activa));
+  }catch(_e){}
+}
+
+// ── Image upload (comprobantes + chat) ───────────────────────────────────
+// ── Producción: compresión de imágenes ──────────────────────────────────────
+async function comprimirImagenPortal(file, opts={}){
+  const TIPOS=["image/jpeg","image/png","image/webp"];
+  if(!file || !TIPOS.includes(String(file.type||"").toLowerCase())) return null;
+  if(file.size > 5*1024*1024) return null;
+  const maxLado = opts.maxLado || 1280, calidad = opts.calidad || 0.72;
+  try{
+    let w,h,src,bitmap=null;
+    bitmap = await createImageBitmap(file).catch(()=>null);
+    if(bitmap){ w=bitmap.width; h=bitmap.height; src=bitmap; }
+    else{
+      src = await new Promise((res,rej)=>{ const img=new Image(); img.onload=()=>res(img); img.onerror=rej; img.src=URL.createObjectURL(file); });
+      w=src.naturalWidth; h=src.naturalHeight;
+    }
+    if(!w||!h) return null;
+    let nw=w, nh=h;
+    if(Math.max(w,h) > maxLado){ const r=maxLado/Math.max(w,h); nw=Math.round(w*r); nh=Math.round(h*r); }
+    const canvas=document.createElement("canvas"); canvas.width=nw; canvas.height=nh;
+    canvas.getContext("2d").drawImage(src,0,0,nw,nh);
+    try{ if(bitmap&&bitmap.close) bitmap.close(); }catch(_e){}
+    return await new Promise(res=>canvas.toBlob(res,"image/jpeg",calidad));
+  }catch(_e){ return null; }
+}
+// ── Producción: firma de billetera (antiparpadeo) ──
+function billeteraSignature(b){
+  b=b||{};
+  return [b.id||b.billetera_id||"", b.alias||"", b.cbu||b.cvu||"", b.titular||"", b.nombre_visible||b.nombre||"", b.banco||""].join("|");
+}
+// ── Producción: guard de operación (anti-bypass desde consola) ──
+function _puedeOperar(){
+  if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return false; }
+  if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return false; }
+  if(tieneSolicitudPendiente()){ toast("Ya tenés una solicitud en revisión."); try{goEstado();}catch(_e){} return false; }
+  return true;
+}
+// ── Producción: tarjeta de transferencia en el chat ──
+function parseTransferCard(text){
+  const t=String(text||"");
+  const m=t.match(/::TRANSFER_CARD::\s*(\{[\s\S]*\})/);
+  if(m){ try{ const d=JSON.parse(m[1].replace(/&quot;/g,'"').replace(/&amp;/g,'&')); if(d&&(d.alias||d.cbu||d.cvu)) return d; }catch(_e){} }
+  const unesc=(s)=>String(s||"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").trim();
+  const grab=(re)=>{ const mm=t.match(re); return mm?unesc(mm[1].replace(/<[^>]*>/g,"")):""; };
+  const alias=grab(/alias\s*[:：]\s*([^\n<]+)/i);
+  const cbucvu=grab(/cbu\s*\/\s*cvu\s*[:：]\s*([0-9\s.\-]+)/i);
+  const cbu=grab(/(?:^|\s)cbu\s*[:：]\s*([0-9\s.\-]+)/i);
+  const cvu=grab(/(?:^|\s)cvu\s*[:：]\s*([0-9\s.\-]+)/i);
+  const titular=grab(/titular\s*[:：]\s*([^\n<]+)/i);
+  const banco=grab(/banco\s*[:：]\s*([^\n<]+)/i);
+  const tipo=grab(/(?:^|\s)tipo\s*[:：]\s*([^\n<]+)/i);
+  const nombre=grab(/nombre\s*[:：]\s*([^\n<]+)/i);
+  if(alias||cbu||cvu||cbucvu) return {nombre_visible:nombre,titular,alias,cbu:cbu||cbucvu,cvu,banco:banco||tipo};
+  return null;
+}
+// Tarjeta de datos para transferir.
+//
+// Medido en un teléfono de 375x812: la pantalla de Cargar necesitaba 988px de alto sobre 682
+// visibles. El campo del titular y el botón de enviar quedaban DEBAJO del pliegue — la persona
+// entraba y no veía cómo terminar. Esta tarjeta sola ocupaba 340px, la mitad.
+//
+// Qué se sacó y por qué:
+//  · "Copiar todo" (51px): duplicaba lo que ya hacen los botones de cada campo.
+//  · El titular NUESTRO pasó de campo grande a línea al pie. Estaba a 60px del input que pide
+//    el titular DE ELLOS, y 58 personas en 14 días copiaron el nuestro. La cercanía inducía
+//    el error; ahora se lee como dato de la cuenta, no como algo para completar.
+//  · Alias y CBU quedan iguales: son lo único que la persona necesita copiar.
+function renderTransferCardHtml(d){
+  d=d||{};
+  const cbu=d.cbu||d.cvu||"";
+  const field=(lbl,val)=> val ? ('<div class="transfer-field"><div class="tf-main"><div class="transfer-label">'+esc(lbl)+'</div><div class="transfer-value">'+esc(val)+'</div></div><button class="copy-btn" data-lbl="Copiar" onclick="copyText(\''+esc(val)+'\',this)">Copiar</button></div>') : '';
+  const pie=[d.titular?('a nombre de <b>'+esc(d.titular)+'</b>'):'', d.banco?esc(d.banco):'']
+              .filter(Boolean).join(' · ');
+  return '<div class="transfer-card"><div class="transfer-head"><div class="transfer-title">📥 Transferí a esta cuenta</div></div>'
+    + field('Alias',d.alias) + field('CBU / CVU',cbu)
+    + (pie?('<div class="transfer-owner">'+pie+'</div>'):'')
+    + '</div>';
+}
+// ── Producción: burbuja flotante de mensaje del operador ──
+function showOperatorBubble(texto, imgUrl){
+  let el=document.getElementById("opBubble");
+  if(!el){
+    el=document.createElement("div"); el.id="opBubble";
+    el.style.cssText="position:fixed;right:16px;bottom:84px;max-width:280px;background:#11203a;color:#eaf2ff;border:1px solid rgba(124,196,255,.35);border-radius:14px;padding:11px 13px;box-shadow:0 10px 30px rgba(0,0,0,.4);z-index:99998;cursor:pointer;font-size:13px;line-height:1.35";
+    el.onclick=function(){ try{toggleWidget(true);}catch(_e){} try{goChat();}catch(_e){} hideOperatorBubble(); };
+    document.body.appendChild(el);
+  }
+  const prev=imgUrl?"[Imagen]":String(texto||"").replace(/<[^>]*>/g,"").slice(0,90);
+  el.innerHTML='<div style="font-weight:800;margin-bottom:2px">💬 Nuevo mensaje</div><div style="opacity:.85">'+esc(prev||"Tenés un mensaje del operador")+'</div><div style="margin-top:6px;font-size:11px;color:#7cc4ff;font-weight:700">Tocá para abrir el chat ›</div>';
+  el.style.display="block";
+}
+function hideOperatorBubble(){ const el=document.getElementById("opBubble"); if(el) el.style.display="none"; }
+// ── Bono de bienvenida (SOLO preparación visual; NO acredita nada — lo valida el operador) ──
+// Estado client-side: si la app está instalada (standalone) y si las notificaciones están aceptadas.
+// Persistencia/estado real por usuario+tel+agente → backend pendiente: landing_estado_bono_bienvenida (TODO).
+function bonoBienvenidaEstado(){
+  let app=false, push=false;
+  try{ app=(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone===true; }catch(_e){}
+  if(!app){ try{ app = localStorage.getItem("bet300_app_instalada")==="1"; }catch(_e){} } // recordamos el "instalada" aunque abra en pestaña
+  try{ push=(typeof Notification!=="undefined" && Notification.permission==="granted"); }catch(_e){}
+  return {app, push};
+}
+// Bono ADITIVO: base 20% · +10% notificaciones · +20% app → 50% máximo (20/30/40/50).
+function bonoPctFromEstado(e){ let p=20; if(e.push)p+=10; if(e.app)p+=20; return p; }
+function renderBonoBienvenidaCard(){
+  if(!state.promoActiva) return ""; // solo agentes con la promo activada (alta o activación posterior)
+  const e=bonoBienvenidaEstado();
+  // Si el usuario YA usó su bono de ingreso (primera carga acreditada), ocultamos la tarjeta del
+  // bono (%) y dejamos SOLO los botones de instalar app / activar notificaciones (valor continuo).
+  let bonoUsado=false; try{ bonoUsado = localStorage.getItem("bet300_bono_usado")==="1"; }catch(_e){}
+  if(bonoUsado){
+    const bI = !e.app  ? `<button class="action-btn" style="margin-top:8px" onclick="instalarAppPromo()">📱 Instalar la app</button>` : "";
+    const bN = !e.push ? `<button class="action-btn secondary-btn" style="margin-top:8px" onclick="activarNotisPromo()">🔔 Activar notificaciones</button>` : "";
+    if(!bI && !bN) return ""; // ya instaló y activó → nada que ofrecer
+    return `<div class="form-card" style="margin-top:12px;border:1px solid rgba(124,196,255,.2)">
+      <div style="font-weight:800;font-size:14px">📲 Mejorá tu experiencia</div>
+      <div class="screen-desc" style="margin:4px 0 6px">Instalá la app y activá las notificaciones para enterarte al instante de tus cargas y retiros.</div>
+      ${bI}${bN}
+    </div>`;
+  }
+  const pct=bonoPctFromEstado(e);
+  const falta = !e.app || !e.push;
+  const chip=(ok)=> ok?'<span style="color:#22c55e;font-weight:800">Listo ✅</span>':'<span style="color:#fbbf24;font-weight:800">Pendiente ⏳</span>';
+  const btnInstalar = !e.app ? `<button class="action-btn" style="margin-top:8px" onclick="instalarAppPromo()">📱 Instalar la app · +20%</button>` : "";
+  const btnNotis    = !e.push ? `<button class="action-btn secondary-btn" style="margin-top:8px" onclick="activarNotisPromo()">🔔 Activar notificaciones · +10%</button>` : "";
+  const cierre = falta
+    ? `<div class="screen-desc" style="margin:10px 0 0">Completá los pasos y subís tu bono. Lo confirma un operador antes de acreditarlo.</div>`
+    : `<div class="screen-desc" style="margin:10px 0 0">🏆 ¡Máximo desbloqueado! Un operador confirma tu bono y lo acredita.</div>`;
+  return `<div class="form-card" style="margin-top:12px;border:1px solid rgba(124,196,255,.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="font-weight:900;font-size:15px">🎁 Bono de bienvenida</div>
+      <div style="font-weight:900;font-size:18px;color:#7cc4ff">${pct}%<span style="font-size:11px;color:var(--muted);font-weight:700"> / 50%</span></div>
+    </div>
+    <div class="screen-desc" style="margin:4px 0 8px">Arrancás con <b>20%</b>. Sumá <b>+10%</b> activando notificaciones y <b>+20%</b> instalando la app → hasta <b>50%</b>.</div>
+    <div style="font-size:13px;line-height:1.9">📱 App instalada: ${chip(e.app)}<br>🔔 Notificaciones: ${chip(e.push)}</div>
+    ${btnInstalar}${btnNotis}
+    ${cierre}
+  </div>`;
+}
+// Instalar la PWA desde el botón del bono (reusa el prompt nativo capturado; fallback a instrucciones).
+async function instalarAppPromo(){
+  if(window._deferredInstallPrompt){
+    try{
+      window._deferredInstallPrompt.prompt();
+      const {outcome}=await window._deferredInstallPrompt.userChoice;
+      window._deferredInstallPrompt=null;
+      if(outcome==="accepted"){
+        try{ localStorage.setItem("bet300_app_instalada","1"); }catch(_e){}
+        try{ if(state.usuario && state.pcCodigo) rpc("landing_marcar_app_instalada",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario}); }catch(_e){}
+        toast("✅ ¡App instalada! Sumaste +20% a tu bono.");
+      } else { toast("Podés instalarla cuando quieras desde este botón para sumar +20%."); }
+    }catch(_e){ toast("No se pudo abrir la instalación. Probá desde el menú del navegador (Instalar app)."); }
+  } else {
+    const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+    toast(ios ? "En iPhone: tocá Compartir ⬆️ y elegí 'Agregar a inicio'." : "Abrí el menú del navegador (⋮) y elegí 'Instalar app' / 'Agregar a pantalla de inicio'.");
+  }
+  setTimeout(()=>{ try{ renderHome(); }catch(_e){} }, 400);
+}
+// Activar notificaciones desde el botón del bono (pide permiso + registra push).
+async function activarNotisPromo(){
+  try{
+    if(typeof Notification==="undefined"){ toast("Tu navegador no soporta notificaciones."); return; }
+    let perm=Notification.permission;
+    if(perm==="default"){ try{ perm=await Notification.requestPermission(); }catch(_e){} }
+    if(perm==="granted"){ try{ await subscribePush(); }catch(_e){} toast("🔔 ¡Notificaciones activas! Sumaste +10% a tu bono."); }
+    else if(perm==="denied"){ toast("Están bloqueadas. Activalas desde los permisos del navegador para sumar el +10%."); }
+    else { toast("Activá las notificaciones para sumar tu bono."); }
+  }catch(_e){}
+  setTimeout(()=>{ try{ renderHome(); }catch(_e){} }, 300);
+}
+
+async function subirImagen(file){
+  if(!sb||!file)return null;
+  const TIPOS_OK=["image/jpeg","image/png","image/webp"];
+  const mime=String(file.type||"").toLowerCase();
+  if(!TIPOS_OK.includes(mime)){ toast("Solo se aceptan imágenes JPG, PNG o WEBP."); return null; }
+  if(file.size>5*1024*1024){ toast("El archivo supera 5 MB"); return null; }
+  // Comprimir; si falla, usar el original (ya validado: tipo permitido y < 5MB).
+  let blob = await comprimirImagenPortal(file,{maxLado:1280,calidad:0.72});
+  let contentType="image/jpeg";
+  if(!blob){ blob=file; contentType=mime; }
+  const usuarioSan=(state.usuario||"anonimo").replace(/[^a-z0-9_-]/gi,"_");
+  const ruta=(state.publicCode||"sin_ruta").replace(/[^a-z0-9_-]/gi,"_");
+  const ext = contentType==="image/jpeg" ? "jpg" : ({"image/png":"png","image/webp":"webp"}[contentType]||"jpg");
+  const path=`${ruta}/${usuarioSan}/${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
+  try{
+    const{error}=await sb.storage.from("comprobantes").upload(path,blob,{cacheControl:"3600",upsert:false,contentType});
+    if(error){console.error("[img upload error]",error.message||error);toast("No se pudo subir la imagen");return null;}
+    const{data:urlData}=sb.storage.from("comprobantes").getPublicUrl(path);
+    return urlData?.publicUrl||null;
+  }catch(e){console.error("[img upload exception]",e);return null;}
+}
+
+// ── Composer image (adjunto en chat) ─────────────────────────────────────
+function queueComposerFile(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  state.composerImage=file;
+  const thumb=$("imgPreviewThumb"),nom=$("imgPreviewName"),bar=$("imgPreviewBar");
+  if(!bar)return;
+  nom.textContent=file.name;
+  if(file.type.startsWith("image/")){thumb.src=URL.createObjectURL(file);thumb.style.display="";}
+  else thumb.style.display="none";
+  bar.classList.remove("hidden");
+}
+function clearComposerImage(){
+  state.composerImage=null;
+  const bar=$("imgPreviewBar"),thumb=$("imgPreviewThumb"),inp=$("composeFileInput");
+  if(bar)bar.classList.add("hidden");
+  if(thumb){thumb.src="";thumb.style.display="none";}
+  if(inp)inp.value="";
+}
+
+// ── Billetera ─────────────────────────────────────────────────────────────
+function inferirTipoBilletera(b){
+  const raw=[b?.banco,b?.tipo,b?.nombre_visible,b?.nombre,b?.alias,b?.cbu,b?.cvu].map(x=>String(x||"").toUpperCase()).join(" ");
+  const alias=String(b?.alias||"").toLowerCase();
+  const cbu=String(b?.cbu||b?.cvu||"");
+  if(alias.endsWith(".mp")||cbu.startsWith("00000031")||raw.includes("MERCADO"))return "Mercado Pago";
+  if(raw.includes("NARANJA")||raw.includes("NX")||cbu.startsWith("453"))return "Naranja X";
+  if(raw.includes("UALA")||raw.includes("UALÁ"))return "Ualá";
+  if(raw.includes("PERSONAL"))return "Personal Pay";
+  if(raw.includes("BRUBANK"))return "Brubank";
+  if(raw.includes("BANCO"))return "Banco";
+  return "Billetera";
+}
+async function obtenerBilletera(){
+  const pcs=[state.pcCodigo].map(v=>String(v||"").trim().toUpperCase()).filter(Boolean);
+  for(const pc of [...new Set(pcs)]){
+    const segura=await rpc("landing_obtener_billetera_segura",{
+      p_validacion_usuario_id:Number(localStorage.getItem("bet300_validacion_id")||0),
+      p_usuario:state.usuario||"",p_nombre_completo:state.usuario||"",
+      p_telefono:state.telefono||"",p_dni:"",p_pc_codigo:pc
+    });
+    if(!segura.error&&segura.data&&segura.data.length){state.billetera=normalize(segura.data)||segura.data[0];return state.billetera;}
+    const publica=await rpc("landing_obtener_billetera",{p_pc_codigo:pc});
+    if(!publica.error&&publica.data&&publica.data.length){state.billetera=normalize(publica.data)||publica.data[0];return state.billetera;}
+  }
+  state.billetera=null;return null;
+}
+function billeteraPayloadPlano(){
+  const b=state.billetera||{};
+  return {billetera_id:b.id||b.billetera_id||null,billetera_nombre:b.nombre_visible||b.nombre||"",billetera_titular:b.titular||"",billetera_alias:b.alias||"",billetera_cbu:b.cbu||b.cvu||"",billetera_banco:inferirTipoBilletera(b)};
+}
+
+// ── Cargar (pantalla) ──────────────────────────────────────────────────────
+const MONTOS_RAPIDOS=[2000,5000,10000,20000,50000];
+// Mínimos y regla de 1 retiro por día (24h) desde el portal.
+const MONTO_MIN_CARGA=1000, MONTO_MIN_RETIRO=5000, RETIRO_COOLDOWN_MS=24*60*60*1000;
+const _money=v=>"$"+Number(v).toLocaleString("es-AR");
+function _fmtRestante(ms){const h=Math.floor(ms/3600000),m=Math.round((ms%3600000)/60000);return h>0?(h+"h"+(m>0?" "+m+"m":"")):((m>0?m:1)+"m");}
+// Cooldown de retiro keyeado por usuario (no bloquea a otro usuario en el mismo dispositivo).
+function _retiroKey(){return "bet300_ultimo_retiro_at_"+String(state.usuario||"").toLowerCase();}
+function retiroCooldownRestanteMs(){const last=Number(localStorage.getItem(_retiroKey())||0);if(!last)return 0;const r=RETIRO_COOLDOWN_MS-(Date.now()-last);return r>0?r:0;}
+// ══════════════════════════════════════════════════════════════════════════
+// TITULAR · criterios de entrada
+// El titular es el dato que más se ensucia y el que más rechazos genera. Tres
+// familias de basura, en orden de frecuencia:
+//   1. Caracteres que no son un nombre: números, puntos, comas, guiones, el CBU
+//      pegado, emojis. Se sacan MIENTRAS ESCRIBE, no al enviar: así no llega
+//      nunca a mandarlo y no hay que rechazarlo después.
+//   2. NUESTROS propios datos. La cuenta a la que transfieren está 60px más
+//      arriba en la misma pantalla; se copia el titular/alias/CBU de ahí y se
+//      pega acá. Eso se corta antes de enviar.
+//   3. El propio usuario de plataforma como titular ("mi usuario es juanok12,
+//      pongo juanok12"). No es un nombre real y el cotejo nunca cierra.
+// ══════════════════════════════════════════════════════════════════════════
+const TITULAR_MIN_LETRAS=3;
+
+// Deja SOLO letras (con acentos y ñ) y espacios simples. Todo lo demás se cae:
+// dígitos, punto, coma, guion, barra, símbolos. Un nombre no lleva nada de eso.
+function _soloLetras(v){
+  return String(v||"")
+    .replace(/[^\p{L}\s]/gu,"")   // fuera todo lo que no sea letra o espacio
+    .replace(/\s{2,}/g," ")       // espacios repetidos → uno
+    .replace(/^\s+/,"");          // sin espacio al principio (el del final se deja: está tipeando)
+}
+// Normaliza para COMPARAR (no para mostrar): minúsculas, sin acentos, sin nada
+// que no sea letra o número. Así "JUAN.PEREZ" y "juan perez" son lo mismo.
+function _normComparar(v){
+  return String(v||"").toLowerCase().normalize("NFD")
+    .replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]/g,"");
+}
+// Los datos de NUESTRA billetera, normalizados, para detectar que los copiaron.
+function _datosPropiosNormalizados(){
+  const b=state.billetera||{};
+  return [b.titular,b.alias,b.cbu,b.cvu,b.nombre_visible,b.nombre]
+    .map(_normComparar).filter(function(x){ return x && x.length>=4; });
+}
+// Devuelve "" si está bien, o el motivo por el que no se puede enviar.
+function validarTitular(valor){
+  const v=String(valor||"").trim();
+  const letras=v.replace(/[^\p{L}]/gu,"");
+  if(letras.length<TITULAR_MIN_LETRAS) return "Escribí el nombre y apellido de la cuenta desde la que transferiste.";
+  // Copió NUESTROS datos: el titular de la cuenta de arriba, el alias o el CBU.
+  const n=_normComparar(v), propios=_datosPropiosNormalizados();
+  for(const p of propios){
+    if(n===p || (n.length>=6 && p.indexOf(n)>=0) || (p.length>=6 && n.indexOf(p)>=0)){
+      return "Ese es el titular de NUESTRA cuenta. Poné el nombre de la cuenta desde la que vos transferiste.";
+    }
+  }
+  // Puso su propio usuario de plataforma en vez de su nombre.
+  // OJO: el saneo ya le sacó los dígitos, así que "juanok12" llega acá como "juanok" y una
+  // comparación exacta contra el usuario NO lo agarraba — se colaba igual. Por eso se compara
+  // también contra el usuario SIN dígitos, y por contención en los dos sentidos: "juanok",
+  // "juanok mp" o "soy juanok" tienen que frenar lo mismo.
+  const _uNorm=_normComparar(state.usuario||"");
+  const _uLetras=String(state.usuario||"").replace(/[^\p{L}]/gu,"").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g,"");
+  for(const u of [_uNorm,_uLetras]){
+    if(!u || u.length<3) continue;
+    // n===u: lo puso tal cual · n contiene u: "soy juanok" · u contiene n: escribió una parte.
+    // Los mínimos evitan frenar un nombre real corto (un "Ana" dentro de "anamaria99").
+    if(n===u || (u.length>=4 && n.indexOf(u)>=0) || (n.length>=5 && u.indexOf(n)>=0)){
+      return "Ese es tu usuario de juego, no el titular. Poné el nombre y apellido de la cuenta bancaria.";
+    }
+  }
+  return "";
+}
+// Sanea el campo mientras escribe y avisa en el momento si copió algo que no va.
+function onTitularInput(el){
+  if(!el) return;
+  const antes=el.value, limpio=_soloLetras(antes);
+  if(limpio!==antes){
+    const pos=el.selectionStart, quitados=antes.length-limpio.length;
+    el.value=limpio;
+    try{ el.setSelectionRange(Math.max(0,pos-quitados), Math.max(0,pos-quitados)); }catch(_e){}
+    _titularAviso(el,"Sólo letras: sacamos números, puntos y comas.");
+  } else {
+    _titularAviso(el,"");
+  }
+  el.classList.remove("falta");
+}
+let _titularAvisoTimer=null;
+function _titularAviso(el,msg){
+  const box=$( (el&&el.id==="retiroTitular") ? "avisoTitularRetiro" : "avisoTitular" );
+  if(!box) return;
+  clearTimeout(_titularAvisoTimer);
+  if(!msg){ box.textContent=""; box.style.display="none"; return; }
+  box.textContent=msg; box.style.display="block";
+  _titularAvisoTimer=setTimeout(function(){ if(box) box.style.display="none"; },4000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TITULAR · pre-rellenado del anterior
+// Casi siempre transfieren desde la MISMA cuenta, así que volver a tipear el
+// nombre entero en un teléfono es trabajo al pedo — y es donde más se equivocan.
+// Se pre-rellena con el último titular que usaron EN ESTE TELÉFONO.
+//
+// El punto delicado es que se entienda que YA ESTÁ PUESTO y que no parezca un
+// error. Por eso: el campo se ve distinto (fondo tenue y una marca "Guardado"),
+// arriba dice de dónde salió, y al tocarlo se vacía para escribir otro — con un
+// "volver a poner" al lado, que es lo que evita el susto de "borré todo".
+// ══════════════════════════════════════════════════════════════════════════
+const _TITULAR_PREV_KEY="bet300_ultimo_titular";
+function _titularPrevio(){
+  try{ return String(localStorage.getItem(_TITULAR_PREV_KEY)||"").trim(); }catch(_e){ return ""; }
+}
+function _guardarTitularPrevio(v){
+  try{ if(String(v||"").trim()) localStorage.setItem(_TITULAR_PREV_KEY,String(v).trim()); }catch(_e){}
+}
+// Primer toque sobre un campo pre-rellenado: se vacía para escribir otro nombre.
+// No es destructivo — queda el botón para devolverlo tal cual estaba.
+function titularLimpiarParaOtro(){
+  const el=$("cargaTitular"); if(!el) return;
+  const previo=el.value;
+  el.value=""; el.classList.remove("prellenado");
+  el.dataset.previo=previo;
+  const btn=$("titularCambiar"); if(btn) btn.style.display="none";
+  const pie=$("titularPie");
+  if(pie){
+    pie.innerHTML='Escribí el titular de la cuenta desde la que transferiste. '
+      +'<button class="link-btn" onclick="titularRestaurarPrevio()">↩ Volver a «'+esc(previo)+'»</button>';
+  }
+  try{ el.focus(); }catch(_e){}
+}
+function titularRestaurarPrevio(){
+  const el=$("cargaTitular"); if(!el) return;
+  const previo=String(el.dataset.previo||_titularPrevio()||"");
+  if(!previo) return;
+  el.value=previo; el.classList.add("prellenado"); el.classList.remove("falta");
+  const btn=$("titularCambiar"); if(btn) btn.style.display="";
+  _titularAviso(el,"");
+  _titularPieGuardado();
+}
+function _titularPieGuardado(){
+  const pie=$("titularPie");
+  if(pie) pie.innerHTML='✓ Guardado · es el titular que usaste la vez pasada. Si transferiste desde otra cuenta, tocá <b>Cambiar</b>.';
+}
+
+function renderCarga(){
+  const s=$("screenCarga");
+  s.innerHTML=`<div class="screen-title">Cargar saldo</div>
+    <div class="screen-desc">Transferí y confirmá el monto. Te acreditamos al verificarlo.</div>
+    <div class="user-chip">👤 ${esc(state.usuario)}</div>
+    <div id="rechazoPrevio"></div>
+    <div id="billeteraSlot">
+      <div class="sk-card">
+        <div class="sk sk-line w40"></div>
+        <div class="sk sk-line lg"></div>
+        <div class="sk sk-line w80"></div>
+        <div class="sk sk-line w60"></div>
+      </div>
+    </div>
+    <div class="form-card">
+      <label>Monto transferido (mínimo ${_money(MONTO_MIN_CARGA)})</label>
+      <input id="cargaMonto" type="number" min="${MONTO_MIN_CARGA}" inputmode="numeric" placeholder="Ej: 5000" oninput="syncChips()">
+      <div class="chips">${MONTOS_RAPIDOS.map(v=>`<button type="button" class="chip" data-v="${v}" onclick="setMonto(${v})">$${v.toLocaleString("es-AR")}</button>`).join("")}</div>
+      <label>¿A nombre de quién está la cuenta que usaste para transferir?</label>
+      <div class="titular-wrap">
+        <input id="cargaTitular" placeholder="Tu nombre y apellido" autocomplete="name"
+               oninput="onTitularInput(this)">
+        <button type="button" id="titularCambiar" class="titular-cambiar" style="display:none"
+                onclick="titularLimpiarParaOtro()">Cambiar</button>
+      </div>
+      <div id="avisoTitular" class="titular-aviso" style="display:none"></div>
+      <div id="titularPie" class="campo-ayuda">El tuyo, no el de la cuenta de arriba.</div>
+      <div class="campo-ayuda"><button class="link-btn" onclick="goChat()">Necesito ayuda</button></div>
+      <div class="acciones-fijas">
+        <button id="btnEnviarCarga" class="action-btn" onclick="enviarSolicitudCargaDirecta()">Ya transferí · Enviar solicitud</button>
+      </div>
+    </div>`;
+  cargarBilleteraEnSlot();
+  pintarRechazoPrevio("rechazoPrevio","CARGA");
+  // Pre-rellenar con el titular de la vez pasada (si hay).
+  const _prev=_titularPrevio(), _elT=$("cargaTitular");
+  if(_prev && _elT){
+    _elT.value=_prev; _elT.classList.add("prellenado"); _elT.dataset.previo=_prev;
+    const _b=$("titularCambiar"); if(_b) _b.style.display="";
+    _titularPieGuardado();
+  }
+}
+function setMonto(v){const i=$("cargaMonto");if(i){i.value=v;haptic(6);syncChips();}}
+function syncChips(){
+  const val=String($("cargaMonto")?.value||"").trim();
+  document.querySelectorAll("#screenCarga .chip").forEach(c=>c.classList.toggle("on",c.dataset.v===val));
+}
+async function cargarBilleteraEnSlot(){
+  const slot=$("billeteraSlot");
+  if(!slot)return;
+  // No mostrar datos de transferencia si la sesión no está validada (usuario sin alta no debe verlos).
+  if(String(state.nivelAcceso||"").toUpperCase()==="SOPORTE" || !state.usuario){
+    slot.innerHTML=`<div class="muted-line">Validá tu usuario y teléfono para ver los datos de transferencia.</div>`;
+    state.lastBilleteraSignature="";return;
+  }
+  const b=await obtenerBilletera();
+  if(!b){slot.innerHTML=`<div class="muted-line">Sin billetera disponible por ahora. Consultá por soporte.</div>`;state.lastBilleteraSignature="";return;}
+  const sig=billeteraSignature(b);
+  if(sig && sig===state.lastBilleteraSignature && slot.querySelector(".transfer-card")) return; // misma billetera y ya está pintada → no re-render (antiparpadeo)
+  state.lastBilleteraSignature=sig;
+  const alias=b?.alias||"",cbu=b?.cbu||b?.cvu||"",titular=b?.titular||"",tipo=inferirTipoBilletera(b);
+  const canShare=!!navigator.share;
+  // Medido en 375x812: esta tarjeta ocupaba 340px de los 682 visibles y empujaba el campo del
+  // titular y el botón de enviar por debajo del pliegue. Dos cambios:
+  //  · "Copiar todo" se va cuando el teléfono NO tiene compartir nativo: duplicaba los botones
+  //    de cada campo. "Compartir" sí queda, porque hace algo distinto.
+  //  · El titular de NUESTRA cuenta baja de campo grande a línea al pie. Estaba a 60px del input
+  //    que pide el titular DE ELLOS y 58 personas en 14 días copiaron el nuestro.
+  const pie=[titular?`a nombre de <b>${esc(titular)}</b>`:"", tipo?esc(tipo):""].filter(Boolean).join(" · ");
+  slot.innerHTML=`<div class="transfer-card">
+    <div class="transfer-head">
+      <div class="transfer-title">📥 Transferí a esta cuenta</div>
+      ${canShare?`<button class="share-btn" onclick="compartirBilletera()">↗ Compartir</button>`:""}
+    </div>
+    ${alias?`<div class="transfer-field"><div class="tf-main"><div class="transfer-label">Alias</div><div class="transfer-value">${esc(alias)}</div></div><button class="copy-btn" data-lbl="Copiar" onclick="copyText('${esc(alias)}',this)">Copiar</button></div>`:""}
+    ${cbu?`<div class="transfer-field"><div class="tf-main"><div class="transfer-label">CBU / CVU</div><div class="transfer-value">${esc(cbu)}</div></div><button class="copy-btn" data-lbl="Copiar" onclick="copyText('${esc(cbu)}',this)">Copiar</button></div>`:""}
+    ${pie?`<div class="transfer-owner">${pie}</div>`:""}
+  </div>`;
+}
+function _billeteraTexto(){
+  const b=state.billetera||{};
+  const alias=b?.alias||"",cbu=b?.cbu||b?.cvu||"",titular=b?.titular||"",tipo=inferirTipoBilletera(b);
+  return `BET300 · Datos para transferir\n${alias?"Alias: "+alias+"\n":""}${cbu?"CBU/CVU: "+cbu+"\n":""}${titular?"Titular: "+titular+"\n":""}Tipo: ${tipo}`.trim();
+}
+async function copiarTodo(btn){
+  try{await navigator.clipboard.writeText(_billeteraTexto());}catch(e){}
+  const old=btn.textContent;btn.textContent="✓ Copiado";haptic(8);setTimeout(()=>btn.textContent=old,1300);
+}
+async function compartirBilletera(){
+  try{await navigator.share({title:"BET300 · Transferir",text:_billeteraTexto()});}catch(e){}
+}
+
+// Marca los campos vacíos, lleva el primero a la vista y lo enfoca.
+// Antes un formulario incompleto solo mostraba un cartel abajo que duraba 2,4 s: la persona
+// veía "completá los datos" sin saber CUÁL faltaba, y en Cargar el campo podía estar fuera
+// de pantalla. Devuelve true si falta algo.
+function marcarFaltantes(ids){
+  document.querySelectorAll("input.falta").forEach(e=>e.classList.remove("falta"));
+  const faltan = ids.filter(id => !(($(id)?.value)||"").trim());
+  if(!faltan.length) return false;
+  faltan.forEach(id=>{
+    const e=$(id); if(!e) return;
+    e.classList.add("falta");
+    // se limpia sola apenas empieza a escribir: la marca no debe quedar pegada
+    e.addEventListener("input", ()=>e.classList.remove("falta"), {once:true});
+  });
+  const primero=$(faltan[0]);
+  if(primero){
+    try{ primero.scrollIntoView({block:"center",behavior:"smooth"}); }catch(_e){}
+    try{ primero.focus({preventScroll:true}); }catch(_e){ try{primero.focus();}catch(_e2){} }
+  }
+  haptic(18);
+  return true;
+}
+
+async function enviarSolicitudCargaDirecta(){
+  const monto=($("cargaMonto")?.value||"").trim();
+  const titular=($("cargaTitular")?.value||"").trim();
+  if(marcarFaltantes(["cargaMonto","cargaTitular"])) return toast("Falta completar el campo marcado");
+  if(Number(monto)<MONTO_MIN_CARGA)return toast("La carga mínima es "+_money(MONTO_MIN_CARGA)+".");
+  // Criterios del titular: se corta ACÁ, antes de crear la solicitud. Marcamos el
+  // campo y explicamos qué pasa — no un toast que se va en 2,4 s.
+  const _malT=validarTitular(titular);
+  if(_malT){
+    const el=$("cargaTitular");
+    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
+    _titularAviso(el,_malT);
+    haptic(18);
+    return toast("Revisá el titular");
+  }
+  const btn=$("btnEnviarCarga");
+  if(btn){btn.disabled=true;btn.textContent="Enviando...";}
+  try{
+    await enviarSolicitudCarga(state.usuario,monto,titular);
+  } finally {
+    _restaurarBoton("btnEnviarCarga","Ya transferí · Enviar solicitud");
+  }
+}
+
+// Devuelve un botón de envío a su estado normal. Antes el botón se deshabilitaba acá y
+// enviarSolicitudCarga tenía SEIS salidas tempranas que nunca lo volvían a habilitar: bastaba
+// escribir un titular de dos letras para que quedara en "Enviando..." para siempre, y la única
+// salida era cambiar de pantalla y volver. Si la solicitud SÍ se creó no se toca nada: la
+// pantalla ya cambió a Estado y este botón dejó de existir.
+function _restaurarBoton(id,texto){
+  const b=$(id); if(!b) return;
+  if(tieneSolicitudPendiente()) return;
+  b.disabled=false; b.textContent=texto;
+}
+
+async function copyText(t,btn){
+  if(!t)return;
+  try{await navigator.clipboard.writeText(t);}catch(e){}
+  haptic(8);
+  btn.classList.add("done"); btn.textContent="✓ Copiado";
+  setTimeout(()=>{btn.classList.remove("done");btn.textContent=btn.dataset.lbl||"Copiar";},1600);
+  // NO se pliega la tarjeta al copiar. Antes sí, para dejar lugar al formulario, pero es apurar
+  // a la persona justo en el peor momento: copia el alias, la tarjeta se cierra, y cuando va a
+  // buscar el CBU ya no está. Copiar el alias y copiar el CBU son DOS pasos, y hay que darle
+  // tiempo a los dos. Si quiere ganar lugar, la pliega a mano con "Ocultar datos".
+}
+function plegarBilletera(card, plegar){
+  if(!card) return;
+  card.classList.toggle("plegada", plegar);
+  let t = card.querySelector(".ver-datos");
+  if(!t){
+    t = document.createElement("button");
+    t.className = "ver-datos";
+    t.onclick = () => plegarBilletera(card, !card.classList.contains("plegada"));
+    card.appendChild(t);
+  }
+  t.textContent = plegar ? "Ver los datos otra vez" : "Ocultar datos";
+}
+
+function limpiarSolicitudAnteriorAntesDeNueva(){
+  stopEstadoPoll();stopChatPoll();estadoFinalNotificado=false;
+  state.solicitudId="";state.pendingTipo="";state.chatId="";state.chatToken="";state.seenMsgIds=new Set();
+  ["bet300_solicitud_id","bet300_pending_tipo","bet300_chat_id","bet300_chat_token"].forEach(k=>localStorage.removeItem(k));
+}
+
+async function enviarSolicitudCarga(usuario,monto,titular){
+  if(!_puedeOperar())return;
+  if(!(Number(monto)>0))return toast("Ingresá un monto válido.");
+  if(Number(monto)<MONTO_MIN_CARGA)return toast("La carga mínima es "+_money(MONTO_MIN_CARGA)+".");
+  if(String(titular||"").trim().length<3)return toast("Indicá el titular que transfiere (mínimo 3 letras).");
+  limpiarSolicitudAnteriorAntesDeNueva();
+  const bp=billeteraPayloadPlano();
+  const payload={usuario,monto:Number(monto),titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),tipo:"CARGA",...bp};
+  const destino=bp.billetera_nombre?`${bp.billetera_nombre}${bp.billetera_alias?" · "+bp.billetera_alias:""}`:null;
+  let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_destino:destino,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_metadata:payload});
+  // Rechazo por validación de vínculo → NO usar fallback (sería un bypass). Mandamos a soporte.
+  if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||"")){
+    toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
+  }
+  if(res.error){console.warn("[V18]",res.error);res=await rpc("landing_crear_solicitud_v3_blindado",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_comprobante_url:null,p_extra:payload});}
+  if(res.error){res=await rpc("landing_crear_chat_v2_blindado",{p_public_code:state.publicCode,p_usuario:usuario,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_tipo:"CARGA",p_extra:payload});}
+  if(res.error){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+  const data=normalize(res.data)||res.data||{};
+  const solicitudId=data?.solicitud_id||data?.id||data?.solicitudId||"";
+  const chatId=data?.chat_id||data?.chatId||"";
+  const chatToken=data?.chat_token||data?.chatToken||"";
+  if(chatId){state.chatId=String(chatId);localStorage.setItem("bet300_chat_id",state.chatId);}
+  if(chatToken){state.chatToken=String(chatToken);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  // Sin nº de solicitud REAL no se marca nada como pendiente. Los dos fallbacks de arriba pueden
+  // terminar creando sólo un chat (landing_crear_chat_v2_blindado no crea solicitud), y antes se
+  // guardaba igual el pendiente con id vacío: el portal quedaba trabado —"Ya tenés una solicitud
+  // en revisión" bloqueaba toda carga y todo retiro nuevo— sin nada que consultar para destrabarlo.
+  // La única salida era "Marcar como resuelta en este dispositivo", que casi nadie encuentra.
+  if(!/^\d+$/.test(String(solicitudId||""))){
+    toast("Lo tomamos por el chat · un operador lo confirma");
+    haptic([20,30,20]);
+    renderHome();
+    goChat();
+    startChatPoll();
+    startPortalThreadPoll();
+    setTimeout(()=>subscribePush(),1200);
+    return;
+  }
+  setPendiente("CARGA",String(solicitudId));
+  _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
+  toast("Solicitud enviada ✅");haptic([20,30,20]);
+  renderHome();
+  goEstado();
+  startChatPoll();
+  setTimeout(()=>startEstadoPoll(),8000);
+  setTimeout(()=>subscribePush(),1200);
+}
+
+// ── Retiro (pantalla) ──────────────────────────────────────────────────────
+function renderRetiro(){
+  const s=$("screenRetiro");
+  s.innerHTML=`<div class="screen-title">Solicitar retiro</div>
+    <div class="screen-desc">El retiro queda sujeto a revisión de cuenta y saldo disponible. Podés solicitar <b>1 retiro por día</b>.</div>
+    <div class="user-chip">👤 ${esc(state.usuario)}</div>
+    <div id="rechazoPrevioRetiro"></div>
+    <div class="form-card">
+      <label>Monto (mínimo ${_money(MONTO_MIN_RETIRO)})</label>
+      <input id="retiroMonto" type="number" min="${MONTO_MIN_RETIRO}" inputmode="numeric" placeholder="Ej: 10000">
+      <label>Alias / CBU destino</label>
+      <input id="retiroDestino" placeholder="Alias o CBU/CVU donde cobrás">
+      <label>Titular destino</label>
+      <input id="retiroTitular" placeholder="Nombre del titular de la cuenta" autocomplete="name" oninput="onTitularInput(this)">
+      <div id="avisoTitularRetiro" class="titular-aviso" style="display:none"></div>
+      <button id="btnEnviarRetiro" class="action-btn" onclick="enviarSolicitudRetiro()">Enviar retiro a revisión</button>
+      <button class="action-btn secondary-btn" style="margin-top:9px" onclick="goChat()">Necesito ayuda</button>
+    </div>`;
+  pintarRechazoPrevio("rechazoPrevioRetiro","RETIRO");
+}
+
+async function enviarSolicitudRetiro(){
+  if(!_puedeOperar())return;
+  const restRet=retiroCooldownRestanteMs();
+  if(restRet>0)return toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(restRet)+".");
+  const usuario=state.usuario,montoRaw=$("retiroMonto")?.value.trim(),destino=$("retiroDestino")?.value.trim(),titular=$("retiroTitular")?.value.trim();
+  if(marcarFaltantes(["retiroMonto","retiroDestino","retiroTitular"])) return toast("Falta completar el campo marcado");
+  const monto=Math.abs(Number(montoRaw));
+  if(!monto||monto<=0)return toast("Ingresá un monto válido mayor a cero");
+  if(monto<MONTO_MIN_RETIRO)return toast("El retiro mínimo es "+_money(MONTO_MIN_RETIRO)+".");
+  if(String(destino).trim().length<6)return toast("El alias/CBU de destino es muy corto.");
+  const _malTR=validarTitular(titular);
+  if(_malTR){
+    const el=$("retiroTitular");
+    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
+    _titularAviso(el,_malTR);
+    haptic(18);
+    return toast("Revisá el titular");
+  }
+  const btn=$("btnEnviarRetiro");
+  if(btn){btn.disabled=true;btn.textContent="Enviando...";}
+  limpiarSolicitudAnteriorAntesDeNueva();
+  const msg="Solicitud de RETIRO: $"+monto+" · Destino: "+destino+" · Titular: "+titular;
+  const payload={usuario,monto,destino,titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),tipo:"RETIRO"};
+  let res=await rpc("landing_portal_v16_crear_solicitud",{
+    p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
+    p_monto:monto,p_titular:titular,p_destino:destino,p_mensaje:msg,p_metadata:payload
+  });
+  if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||"")){
+    _restaurarBoton("btnEnviarRetiro","Enviar retiro a revisión");
+    toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
+  }
+  if(res.error){
+    console.warn("[V18] retiro v16 falló",res.error);
+    res=await rpc("landing_crear_solicitud_v3_blindado",{
+      p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
+      p_monto:monto,p_titular:titular,p_comprobante_url:null,p_extra:payload
+    });
+  }
+  if(res.error){
+    res=await rpc("landing_crear_chat_v2_blindado",{
+      p_public_code:state.publicCode,p_usuario:usuario,
+      p_mensaje:msg,p_tipo:"RETIRO",p_extra:payload
+    });
+  }
+  if(res.error){_restaurarBoton("btnEnviarRetiro","Enviar retiro a revisión");toast("No pudimos enviar el retiro. Probá por el chat.");goChat();return;}
+  const dataR=normalize(res.data)||res.data||{};
+  const solicitudId=dataR?.solicitud_id||dataR?.id||dataR?.solicitudId||"";
+  const chatId=dataR?.chat_id||dataR?.chatId||"";
+  const chatToken=dataR?.chat_token||dataR?.chatToken||"";
+  if(chatId){state.chatId=String(chatId);localStorage.setItem("bet300_chat_id",state.chatId);}
+  if(chatToken){state.chatToken=String(chatToken);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  // Antes acá se inventaba un id: "pendiente-local-<timestamp>". Ese id no existe en la base, así
+  // que el portal quedaba bloqueado para siempre (no dejaba pedir otro retiro ni cargar) mientras
+  // consultaba cada 6 s el estado de la solicitud 0. Encima arrancaba el cooldown de 24 h por un
+  // retiro que nunca se creó. Sin nº real: va por chat y no se traba nada.
+  if(!/^\d+$/.test(String(solicitudId||""))){
+    toast("Lo tomamos por el chat · un operador lo confirma");
+    haptic([20,30,20]);
+    renderHome();
+    goChat();
+    startChatPoll();
+    startPortalThreadPoll();
+    setTimeout(()=>subscribePush(),1200);
+    return;
+  }
+  setPendiente("RETIRO",String(solicitudId));
+  try{localStorage.setItem(_retiroKey(),String(Date.now()));}catch(_e){} // arranca el cooldown de 24h (1 retiro/día)
+  toast("Retiro enviado a revisión 🕓");haptic([20,30,20]);
+  renderHome();
+  goEstado();
+  startChatPoll();
+  setTimeout(()=>startEstadoPoll(),8000);
+  setTimeout(()=>subscribePush(),1200);
+}
+
+// ── Reset de clave (pantalla) — tipo CAMBIO_CLAVE ──────────────────────────
+function renderClave(){
+  const s=$("screenClave");
+  s.innerHTML=`<div class="screen-title">Reiniciar clave</div>
+    <div class="screen-desc">Pedí el reseteo de tu clave de juego. Si dejás el campo vacío, se resetea a la clave por defecto <b>12345a</b>.</div>
+    <div class="user-chip">👤 ${esc(state.usuario)}</div>
+    <div class="form-card">
+      <label>Nueva clave (opcional)</label>
+      <input id="claveNueva" placeholder="Mínimo 6 caracteres · letras y números">
+      <button id="btnEnviarClave" class="action-btn" onclick="enviarSolicitudClave()">Solicitar reseteo de clave</button>
+      <button class="action-btn secondary-btn" style="margin-top:9px" onclick="goChat()">Necesito ayuda</button>
+    </div>`;
+}
+
+async function enviarSolicitudClave(){
+  if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return; }
+  if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return; }
+  const claveRaw=($("claveNueva")?.value||"").trim();
+  const clave=claveRaw||"12345a";
+  if(clave.length<6)return toast("La clave debe tener al menos 6 caracteres");
+  if(!/^[a-zA-Z0-9]+$/.test(clave))return toast("Solo letras y números, sin espacios ni símbolos");
+  const btn=$("btnEnviarClave");
+  if(btn){btn.disabled=true;btn.textContent="Enviando...";}
+  const payload={usuario:state.usuario,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,tipo:"CAMBIO_CLAVE",password_nuevo:clave};
+  let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:state.usuario,p_tipo:"CAMBIO_CLAVE",p_monto:0,p_titular:"",p_destino:null,p_mensaje:"Solicitud de CAMBIO_CLAVE",p_metadata:payload});
+  if(res.error){console.warn("[V18] clave v16 falló",res.error);res=await rpc("landing_crear_chat_v2_blindado",{p_public_code:state.publicCode,p_usuario:state.usuario,p_mensaje:"Solicitud de CAMBIO DE CLAVE",p_tipo:"CAMBIO_CLAVE",p_extra:payload});}
+  if(res.error){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+  const d=normalize(res.data)||res.data||{};
+  if(d.chat_id){state.chatId=String(d.chat_id);localStorage.setItem("bet300_chat_id",state.chatId);}
+  if(d.chat_token){state.chatToken=String(d.chat_token);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  toast("Solicitud de cambio de clave enviada 🔑");
+  goChat();
+  addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Un operador la procesará en breve. Te avisamos por este mismo chat.',"bot");
+  startChatPoll();startPortalThreadPoll();
+  setTimeout(()=>subscribePush(),1200);
+}
+
+// ── Mensajería libre (chat) ────────────────────────────────────────────────
+async function enviarMensajeSoporte(txt,imagenUrl=null){
+  const mensaje=String(txt||"").trim();
+  if(!mensaje&&!imagenUrl)return;
+  let res=null;
+
+  if(state.chatId&&state.chatToken){
+    res=await rpc("landing_enviar_mensaje_v2",{
+      p_chat_id:Number(state.chatId),p_chat_token:state.chatToken,
+      p_emisor:state.usuario,p_mensaje:mensaje,p_imagen_url:imagenUrl||""
+    });
+  }
+
+  if(!res||res.error){
+    const bp=billeteraPayloadPlano();
+    const payload={usuario:state.usuario,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,tipo:"SOPORTE",...bp,...(imagenUrl?{imagen_url:imagenUrl}:{})};
+    res=await rpc("landing_portal_v16_crear_solicitud",{
+      p_public_code:state.publicCode,p_usuario:state.usuario,
+      p_tipo:"SOPORTE",p_monto:0,p_titular:"",p_destino:null,
+      p_mensaje:mensaje||(imagenUrl?"📎 Imagen adjunta":""),p_metadata:payload
+    });
+    if(!res.error){
+      const d=normalize(res.data)||res.data||{};
+      if(d.chat_id){state.chatId=String(d.chat_id);localStorage.setItem("bet300_chat_id",state.chatId);}
+      if(d.chat_token){state.chatToken=String(d.chat_token);localStorage.setItem("bet300_chat_token",state.chatToken);}
+    }
+  }
+
+  if(!res||res.error){addMsg("No pudimos enviar el mensaje. Intentá en unos segundos.","bot");return;}
+  startChatPoll();
+  startPortalThreadPoll();
+}
+
+async function sendFreeMessage(){
+  const input=$("freeInput"),txt=input.value.trim();
+  const hasImg=!!state.composerImage;
+  if(!txt&&!hasImg)return;
+  if(!state.usuario){toast("Primero indicá tu usuario");goHome();return;}
+  input.value="";
+  if(txt){ addMsg(esc(txt),"user"); state.shownTexts.add("u|"+txt.substring(0,200)); }
+  let imgUrl=null;
+  if(hasImg){
+    const file=state.composerImage;
+    clearComposerImage();
+    imgUrl=await subirImagen(file);
+    if(imgUrl){ addMsg("📎 Imagen adjunta","user",imgUrl); state.shownTexts.add("uimg|"+imgUrl.substring(0,80)); }
+  }
+  await enviarMensajeSoporte(txt||"",imgUrl);
+}
+
+// ── Push PWA ──────────────────────────────────────────────────────────────
+const VAPID_PUB_KEY="BAH2MtolgsjjO31mPNwMi0WIl-T4LEDocaGSc1F3RUE0F7ZOF-1eJ1gXSuisalnR6tu0ZYcISWtnRdH-S5MFYBw";
+function _vapidKey(b64){
+  const pad="=".repeat((4-b64.length%4)%4);
+  const raw=atob((b64+pad).replace(/-/g,"+").replace(/_/g,"/"));
+  const out=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);
+  return out;
+}
+async function subscribePush(){
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)||!state.usuario)return;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      const perm=await Notification.requestPermission();
+      if(perm!=="granted")return;
+      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_vapidKey(VAPID_PUB_KEY)});
+    }
+    // DEDUP: subscribePush() se llama desde 8 lugares (incluido renderChat, o sea cada vez que se
+    // abre el chat) y antes POSTEABA SIEMPRE, aunque la suscripción ya estuviera guardada y no
+    // hubiera cambiado nada → millones de invocaciones de función en Vercel al pedo.
+    // Ahora solo se guarda si cambió el usuario/teléfono/endpoint, o si pasaron 24 h.
+    const _firma = [state.usuario||"", state.telefono||"", sub.endpoint||""].join("|");
+    const _KEY = "bet300_push_saved";
+    try{
+      const prev = JSON.parse(localStorage.getItem(_KEY)||"{}");
+      if(prev.firma === _firma && (Date.now() - Number(prev.ts||0)) < 24*60*60*1000) return; // ya guardada
+    }catch(_e){}
+    const _r = await fetch("/api/save-subscription",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({usuario:state.usuario,public_code:state.publicCode,telefono:state.telefono||"",subscription:sub.toJSON()})
+    });
+    if(_r && _r.ok){ try{ localStorage.setItem(_KEY, JSON.stringify({firma:_firma, ts:Date.now()})); }catch(_e){} }
+  }catch(e){console.warn("[BET300 push]",e);}
+}
+async function notificarLocal(title,body,url,tag){
+  if(!("serviceWorker" in navigator)||Notification.permission!=="granted")return;
+  if(document.visibilityState==="visible"&&$("widget")?.classList.contains("open"))return;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    reg.showNotification(title,{body,icon:"/icons/icon-192.png",badge:"/icons/badge-72.png",
+      tag:tag||"bet300",renotify:true,data:{url:url||"/"},vibrate:[200,80,200]});
+  }catch(e){}
+}
+
+// ── Page Visibility ────────────────────────────────────────────────────────
+// El listener vive más abajo, junto a _reanudarPollsVisibles(). Acá había un SEGUNDO listener
+// duplicado que hacía lo mismo: los dos se disparaban en cada cambio de pestaña y arrancaban los
+// polls dos veces seguidas. No llegaba a crear timers de más (cada start hace su stop antes),
+// pero duplicaba las consultas del arranque contra Supabase.
+
+// ── Aviso de solicitud muy vieja (más de 24h) ─────────────────────────────
+function chequearPendienteViejo(){
+  if(!tieneSolicitudPendiente())return;
+  const started=Number(state.solicitudStartedAt||localStorage.getItem("bet300_solicitud_started_at")||0);
+  if(!started)return;
+  const hs=(Date.now()-started)/3600000;
+  if(hs<24)return;
+  setTimeout(()=>toast(`Tu solicitud lleva +${Math.round(hs)}h. Si ya fue procesada, marcala como resuelta en Estado.`),3000);
+}
+
+// ── Teclado: Enter para enviar / Esc para cerrar ──────────────────────────
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("widget")?.classList.contains("open")){toggleWidget(false);return;}
+  if(e.target.id!=="freeInput")return;
+  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendFreeMessage();}
+});
+
+// ── Paste de imagen en el chat (Ctrl+V) ──────────────────────────────────
+document.addEventListener("paste",e=>{
+  if(state.screen!=="chat")return;
+  const items=[...(e.clipboardData?.items||[])];
+  const imgItem=items.find(it=>it.type.startsWith("image/"));
+  if(!imgItem)return;
+  e.preventDefault();
+  const file=imgItem.getAsFile();
+  if(!file)return;
+  state.composerImage=file;
+  const thumb=$("imgPreviewThumb"),nom=$("imgPreviewName"),bar=$("imgPreviewBar");
+  if(!bar)return;
+  nom.textContent="Imagen pegada del portapapeles";
+  thumb.src=URL.createObjectURL(file);
+  thumb.style.display="";
+  bar.classList.remove("hidden");
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────
+// ── Promo primer ingreso: marcar "app instalada" si corre como PWA instalada ──
+function marcarAppInstalada(){
+  try{
+    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if(standalone && state.usuario && state.pcCodigo){
+      rpc("landing_marcar_app_instalada",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario});
+    }
+  }catch(_e){}
+}
+// Capturamos el prompt de instalación para dispararlo desde el botón del bono.
+window._deferredInstallPrompt=null;
+window.addEventListener('beforeinstallprompt', function(ev){ ev.preventDefault(); window._deferredInstallPrompt=ev; });
+window.addEventListener('appinstalled', function(){
+  window._deferredInstallPrompt=null;
+  try{ localStorage.setItem("bet300_app_instalada","1"); }catch(_e){}
+  try{ if(state.usuario && state.pcCodigo) rpc("landing_marcar_app_instalada",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario}); }catch(_e){}
+  try{ if(state.screen==="home") renderHome(); }catch(_e){}
+});
+
+// Banner "hay versión nueva · Actualizar" para la PWA instalada. Aparece solo cuando el SW nuevo
+// quedó en espera (o sea, ya había una versión corriendo). No molesta a quien recién instala.
+function mostrarActualizarPWA(reg){
+  if(document.getElementById("swUpdateBanner"))return;
+  const b=document.createElement("div");
+  b.id="swUpdateBanner";
+  b.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(14px + var(--safe-b));z-index:99999;background:#11203a;border:1px solid var(--gold-deep);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 12px 34px rgba(0,0,0,.55)";
+  b.innerHTML='<div style="flex:1;font-size:13px;font-weight:700;color:#eaf2ff;line-height:1.35">🔄 Hay una versión nueva del cajero.</div>'
+    +'<button id="swUpdBtn" style="background:var(--gold);color:#1a1500;border:none;border-radius:10px;padding:9px 15px;font-weight:800;cursor:pointer;flex-shrink:0">Actualizar</button>';
+  document.body.appendChild(b);
+  document.getElementById("swUpdBtn").onclick=function(){
+    window._swWillReload=true; this.textContent="Actualizando…"; this.disabled=true;
+    try{ if(reg&&reg.waiting) reg.waiting.postMessage({type:"SKIP_WAITING"}); else window.location.reload(); }
+    catch(_e){ window.location.reload(); }
+  };
+}
+// Rendimiento: cuando la app pasa a segundo plano (oculta), pausamos TODOS los polls para no
+// pegarle a Supabase al pedo; al volver, reanudamos según el estado (widget abierto / pendiente).
+function _reanudarPollsVisibles(){
+  const abierto = $("widget")?.classList.contains("open");
+  if(abierto){
+    if(state.chatId) startChatPoll();
+    if(state.usuario) startPortalThreadPoll();
+  }
+  if(tieneSolicitudPendiente()) startEstadoPoll();
+}
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="hidden"){ stopChatPoll(); stopPortalThreadPoll(); stopEstadoPoll(); }
+  else { _reanudarPollsVisibles(); }
+});
+window.addEventListener("load",async()=>{
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/sw.js").then(reg=>{
+      // ¿ya hay una versión nueva esperando de antes?
+      if(reg.waiting && navigator.serviceWorker.controller) mostrarActualizarPWA(reg);
+      // detectar cuando se instala una versión nueva mientras la app está abierta
+      reg.addEventListener("updatefound",()=>{
+        const nw=reg.installing; if(!nw)return;
+        nw.addEventListener("statechange",()=>{
+          if(nw.state==="installed" && navigator.serviceWorker.controller) mostrarActualizarPWA(reg);
+        });
+      });
+      // chequear si hay update cada 1h y cada vez que vuelven a la app
+      setInterval(()=>{ reg.update().catch(()=>{}); }, 60*60*1000);
+      document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") reg.update().catch(()=>{}); });
+    }).catch(e=>console.warn("[SW]",e));
+    // recargar SOLO cuando el usuario aceptó actualizar (no en la primera instalación)
+    navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(window._swWillReload) window.location.reload(); });
+  }
+  // El iframe ya trae src en el HTML (carga desde el parseo, lo antes posible). Solo lo seteamos
+  // acá si quedó vacío → así NO recargamos la plataforma (antes se cargaba 2 veces = doble espera).
+  try{ const _af=$("appFrame"); if(_af && (!_af.getAttribute("src") || _af.getAttribute("src")==="about:blank")) _af.src=PLATFORM_URL; }catch(_e){}
+  restoreLauncherMini();
+  await initRoute();
+  // Va DESPUÉS de initRoute: el enlace sabe de qué agente es el usuario, y esa oficina manda
+  // sobre la que se dedujo por host/ruta (puede abrirlo desde cualquier lado, incluso sin ?r=).
+  const acceso = await canjearEnlaceAcceso();
+  await cargarPromoActiva();
+  setTimeout(marcarAppInstalada, 2500);
+  renderHome();
+  showScreen("home");
+  // mostrarLauncherSiHaceFalta(); // RETIRADO 2026-07-27: el launcher iPhone confundía a usuarios que veían el iframe bien
+  // Botón directo: el operador eligió si el enlace abre en Cargar o en Retirar.
+  //
+  // OJO con el orden: el panel arranca CERRADO (corrido 812px hacia abajo) y la plataforma ocupa
+  // toda la pantalla. Cambiar de pantalla adentro de un panel cerrado no se ve — la persona
+  // entraba por el enlace y veía el casino, teniendo que buscar el botón "Cajero". Primero se
+  // abre el panel, después se elige la pantalla; toggleWidget deja "home" si no se corrige.
+  //
+  // goCarga/goRetiro mantienen sus frenos (solicitud pendiente, límite diario de retiro): si no
+  // corresponde, desvían solos y el panel queda abierto en Inicio, que igual es lo que se busca.
+  if(acceso && (acceso.destino==="CARGAR" || acceso.destino==="RETIRAR")){
+    try{ toggleWidget(true); }catch(_e){}
+    try{ if(acceso.destino==="CARGAR") goCarga(); else goRetiro(); }catch(_e){}
+  }
+  if(tieneSolicitudPendiente()){
+    startEstadoPoll();
+    chequearPendienteViejo();
+  }
+});
+</script>
+</body>
+</html>

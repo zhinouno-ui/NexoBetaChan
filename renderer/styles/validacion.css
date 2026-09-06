@@ -1,0 +1,58 @@
+
+/* ============================================================
+   NODO · VALIDACION USUARIOS SOFT QUEUE
+   ============================================================ */
+.val-toolbar{
+  display:grid;
+  grid-template-columns:1.2fr .8fr .8fr auto;
+  gap:8px;
+  margin-bottom:12px;
+}
+.val-toolbar input,.val-toolbar select{
+  margin:0!important;
+  padding:9px 10px!important;
+  font-size:12px!important;
+}
+.val-card-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:10px;
+  margin-bottom:12px;
+}
+.val-card{
+  background:#121926;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:14px;
+  padding:12px;
+}
+.val-card .k{font-size:10px;color:#98a2b3;text-transform:uppercase;font-weight:900;letter-spacing:.4px}
+.val-card .v{font-size:22px;font-weight:950;margin-top:4px}
+.val-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  border-radius:999px;
+  padding:4px 8px;
+  font-size:10px;
+  font-weight:950;
+}
+.val-pend{background:#3b300b;color:#fde68a}
+.val-proc{background:#102a56;color:#bfdbfe}
+.val-ok{background:#12351f;color:#bbf7d0}
+.val-no{background:#3a1515;color:#fecaca}
+.val-err{background:#431407;color:#fed7aa}
+.val-row-warn{background:rgba(245,158,11,.055)!important}
+.val-actions{display:flex;gap:6px;flex-wrap:wrap}
+.val-mini-note{
+  margin-top:10px;
+  color:#9aa6b8;
+  font-size:12px;
+  line-height:1.4;
+  background:rgba(255,255,255,.035);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;
+  padding:10px;
+}
+@media(max-width:1000px){
+  .val-toolbar{grid-template-columns:1fr 1fr}
+}

@@ -1,5 +1,9 @@
 # NODO PC4 · App Unificada V1
 
+El fuente del panel operativo ahora se edita en [`renderer/`](renderer/README.md).
+Ejecutar `npm run panel:build` después de editar y `npm test` para verificar.
+El HTML de la raíz es generado. Estado y continuidad: [MODULARIZACION.md](MODULARIZACION.md).
+
 Primera base para fusionar ambos enfoques:
 
 - Una sola app Electron por PC.
