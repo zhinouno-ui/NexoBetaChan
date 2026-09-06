@@ -624,3 +624,56 @@ Lo que quedó sin hacer, con lo que hace falta para cerrarlo.
 - **D-26** · `tomada_por_operador_id` en NULL el 100 %: bloquea el criterio central de la expiración automática.
 - **§10 de SISTEMA_ENLACE** · criterios de expiración: retiros 90 min, cargas nunca por tiempo solo. Sin implementar.
 - **`codigo_op`** (§1) · falta decidir el formato antes del backfill de 183.895 filas.
+
+---
+
+## D-29 · La búsqueda del CRM traía 124.843 teléfonos por un dígito suelto · RESUELTO
+
+**Evidencia** — `panel_crm_perfil_v1` hacía `v_qd := regexp_replace(v_q,'\D','','g')` —los dígitos
+sueltos de la query— y después `telefono_canon like '%'||v_qd||'%'`. Buscar `redpoint1` dejaba
+`v_qd = '1'` y matcheaba **todo teléfono con un 1 adentro**. Medido:
+
+| Búsqueda | Antes | Ahora |
+|---|---:|---:|
+| `redpoint1` | **124.843** | 0 |
+| `1166489726` | 2 | 2 |
+| `5491166489726` | **0** | 2 |
+| `+54 9 11 6648-9726` | **0** | 2 |
+
+La RPC cortaba a 100 candidatos, así que devolvía basura arbitraria y el usuario buscado nunca
+llegaba a entrar en el corte.
+
+**Impacto** — La búsqueda del CRM era inutilizable con cualquier query que tuviera un número.
+Y buscar el teléfono en formato internacional (como lo copia todo el mundo desde WhatsApp) no
+encontraba nada, porque `telefono_canon` se guarda sin el `549`.
+
+**Estado** — **RESUELTO** · migración `crm_perfil_busqueda_telefono_y_motivo`: sólo se busca por
+teléfono con 6+ dígitos, se comparan los **últimos 10 dígitos** de los dos lados (el `54`, `549`,
+`0` y `15` dejan de importar), y el resultado exacto va primero para que el límite no lo corte.
+
+---
+
+## D-30 · El CRM se repintaba encima del operador mientras escribía · RESUELTO
+
+**Evidencia** — `renderCRM()` reescribe el `innerHTML` de toda la vista, y hay **dos disparos
+tardíos**: `setTimeout(…, 1000)` al arrancar, y el override de `mostrarVista` que espera a
+`cargarOperacionesAgente()` (~2 s según el comentario del propio código) y recién ahí repinta.
+
+**Impacto** — Abrías el CRM, empezabas a escribir, y a los segundos se te borraba el texto. Había
+que esperar a que el campo volviera a existir para tipear de nuevo.
+
+**Estado** — **RESUELTO** · `renderCRM` no repinta si el buscador tiene el foco o algo escrito.
+Protege todos los call sites de una vez.
+
+---
+
+## D-31 · Cada resultado del CRM no decía por qué aparecía · RESUELTO
+
+Se mezclaban coincidencias de usuario, teléfono y titular sin distinguirlas. Ahora cada fila
+lleva su motivo: `🎯 exacto` · `👤 usuario` · `📱 teléfono` · `🧾 titular`.
+
+**Pendiente de esta idea:** sumar **misma IP** como motivo. Hoy no se guarda: `landing_solicitudes.metadata`
+tiene `host`, `navegador`, `pc_codigo` — pero **no la IP**. Habría que capturarla en el portal al
+crear la solicitud. No da la dirección exacta, pero sirve para dos cosas: saber de qué tipo de
+lugar entra la gente y, sobre todo, **detectar varias cuentas desde la misma casa** — otra forma
+de agarrar a los que cazan bonos.
