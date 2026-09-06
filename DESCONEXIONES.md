@@ -608,6 +608,7 @@ Lo que quedó sin hacer, con lo que hace falta para cerrarlo.
 |---|---|---|
 | **«¿Transferiste a otra billetera?»** | Mostramos un solo CBU activo; el que transfirió a otro no tiene cómo avisar salvo escribiendo. Criterio acordado: lista cerrada de NUESTRAS billeteras (no texto libre), aparece en **Estado** después de enviar (no en Cargar), se cuenta por usuario, y la solicitud llega marcada `⚠ OTRA BILLETERA · verificar`. | RPC nueva `landing_listar_billeteras_oficina(p_public_code)` → devuelve nombre + alias, **sin CBU**. |
 | **Sistema de validación** | Varios caminos distintos haciendo a medias el trabajo de uno. Ver el artefacto de revisión. Juan lo dejó explícitamente para más adelante. | Decisión de diseño: cuál manda. |
+| **Campaña real (reemplazo de la push eliminada)** | Se sacó el disparo masivo a ciegas (D-36). Una campaña de verdad tiene que mostrar **a quién** (lista con nombres, editable), **a cuántos** (con push activo, dato del servidor) y **por qué** (motivo guardado con el envío) antes de mandar. Hoy no queda registro de ningún envío. | Segmentación desde **Nexo**, no desde `buildCRM()`. Tabla de envíos para el registro. |
 | **Cambio de billetera ambiguo en el historial** | Se muestra el valor final donde hubo una transición. Propuesta: `MASSA PP → CASTRO` con quién y cuándo, ícono 🔀 y filtro «cambiadas». | Pospuesto por Juan. |
 
 ## Hecho pero con límite conocido
@@ -767,3 +768,59 @@ pensando que es una mejora:
   y nadie va a poder explicarle a la persona por qué no puede operar.
 - La IP es **una señal para mirar, no una prueba.** Sirve para ordenar a quién revisar primero,
   no para decidir solo.
+
+---
+
+## D-36 · Campaña Push · ELIMINADA · mismo criterio que el bloqueo por IP
+
+**Qué había** — Una tarjeta «📣 Campaña Push» en el CRM: elegís un segmento (VIP / Activo /
+Tibio / Frío / Nuevo o *todos*), escribís título y mensaje, y un botón **Enviar campaña**
+disparaba una notificación push a esa lista entera de una.
+
+**Evidencia de que no podía funcionar bien** — el segmento salía de `buildCRM()`, la misma
+función que rompía los contadores de D-34:
+
+```js
+const data = window._crmJugadoresData || buildCRM();
+const targets = seg ? data.filter(j => U(j.segmento) === U(seg)) : data;
+```
+
+y `buildCRM()` abre con `if(!window._crmCargado){ return []; }`. O sea:
+
+- Sin apretar «Cargar lista» → `targets` vacío → *«No hay jugadores para ese segmento»*.
+- Con la lista cargada → manda a **lo que bajó esa PC**, no a la oficina. El operador no tenía
+  forma de saber a cuántos ni a quiénes le estaba escribiendo hasta después de mandar, cuando
+  el resultado decía «N enviados».
+
+Es exactamente el problema de D-34, pero en vez de dibujar un número equivocado, **manda
+notificaciones a gente real**.
+
+**Estado** — **ELIMINADA** · se sacaron la tarjeta, `crmEnviarCampania()` y `campAutoTexto()`
+(esta última sólo existía para autocompletar el texto de la campaña). −3.517 bytes.
+
+**Lo que queda y sigue andando** — el push **de a un jugador**: el botón `📲 Push` de cada fila
+del CRM y el del perfil (`perfil-jugador.js:251`), los dos van a `crmPushIndividual()`. Ese sí
+sabe a quién le manda, porque el operador lo eligió. También sigue intacto el push propio de la
+cola de reconexión (línea ~726), que nunca usó la campaña. Eso es la reducción que pidió Juan:
+*«en todo caso la reducimos a un botón de notificación y dejaría de ser campaña»*.
+
+**Criterio de Juan, textual:** *«bajo el mismo criterio del bloqueo de ip... no me parece lógico
+ese sistema»*. Un disparo masivo a ciegas es lo mismo que un bloqueo automático: una acción que
+afecta a mucha gente de una, en manos de operadores que no controla, sin que nadie pueda decir
+después a quién le llegó.
+
+### Si algún día se hace una campaña de verdad, requisitos
+
+No es «volver a poner el botón». Una campaña sirve para **promoción** o para **avisar un
+cambio**, y antes de mandar tiene que poder responder tres preguntas en pantalla:
+
+1. **A quién** — la lista concreta, con nombres, revisable y editable antes de disparar. No un
+   segmento abstracto calculado en el navegador de esa PC.
+2. **A cuántos** — el número real de destinatarios **con suscripción push activa**, del
+   servidor, no del cache local.
+3. **Por qué** — el motivo queda escrito y guardado con el envío: qué promo, qué cambio, quién
+   la mandó y cuándo. Hoy no queda registro de ningún envío en ningún lado.
+
+Además: la segmentación tiene que venir de **Nexo** (misma conclusión que D-34), no de
+`buildCRM()`. Y conviene un tope por operador y por día, más un preview del mensaje tal como lo
+va a ver el jugador.

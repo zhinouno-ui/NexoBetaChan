@@ -1124,40 +1124,12 @@ window.crmBuscarDebounce=function(){
   // casi siempre. Y aun cargando, contaban solo lo que esta PC bajo, no la oficina.
   // La segmentacion real la tiene que dar Nexo, que ve todas las operaciones y no una copia local.
   // Queda "Registrados (WTK)", que es un count(*) del servidor y si es cierto.
-  view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn ${window._crmCargado?'gray':'yellow'}" onclick="crmCargarLista()" title="Arma la lista completa de la oficina. Tarda unos segundos: normalmente alcanza con buscar.">📥 ${window._crmCargado?'Recargar lista':'Cargar lista'}</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat" title="Usuarios registrados en la base de Whaticket. Es un count(*) del servidor: no depende de cargar la lista."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Buscá usuario o teléfono…" oninput="crmBuscarDebounce()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
-    <div class="card" style="margin-top:14px">
-      <h2 class="card-title">📣 Campaña Push</h2>
-      <div class="small" style="color:var(--muted);margin-bottom:14px">Enviá una notificación push a un segmento de jugadores que tengan el portal instalado.</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:10px">
-        <div>
-          <label class="small">Segmento objetivo</label>
-          <select id="campSeg" style="margin-top:4px" onchange="campAutoTexto()">
-            <option value="">Todos los jugadores</option>
-            <option value="VIP">VIP</option>
-            <option value="ACTIVO">Activo</option>
-            <option value="TIBIO">Tibio (reactivar)</option>
-            <option value="FRIO">Frío (recuperar)</option>
-            <option value="NUEVO">Nuevo</option>
-          </select>
-        </div>
-        <div>
-          <label class="small">Título de la notificación</label>
-          <input id="campTitulo" placeholder="BET300 · Promo especial" style="margin-top:4px" value="BET300 · Promo especial">
-        </div>
-      </div>
-      <div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <label class="small">Mensaje</label>
-          <button class="mini-btn gray" onclick="campAutoTexto()" style="font-size:11px">Auto-texto según segmento</button>
-        </div>
-        <textarea id="campMensaje" rows="3" placeholder="Escribí el mensaje que recibirán los jugadores..." style="width:100%;border-radius:10px;padding:10px;background:#0e1525;color:#fff;border:1px solid #2d3342;resize:vertical"></textarea>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-green" id="campBtn" onclick="crmEnviarCampania()" style="max-width:220px">📣 Enviar campaña</button>
-        <div id="campResultado" style="display:none;font-size:13px;font-weight:700;color:#12b76a;padding:8px 12px;background:#0d2b1a;border-radius:10px;border:1px solid #12b76a44"></div>
-      </div>
-    </div>`;renderCRMTabla(data)}
-  // ── Push campaign helpers ─────────────────────────────────────────────────
+  view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn ${window._crmCargado?'gray':'yellow'}" onclick="crmCargarLista()" title="Arma la lista completa de la oficina. Tarda unos segundos: normalmente alcanza con buscar.">📥 ${window._crmCargado?'Recargar lista':'Cargar lista'}</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat" title="Usuarios registrados en la base de Whaticket. Es un count(*) del servidor: no depende de cargar la lista."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Buscá usuario o teléfono…" oninput="crmBuscarDebounce()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>`;renderCRMTabla(data)}
+  // ── Push, de a un jugador por vez ─────────────────────────────────────────
+  // La "Campaña Push" (mandarle a un segmento entero de una) se sacó a propósito:
+  // el segmento salía de buildCRM(), que devuelve [] si nadie cargó la lista, así que
+  // el botón no podía decir a quién ni a cuántos les estaba mandando. Un disparo masivo
+  // a ciegas no se le entrega a nadie. Queda el push por jugador, que sí sabe a quién va.
   async function pushEnviar(payload){
     try{
       const r=await fetch(window.PUSH_API_URL,{
@@ -1189,34 +1161,6 @@ window.crmBuscarDebounce=function(){
     else if(res.reason==="sin_suscripciones")msg="Sin suscripción activa para "+usuario;
     else msg="No se envió ("+(res.failed||0)+" fallidos). Ver consola.";
     try{toast(msg,okSent?"green":"orange");}catch(_e){}
-  };
-
-  window.crmEnviarCampania=async function(){
-    const seg=document.getElementById("campSeg")?.value||"";
-    const titulo=document.getElementById("campTitulo")?.value?.trim()||"BET300 · Promo especial";
-    const mensaje=document.getElementById("campMensaje")?.value?.trim();
-    if(!mensaje)return alert("Escribí el mensaje de la campaña.");
-    const data=window._crmJugadoresData||buildCRM();
-    const targets=seg?data.filter(j=>U(j.segmento)===U(seg)):data;
-    if(!targets.length)return alert("No hay jugadores para ese segmento.");
-    const usuarios=targets.map(j=>S(j.usuario).trim().toLowerCase());
-    const btn=document.getElementById("campBtn");
-    if(btn){btn.disabled=true;btn.textContent="Enviando...";}
-    const res=await pushEnviar({usuarios,title:titulo,body:mensaje,url:"/",tag:"bet300-campania"});
-    if(btn){btn.disabled=false;btn.textContent="📣 Enviar campaña";}
-    const txt=res.ok?`✅ ${res.sent||0} enviados · ${res.failed||0} fallidos · ${targets.length-((res.sent||0)+(res.failed||0))} sin suscripción`:`❌ Error: ${res.error||"desconocido"}`;
-    const resBox=document.getElementById("campResultado");
-    if(resBox){resBox.textContent=txt;resBox.style.display="block";}
-    try{toast(txt.substring(0,80),"green");}catch(_e){}
-  };
-
-  window.campAutoTexto=function(){
-    const seg=document.getElementById("campSeg")?.value||"";
-    const data=window._crmJugadoresData||buildCRM();
-    const ej=data.find(j=>!seg||U(j.segmento)===U(seg));
-    const txt=ej?promoTexto(ej).replace(ej.usuario,"[usuario]"):"Hola [usuario] 👋 Tenemos una promo especial para vos.";
-    const campo=document.getElementById("campMensaje");
-    if(campo)campo.value=txt;
   };
 
   // Abrir el CRM ya NO dispara ninguna consulta: pinta la pantalla y listo.
