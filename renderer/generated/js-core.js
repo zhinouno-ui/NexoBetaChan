@@ -3107,6 +3107,36 @@ function _nexoBuildPayload(opsExtra){
     }
     delete porUsuario[k]._seen;
   });
+  // ── IPs desde las que operó ────────────────────────────────────────────────
+  // Se saca de las solicitudes del portal que ya están en memoria (metadata.ip) y se manda a
+  // Nexo. NODO NO la guarda en ninguna base propia: acá es un dato de paso. La acumulación
+  // histórica vive en Nexo, que es donde tiene sentido cruzarla.
+  //
+  // Para qué: ver cuántas cuentas salen de la MISMA conexión — probabilidad de que sean la
+  // misma persona o gente cercana.
+  //
+  // Cómo NO usarla: con CGNAT y redes móviles muchos vecinos comparten IP pública. Coincidir
+  // es una señal para mirar, no una prueba. Y NO se usa para bloquear: un bloqueo automático
+  // por IP en manos de siete oficinas distintas deja gente afuera por vivir en el edificio
+  // equivocado, y nadie va a poder explicar por qué.
+  try{
+    const _sols = (window.V154P && window.V154P.solicitudes) || [];
+    _sols.forEach(function(s){
+      const u = String(s.USUARIO || s.USUARIO_JUGADOR || '').trim().toLowerCase();
+      const ip = String(s.IP || '').trim();
+      if(!u || !ip || !porUsuario[u]) return;
+      const g = porUsuario[u];
+      if(!g.ips) g.ips = [];
+      const prev = g.ips.find(function(x){ return x.ip === ip; });
+      const ts = s.FECHA_CREACION ? new Date(s.FECHA_CREACION).getTime() : 0;
+      if(prev){ prev.veces++; if(ts > (prev.ultima||0)) prev.ultima = ts; }
+      else if(g.ips.length < 12){ g.ips.push({ ip: ip, veces: 1, ultima: ts }); }
+    });
+    Object.keys(porUsuario).forEach(function(k){
+      const g = porUsuario[k];
+      if(g.ips) g.ips.sort(function(a,b){ return (b.veces||0)-(a.veces||0); });
+    });
+  }catch(_e){}
   // Se envían: los que operaron, los que tienen bonos, y las ALTAS con teléfono/titular (agendados).
   const usuarios = Object.values(porUsuario).filter(function(u){
     return u.operaciones.length || (u.bonos&&u.bonos.length) || u.telefono || u.titular;

@@ -726,3 +726,44 @@ mirar, no una condena. Si se usa para bloquear automático, va a haber falsos po
 
 **Falta** — mostrarla como motivo en el CRM (`📍 misma IP`) una vez que haya datos acumulados.
 Hoy la RPC de búsqueda no la mira.
+
+---
+
+## D-34 · Los contadores del CRM salían siempre en cero · RESUELTO
+
+**Evidencia** — Total / VIP / Activos / Tibios / Fríos se calculaban sobre `buildCRM()`, que
+abre con `if(!window._crmCargado){ return []; }`. Como la vista arranca vacía a propósito y
+trabaja por búsqueda, esos cinco números eran `0` **casi siempre**. Y aun con la lista cargada
+contaban sólo lo que esa PC había bajado, no la oficina.
+
+**Estado** — **RESUELTO** · se sacaron los cinco. Queda «Registrados (WTK)», que es un
+`count(*)` del servidor y sí es cierto.
+
+**Decisión de Juan:** la segmentación real la tiene que dar **Nexo**, que ve todas las
+operaciones en vez de una copia local parcial. Pendiente de implementar del lado de Nexo.
+
+---
+
+## D-35 · IP a Nexo · HECHO · y por qué NO se bloquea por IP
+
+El portal ya manda `metadata.ip` (D-33). Ahora NODO la reenvía a Nexo en el payload por usuario:
+`ips: [{ip, veces, ultima}]`, tope de 12 por usuario, ordenadas por frecuencia.
+
+**NODO no la guarda en ninguna base propia.** Se lee de las solicitudes que ya están en memoria
+y se reenvía. La acumulación histórica vive en Nexo, que es donde tiene sentido cruzarla —
+decisión explícita de Juan: *«no los guardes mucho tiempo en NODO, no son necesarios, solo son
+posibles ganchos para saber cuántas probabilidades hay de que un usuario sea la misma persona o
+cercana»*.
+
+### Bloqueo por IP: DESCARTADO a propósito
+
+Juan lo planteó y lo descartó él mismo, con el argumento correcto: **no se le entrega un bloqueo
+automático a operadores que no controla.** Queda anotado para que nadie lo «agregue» más adelante
+pensando que es una mejora:
+
+- Con **CGNAT** y redes móviles, muchos vecinos comparten la misma IP pública. Un bloqueo deja
+  gente afuera por vivir en el edificio equivocado.
+- Son **siete oficinas** con criterios distintos. Un bloqueo automático se aplica igual en todas
+  y nadie va a poder explicarle a la persona por qué no puede operar.
+- La IP es **una señal para mirar, no una prueba.** Sirve para ordenar a quién revisar primero,
+  no para decidir solo.

@@ -94,6 +94,10 @@ const api = {};
       // el panel perdía el teléfono de cada carga/retiro — y con él el cotejo del alta, la ficha
       // del CRM y lo que se le manda a Nexo.
       TELEFONO: s.telefono || meta.telefono || "",
+      // IP pública desde la que se mandó la solicitud. NODO no la guarda en ningún lado propio:
+      // se lee de la solicitud que ya está en memoria y se reenvía a Nexo, que es la base donde
+      // esto se acumula. Acá es de paso, a propósito.
+      IP: meta.ip || "",
       PC: s.pc_codigo || s.PC || "",
       MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),   // lo que tecleó el cliente, no se pisa
       // MONTO_REAL = lo que realmente se va a pagar. Si el operador corrigió un cero de más
