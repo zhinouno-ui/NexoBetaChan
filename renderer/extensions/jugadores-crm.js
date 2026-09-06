@@ -1231,6 +1231,43 @@ window.crmBuscarDebounce=function(){
     }
     renderCRM();
   };
-  const oldMostrarVista=window.mostrarVista;if(typeof oldMostrarVista==="function"){window.mostrarVista=function(v){oldMostrarVista(v);if(v==="jugadores"){ (typeof cargarOperacionesAgente==="function"?cargarOperacionesAgente():Promise.resolve()).finally(function(){ setTimeout(renderCRM,80); }); }}}
+  // ── Abrir el CRM no cuesta nada ───────────────────────────────────────────
+  // Antes, entrar a Jugadores disparaba cargarOperacionesAgente(): CUATRO RPC en cadena
+  // (agente_resumen → flags → vinculos → vinculos_count), una esperando a la otra. La
+  // tercera baja los vínculos de la oficina entera: 64.121 filas en P6, 54.138 en P2.
+  //
+  // Y todo eso se tiraba: buildCRM() arranca con `if(!window._crmCargado) return []`, así
+  // que la vista abre vacía y trabaja por búsqueda contra el servidor. Se pagaban segundos
+  // de red y de parseo para descartar el resultado — y al terminar disparaba el renderCRM
+  // tardío que le borraba el texto al operador.
+  //
+  // Ahora esas cuatro RPC corren SOLO si el operador pidió la lista completa (📥 Cargar
+  // lista), que es el único caso en que buildCRM las mira.
+  const oldMostrarVista=window.mostrarVista;
+  if(typeof oldMostrarVista==="function"){
+    window.mostrarVista=function(v){
+      oldMostrarVista(v);
+      if(v!=="jugadores") return;
+      if(!window._crmCargado){
+        setTimeout(renderCRM,80);
+        // El contador "Registrados (WTK)" salía de la misma cadena. Es la única de las cuatro
+        // que sí sirve con la vista vacía, y es un count(*) — se pide sola, sin arrastrar las
+        // 64.000 filas de las otras tres.
+        try{
+          supabaseClient.rpc("panel_crm_vinculos_count",{p_pc_codigos:null,p_secret:window.PANEL_DATA_SECRET})
+            .then(function(r){
+              if(r && !r.error && r.data!=null){
+                window._crmWtkTotal = Number(r.data);
+                const el=document.getElementById("crmWtkTotal");
+                if(el) el.textContent = Number(r.data).toLocaleString("es-AR");
+              }
+            });
+        }catch(_e){}
+        return;
+      }
+      (typeof cargarOperacionesAgente==="function"?cargarOperacionesAgente():Promise.resolve())
+        .finally(function(){ setTimeout(renderCRM,80); });
+    };
+  }
   setTimeout(()=>{const v=document.getElementById("viewJugadores");if(v&&!v.classList.contains("hidden"))renderCRM()},1000);
 })();

@@ -710,6 +710,34 @@ async function rpc(fn,params){if(!sb)return{data:null,error:{message:"Supabase n
 function normalize(data){if(!data)return null;if(Array.isArray(data))return data[0]||null;if(data.data)return Array.isArray(data.data)?data.data[0]:data.data;return data}
 
 // Navegador + SO + si es PWA → se manda en la metadata de la solicitud para que el operador lo vea.
+// ── IP pública de quien manda la solicitud ────────────────────────────────
+// No la sabe el navegador: hay que preguntársela a un servicio de afuera. Se pide UNA vez por
+// sesión y se cachea; si falla o tarda, la solicitud sale igual sin IP — esto nunca puede ser
+// motivo de que una carga no se envíe.
+//
+// Para qué sirve: no da la dirección exacta, pero dice de qué tipo de conexión entra la gente
+// y, sobre todo, permite ver VARIAS CUENTAS DESDE LA MISMA CASA — que es otra forma de agarrar
+// a los que cazan bonos con cuentas distintas.
+//
+// Ojo con leer de más: en una red móvil o en un barrio con CGNAT muchos vecinos comparten la
+// misma IP pública. Coincidir NO prueba que sean la misma persona; es una señal para mirar,
+// no una condena.
+let _ipCache=null, _ipPedida=false;
+async function _ipPublica(){
+  if(_ipCache!==null) return _ipCache;
+  if(_ipPedida) return null;              // ya hay una en vuelo: no encolar otra
+  _ipPedida=true;
+  try{
+    const ctrl=new AbortController();
+    const t=setTimeout(function(){ ctrl.abort(); }, 2500);   // no bloquear el envío
+    const r=await fetch("https://api.ipify.org?format=json",{signal:ctrl.signal});
+    clearTimeout(t);
+    const d=await r.json();
+    _ipCache=String((d&&d.ip)||"")||null;
+  }catch(_e){ _ipCache=null; }
+  return _ipCache;
+}
+
 function _infoNavegador(){
   try{
     const ua=navigator.userAgent||"";
@@ -2160,7 +2188,8 @@ async function enviarSolicitudCarga(usuario,monto,titular){
   if(String(titular||"").trim().length<3)return toast("Indicá el titular que transfiere (mínimo 3 letras).");
   limpiarSolicitudAnteriorAntesDeNueva();
   const bp=billeteraPayloadPlano();
-  const payload={usuario,monto:Number(monto),titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),tipo:"CARGA",...bp};
+  const _ip=await _ipPublica();   // si no llega en 2,5 s va sin ella: nunca frena el envío
+  const payload={usuario,monto:Number(monto),titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ip||"",tipo:"CARGA",...bp};
   const destino=bp.billetera_nombre?`${bp.billetera_nombre}${bp.billetera_alias?" · "+bp.billetera_alias:""}`:null;
   let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_destino:destino,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_metadata:payload});
   // Rechazo por validación de vínculo → NO usar fallback (sería un bypass). Mandamos a soporte.
@@ -2244,7 +2273,8 @@ async function enviarSolicitudRetiro(){
   if(btn){btn.disabled=true;btn.textContent="Enviando...";}
   limpiarSolicitudAnteriorAntesDeNueva();
   const msg="Solicitud de RETIRO: $"+monto+" · Destino: "+destino+" · Titular: "+titular;
-  const payload={usuario,monto,destino,titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),tipo:"RETIRO"};
+  const _ipR=await _ipPublica();
+  const payload={usuario,monto,destino,titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ipR||"",tipo:"RETIRO"};
   let res=await rpc("landing_portal_v16_crear_solicitud",{
     p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
     p_monto:monto,p_titular:titular,p_destino:destino,p_mensaje:msg,p_metadata:payload

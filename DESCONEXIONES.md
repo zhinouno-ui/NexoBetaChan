@@ -677,3 +677,52 @@ tiene `host`, `navegador`, `pc_codigo` — pero **no la IP**. Habría que captur
 crear la solicitud. No da la dirección exacta, pero sirve para dos cosas: saber de qué tipo de
 lugar entra la gente y, sobre todo, **detectar varias cuentas desde la misma casa** — otra forma
 de agarrar a los que cazan bonos.
+
+---
+
+## D-32 · Abrir el CRM bajaba 64.000 filas para tirarlas · RESUELTO
+
+**Evidencia** — El override de `mostrarVista` llamaba a `cargarOperacionesAgente()` cada vez que
+se entraba a Jugadores. Esa función encadena **cuatro RPC**, una esperando a la otra
+([historial-operaciones.js:78-101](renderer/core/historial-operaciones.js#L78-L101)):
+`panel_crm_agente_resumen` → `panel_crm_flags` → `panel_crm_vinculos` → `panel_crm_vinculos_count`.
+
+La tercera baja los vínculos de la oficina entera:
+
+| Oficina | Vínculos que bajaba |
+|---|---:|
+| P6 | **64.121** |
+| P2 | **54.138** |
+| P4 | 13.757 |
+| P7 | 751 |
+
+**Y se descartaba todo.** `buildCRM()` abre con `if(!window._crmCargado){ … return []; }`: la
+vista arranca vacía a propósito y trabaja por búsqueda contra el servidor. Nada de lo que
+bajaban esas cuatro RPC se miraba, salvo que el operador pidiera 📥 Cargar lista.
+
+**Impacto** — Segundos de red y de parseo en cada apertura de la pestaña, para nada. Y al
+terminar disparaban el `renderCRM` tardío que le borraba el texto al operador (D-30): el
+repintado no era el problema, era el síntoma de esto.
+
+**Estado** — **RESUELTO** · las cuatro RPC corren sólo si `_crmCargado`. Con la vista vacía se
+pide únicamente `panel_crm_vinculos_count`, que es un `count(*)` y alimenta el contador
+«Registrados (WTK)».
+
+---
+
+## D-33 · La IP de quien manda la solicitud · HECHO en el portal
+
+Antes no se guardaba: `landing_solicitudes.metadata` tenía `host`, `navegador` y `pc_codigo`,
+pero nada de red. El portal ahora la pide una vez por sesión y la manda en `metadata.ip`, tanto
+en CARGA como en RETIRO. Con timeout de 2,5 s y cacheada: si falla, la solicitud sale igual —
+esto nunca puede frenar un envío.
+
+**Para qué** — Detectar **varias cuentas desde la misma casa**, que es otra forma de agarrar a
+los que cazan bonos.
+
+**Cómo leerla, importante** — En redes móviles y en barrios con CGNAT muchos vecinos comparten
+la misma IP pública. Coincidir **no prueba** que sean la misma persona: es una señal para
+mirar, no una condena. Si se usa para bloquear automático, va a haber falsos positivos.
+
+**Falta** — mostrarla como motivo en el CRM (`📍 misma IP`) una vez que haya datos acumulados.
+Hoy la RPC de búsqueda no la mira.
