@@ -9307,6 +9307,24 @@ function _claveAvisoPintar(id, usuario, clave, restan){
 
 // Corre cada segundo: pinta la cuenta regresiva y dispara cuando vence.
 let _claveAutoCorriendo = false;
+// `estadoCerrado` vive DENTRO del módulo del portal y no existe en el ámbito del panel:
+// `typeof estadoCerrado` da 'undefined' acá. Verificado corriendo el bundle entero. Como los
+// dos usos estaban escritos como `typeof estadoCerrado==='function' && estadoCerrado(...)`,
+// la condición era SIEMPRE falsa y el filtro de "ya cerrada" nunca corría: una solicitud de
+// cambio de clave ya aprobada seguía en la lista y el ciclo la volvía a ejecutar cada 25 s.
+// Media hora cambiándole la clave al mismo jugador una y otra vez.
+const _ESTADOS_CERRADOS = ["ACREDITADA","PAGADA","APROBADA","APROBADA_MANUAL","RECHAZADA",
+                           "CANCELADA","CERRADA","CERRADO","FINALIZADA","OK","COMPLETADA","REVERTIDA"];
+function _estadoYaCerrado(e){
+  return _ESTADOS_CERRADOS.indexOf(String(e||"").trim().toUpperCase()) !== -1;
+}
+window._estadoYaCerrado = _estadoYaCerrado;
+
+// Segunda red: una solicitud ejecutada NO se vuelve a ejecutar en esta sesión, pase lo que
+// pase con el estado. Si el update a la base falla (como pasaba con la tabla muerta), el
+// peor caso es que quede en la bandeja — no que se le cambie la clave setenta veces.
+window._clavesHechas = window._clavesHechas || {};
+
 async function _claveAutoTick(){
   if(_claveAutoCorriendo) return;
   if(!window.ctrlElectron) return;                       // sólo en la app de escritorio
@@ -9314,8 +9332,9 @@ async function _claveAutoTick(){
   try{
     lista = ((window.V154P && window.V154P.solicitudes) || []).filter(function(s){
       if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='CAMBIO_CLAVE') return false;
-      if(typeof estadoCerrado==='function' && estadoCerrado(s.ESTADO)) return false;
+      if(_estadoYaCerrado(s.ESTADO)) return false;
       const id=String(s.ID||s.SOLICITUD_ID||'');
+      if(window._clavesHechas[id]) return false;      // ya se ejecutó en esta sesión
       return id && !window._clavesBloqueadas[id];
     });
   }catch(_e){ return; }
@@ -9359,6 +9378,10 @@ async function _claveAutoTick(){
 
     _claveAvisoQuitar(id);
     delete window._clavesEnCuenta[id];
+    // Se marca ANTES de ejecutar, no después: si el cambio tarda y el tick vuelve a correr,
+    // no puede agarrarla de nuevo. Y si falla, tampoco se reintenta sola — el operador tiene
+    // el botón "Realizar". Reintentar solo un cambio de clave que quizás ya se hizo es peor.
+    window._clavesHechas[id] = Date.now();
     _claveAutoCorriendo = true;
     try{
       await ejecutarAutoClave(id);
@@ -12325,7 +12348,7 @@ async function verificarSaldoRetiroOcioso(){
     const pend = ((window.V154P&&window.V154P.solicitudes)||[]).filter(function(s){
       const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
       if(tipo!=='RETIRO') return false;
-      if(typeof estadoCerrado==='function' && estadoCerrado(s.ESTADO)) return false;
+      if(window._estadoYaCerrado && window._estadoYaCerrado(s.ESTADO)) return false;
       // Retiro YA en curso / parcial en progreso → lo maneja el operador; NO re-escanear
       // (si no, mientras un parcial queda EN_PROCESO el scanner re-entraba al agente y lo trababa).
       if(/EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase())) return false;

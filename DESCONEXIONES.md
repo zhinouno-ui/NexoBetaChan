@@ -1488,3 +1488,53 @@ tener nada — la operación «funciona», la pantalla no cambia, y el que está
 app se colgó.
 
 Suite: 86/86.
+---
+
+## D-49 · Media hora cambiándole la clave al mismo jugador
+
+Juan: *«hace más de media hora sigue reintentando cambiar la clave, lo hace, eso es lo peor»*. En
+la captura, el cartel *«Cambiando la clave en 11s»* corriendo **mientras abajo dice «No hay
+solicitudes Portal pendientes»**.
+
+### La causa
+
+En `_claveAutoTick`, el filtro de solicitudes ya cerradas:
+
+```js
+if(typeof estadoCerrado==='function' && estadoCerrado(s.ESTADO)) return false;
+```
+
+**`estadoCerrado` no existe en el ámbito del panel.** Vive dentro del módulo del portal
+(`renderer/portal/data.js`) y sólo se alcanza como `deps.estadoCerrado`. Verificado corriendo el
+bundle entero en un `vm`:
+
+```
+typeof estadoCerrado en el panel: undefined
+```
+
+Como estaba escrito con la guarda `typeof … === 'function' &&`, la condición era **siempre falsa**
+y el filtro **nunca corrió**. Una solicitud de cambio de clave ya aprobada seguía en la lista, el
+ciclo le rearmaba la cuenta de 25 s, y le volvía a cambiar la clave. Cada 25 segundos, media hora.
+
+La guarda defensiva —puesta para que no rompiera si la función no estaba— convirtió un error
+ruidoso en uno silencioso que hacía la operación de nuevo.
+
+Y encadenaba con **D-48**: mientras el update iba a la tabla muerta, el estado nunca pasaba a
+`APROBADA`, así que aunque el filtro hubiera funcionado tampoco habría cortado. Dos fallas
+distintas que se tapaban entre sí.
+
+El mismo `typeof` roto estaba en `chunior-recuperacion-y-transferencias.js:53`.
+
+### Qué se hizo
+
+1. **`_estadoYaCerrado(e)` en el ámbito del panel**, sin depender del módulo del portal. Cubre
+   `APROBADA`, `APROBADA_MANUAL`, `RECHAZADA`, `CANCELADA`, `ACREDITADA`, `PAGADA`, `OK`,
+   `COMPLETADA`, `REVERTIDA`, `CERRADA`/`CERRADO`, `FINALIZADA`.
+2. **`window._clavesHechas`** — una solicitud ejecutada no se vuelve a ejecutar en esta sesión,
+   **pase lo que pase con el estado**. Se marca **antes** de ejecutar, no después: si el cambio
+   tarda y el tick vuelve a correr, no puede agarrarla de nuevo. Y si falla, tampoco se reintenta
+   sola: para eso está el botón «Realizar». Reintentar solo un cambio de clave que quizá ya se
+   hizo es peor que no reintentarlo.
+
+Si mañana el update a la base vuelve a fallar, el peor caso pasa a ser una solicitud que queda en
+la bandeja — no setenta cambios de clave.

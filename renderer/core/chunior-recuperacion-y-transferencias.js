@@ -50,7 +50,7 @@ async function verificarSaldoRetiroOcioso(){
     const pend = ((window.V154P&&window.V154P.solicitudes)||[]).filter(function(s){
       const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
       if(tipo!=='RETIRO') return false;
-      if(typeof estadoCerrado==='function' && estadoCerrado(s.ESTADO)) return false;
+      if(window._estadoYaCerrado && window._estadoYaCerrado(s.ESTADO)) return false;
       // Retiro YA en curso / parcial en progreso → lo maneja el operador; NO re-escanear
       // (si no, mientras un parcial queda EN_PROCESO el scanner re-entraba al agente y lo trababa).
       if(/EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase())) return false;

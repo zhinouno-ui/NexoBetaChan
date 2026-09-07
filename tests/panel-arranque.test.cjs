@@ -356,3 +356,36 @@ test('si la RPC falla, avisa en vez de decir que salió bien', async () => {
   assert.equal(r.ok, false);
   assert.match(r.error, /SOLICITUD_NO_ENCONTRADA/);
 });
+
+test('una solicitud de clave ya aprobada no vuelve a entrar al ciclo', () => {
+  // `estadoCerrado` vive en el módulo del portal y NO existe en el ámbito del panel, así que
+  // `typeof estadoCerrado === 'function'` era siempre falso y el filtro nunca corría: el ciclo
+  // le cambiaba la clave al mismo jugador cada 25 s, media hora seguida.
+  const sb = arrancarPanel();
+
+  assert.equal(typeof sb._estadoYaCerrado, 'function', 'el panel necesita su propio chequeo');
+  for (const e of ['APROBADA', 'RECHAZADA', 'CANCELADA', 'ACREDITADA', 'OK', 'aprobada']) {
+    assert.equal(sb._estadoYaCerrado(e), true, e + ' está cerrada');
+  }
+  for (const e of ['PENDIENTE', 'EN_REVISION', 'EN_PROCESO', '']) {
+    assert.equal(sb._estadoYaCerrado(e), false, e + ' sigue abierta');
+  }
+});
+
+test('el ciclo de clave no repite una que ya ejecutó', async () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+
+  // Una solicitud que quedó PENDIENTE aunque ya se ejecutó: el caso de la tabla muerta.
+  sb.V154P = { solicitudes: [{ ID: '188138', TIPO: 'CAMBIO_CLAVE', USUARIO: 'pruebaxx',
+                               ESTADO: 'PENDIENTE', PASSWORD_NUEVO: 'abc123' }] };
+  sb._clavesHechas = { '188138': Date.now() };
+
+  let ejecuciones = 0;
+  sb.ejecutarAutoClave = async () => { ejecuciones++; };
+  sb.ctrlElectron = { navigateAgent: async () => {} };
+  sb._clavesEnCuenta = { '188138': Date.now() - 1000 };   // ventana ya vencida
+
+  await sb._claveAutoTick();
+  assert.equal(ejecuciones, 0, 'ya se ejecutó una vez: no se toca de nuevo');
+});
