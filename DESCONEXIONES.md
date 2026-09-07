@@ -609,6 +609,8 @@ Lo que quedó sin hacer, con lo que hace falta para cerrarlo.
 | **«¿Transferiste a otra billetera?»** | Mostramos un solo CBU activo; el que transfirió a otro no tiene cómo avisar salvo escribiendo. Criterio acordado: lista cerrada de NUESTRAS billeteras (no texto libre), aparece en **Estado** después de enviar (no en Cargar), se cuenta por usuario, y la solicitud llega marcada `⚠ OTRA BILLETERA · verificar`. | RPC nueva `landing_listar_billeteras_oficina(p_public_code)` → devuelve nombre + alias, **sin CBU**. |
 | **Sistema de validación** | Varios caminos distintos haciendo a medias el trabajo de uno. Ver el artefacto de revisión. Juan lo dejó explícitamente para más adelante. | Decisión de diseño: cuál manda. |
 | **Campaña real (reemplazo de la push eliminada)** | Se sacó el disparo masivo a ciegas (D-36). Una campaña de verdad tiene que mostrar **a quién** (lista con nombres, editable), **a cuántos** (con push activo, dato del servidor) y **por qué** (motivo guardado con el envío) antes de mandar. Hoy no queda registro de ningún envío. | Segmentación desde **Nexo**, no desde `buildCRM()`. Tabla de envíos para el registro. |
+| **N° de movimiento de Chunior incompleto** | `RESET_CLAVE` y `CONSULTA` no guardan ninguno (0 de 1.283 en 30 días) y ~1,4 % de cargas/retiros tampoco. Sin ese número no hay cotejo posible contra Chunior. Ver D-37. | Revisar si cambió el HTML del mensaje de éxito de Chunior; agregar el scrapeo en el flujo de cambio de clave. |
+| **Editar un movimiento ya anotado en Chunior** | Hoy sólo se puede *anular* propinas y depósitos sin reclamar (se les pone monto 0,10). No hay forma de corregir monto, billetera ni notas desde NODO. Pedido explícito de Juan: «acceso fácil y rápido a editar todo». | Definir qué se puede editar sin romper el cotejo: Chunior no versiona los cambios. |
 | **Cambio de billetera ambiguo en el historial** | Se muestra el valor final donde hubo una transición. Propuesta: `MASSA PP → CASTRO` con quién y cuándo, ícono 🔀 y filtro «cambiadas». | Pospuesto por Juan. |
 
 ## Hecho pero con límite conocido
@@ -824,3 +826,95 @@ cambio**, y antes de mandar tiene que poder responder tres preguntas en pantalla
 Además: la segmentación tiene que venir de **Nexo** (misma conclusión que D-34), no de
 `buildCRM()`. Y conviene un tope por operador y por día, más un preview del mensaje tal como lo
 va a ver el jugador.
+
+---
+
+## D-37 · Lo de Chunior vivía 9 horas y no se podía cotejar · RESUELTO (parcial)
+
+Planteo de Juan: *«las actividades de Chunior están únicamente limitadas al historial de el
+inicio, historial el cual está limitado por dos días por ende no es cotejable, así mismo no
+tenemos información sobre esos números de movimiento ni acceso fácil y rápido a editar todo,
+los de Chunior también deberían de desplegar información en el centro de solicitudes»*.
+
+### Lo medido — era peor que dos días
+
+`cargarHistorial()` traía `.limit(200)` fijo, sin ventana de tiempo. Contra la base, 200 filas
+por oficina son:
+
+| Oficina | Filas/día | Lo que cubren 200 filas |
+|---|---:|---:|
+| P4 | 813 | **9,1 h** |
+| P2 | 712 | **9,3 h** |
+| P3 | 516 | 10,0 h |
+| P7 | 518 | 11,8 h |
+| P6 | 364 | 13,5 h |
+| P5 | 187 | 30,9 h |
+
+En las oficinas grandes **no alcanzaba ni para el turno en curso**. Y encima el Centro de
+Solicitudes filtra por turno actual arriba de eso.
+
+### Los movimientos de Chunior, invisibles
+
+Los que no nacen de una solicitud del portal —transferencias entre billeteras, depósitos sin
+reclamar, propinas, recargas de fichas, cambios de clave, consultas— sí se escriben en
+`historial_ops`. En 30 días:
+
+| Tipo | Filas 30 d | Con N° de movimiento |
+|---|---:|---:|
+| DEPOSITO_SR | 283 | 283 |
+| CAMBIO_BILLETERA | 240 | 233 |
+| MOV_BILLETERA | 139 | 135 |
+| RESET_CLAVE | 744 | **0** |
+| CONSULTA | 539 | **0** |
+| RECARGA_FICHAS | 2 | 0 |
+| PROPINA | 2 | 2 |
+
+**666 movimientos administrativos de Chunior en 30 días. El panel mostraba 21.** El resto
+quedaba fuera de la ventana de 200 filas y no había forma de llegar a ellos. Los que sí
+entraban se pintaban con el tipo crudo en mayúsculas (`DEPOSITO_SR`), sin ícono ni nombre.
+
+### El buscador prometía algo que no hacía
+
+El placeholder dice *«Buscar jugador, N° de movimiento, CBU, tel...»*. El código sí mira
+`chunior_movimiento_id`… pero **sólo dentro de las 200 filas en memoria**. Un número de ayer
+no aparecía nunca. Y en la base **no existía índice** sobre `chunior_movimiento_id`: el único
+índice de movimiento era `idx_historial_ops_mp_movimiento_id`, que es el de MercadoPago, no el
+número que el operador tiene delante cuando cotea contra Chunior.
+
+### Qué se hizo
+
+1. **La ventana se mide en tiempo, no en filas.** `_histVentana()` en
+   `historial-operaciones.js`. En «Turno actual» arranca donde arrancó el turno con un piso de
+   12 h —si son las 06:10 el operador igual necesita ver lo que dejó el turno anterior.
+2. **Selector de período** en el Centro de Solicitudes: Turno actual / 24 h / 7 días / 30 días.
+   Cambiarlo **reconsulta al servidor** (`setHistorialPeriodo`), que es la única forma de ver
+   lo que quedó afuera.
+3. **Búsqueda contra el servidor** (`buscarHistorialServidor`): si no hay nada en lo cargado,
+   aparece **🔎 Buscar en todo el historial**. Un número de movimiento se busca en **todas las
+   oficinas** a propósito —el número es de Chunior, no de la PC, y al cotejar no siempre se sabe
+   dónde se cargó. Los resultados llegan marcados `📅 fecha · oficina` y **saltan el filtro de
+   turno**: si el operador pidió algo de otro día, esconderlo sería devolverle una lista vacía.
+4. **Índice nuevo** — migración `historial_ops_indice_chunior_movimiento_id`, parcial sobre
+   `chunior_movimiento_id is not null`.
+5. **Pestaña 🔧 Chunior** en el Centro de Solicitudes, que agrupa los siete tipos. Fuerza turno
+   = TODOS: son ~3 por día por oficina, filtrarlos por turno los deja casi siempre en cero.
+6. **Nombres legibles**: 🔀 TRANSFERENCIA, 💳 CAMBIO BILLETERA, 💜 DEPÓSITO S/RECLAMAR,
+   🎁 PROPINA, 🎰 RECARGA FICHAS, 🔑 CAMBIO DE CLAVE, 🔍 CONSULTA. El badge de origen ahora
+   dice **Chunior** en vez de **Manual** cuando corresponde.
+7. **Cartel de ventana** (`histVentanaInfo`): dice siempre *«Cargadas últimas N h · M
+   movimientos»*. Lo que no está cargado no existe para los filtros ni para el buscador, y el
+   operador tiene que saberlo **antes** de concluir «no está».
+8. **Tope de 500 filas** en la tabla del Historial de Inicio, con aviso de cuántas quedaron. Se
+   arma entera en un `innerHTML`: sin tope, elegir «30 días» en P4 son 8.000 `<tr>` de un saque.
+
+### Lo que queda pendiente
+
+- **`RESET_CLAVE` y `CONSULTA` no guardan N° de movimiento** (0 de 1.283 en 30 días). No es un
+  bug de visualización: nunca se scrapea. Para `RESET_CLAVE` hay página de Chunior y se podría
+  capturar igual que en `_registrarAdminChunior`.
+- **1.173 CARGAS y 202 RETIROS sin N°** en 30 días (~1,4 %). Son los casos en que el parser del
+  mensaje de éxito no encontró el número: `_registrarAdminChunior` los da por buenos con
+  `[CHUNIOR_OK_SIN_N]`. Habría que revisar si cambió el HTML de Chunior.
+- **«Acceso fácil y rápido a editar todo»** — sin hacer. Hoy sólo se puede *anular* propinas y
+  depósitos sin reclamar (`_anularMovimientoChunior`, que pone el monto en 0,10). No hay
+  edición de monto, billetera ni notas de un movimiento ya anotado.

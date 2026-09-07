@@ -314,11 +314,19 @@
                 <button type="button" id="tabFiltroCargas" class="sol-tab" onclick="setSolicitudesFiltroRapido('CARGAS')">⬆️ Cargas</button>
                 <button type="button" id="tabFiltroRetiros" class="sol-tab" onclick="setSolicitudesFiltroRapido('RETIROS')">⬇️ Retiros</button>
                 <button type="button" id="tabFiltroRechazadas" class="sol-tab" onclick="setSolicitudesFiltroRapido('RECHAZADAS')">⛔ Rechazos</button>
+                <button type="button" id="tabFiltroChunior" class="sol-tab" onclick="setSolicitudesFiltroRapido('CHUNIOR')" title="Movimientos hechos en Chunior: transferencias entre billeteras, depósitos sin reclamar, propinas, recargas de fichas, cambios de clave">🔧 Chunior</button>
                 <span id="kpiTabPendientesCount" style="display:none">0</span>
               </div>
 
               <!-- Filtros secundarios colapsables / dropdowns -->
               <div class="sol-filter-subbar">
+                <select id="filtroPeriodoSelect" onchange="setHistorialPeriodo(this.value)" class="sol-select" title="Cuánto historial se trae del servidor. Ampliarlo reconsulta la base.">
+                  <option value="TURNO">📥 Turno actual</option>
+                  <option value="HOY">📥 Últimas 24 h</option>
+                  <option value="D7">📥 7 días</option>
+                  <option value="D30">📥 30 días</option>
+                </select>
+                <span id="histVentanaInfo" class="small" style="align-self:center;color:var(--muted);white-space:nowrap"></span>
                 <select id="filtroTurnoSelect" onchange="setSolicitudesTurno(this.value)" class="sol-select" title="Filtrar por turno operativo">
                   <option value="ACTUAL">🕒 Turno actual</option>
                   <option value="TM">TM · Mañana (06:00 - 14:00)</option>
@@ -330,6 +338,14 @@
                   <option value="">Todos los tipos</option>
                   <option value="CARGA">⬆️ Cargas</option>
                   <option value="RETIRO">⬇️ Retiros</option>
+                  <option value="__CHUNIOR__">🔧 Todos los de Chunior</option>
+                  <option value="MOV_BILLETERA">🔀 Transferencia entre billeteras</option>
+                  <option value="CAMBIO_BILLETERA">💳 Cambio de billetera</option>
+                  <option value="DEPOSITO_SR">💜 Depósito sin reclamar</option>
+                  <option value="PROPINA">🎁 Propina</option>
+                  <option value="RECARGA_FICHAS">🎰 Recarga de fichas</option>
+                  <option value="RESET_CLAVE">🔑 Cambio de clave</option>
+                  <option value="CONSULTA">🔍 Consulta</option>
                 </select>
                 <select id="filtroEstado" onchange="renderSolicitudes()" class="sol-select">
                   <option value="">Todos los estados</option>

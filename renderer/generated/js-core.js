@@ -4642,6 +4642,49 @@ function pcAliasesHist(){
   for(const k in grupos){ if(grupos[k].includes(v)) return grupos[k]; }
   return v ? [v] : ["P1"];
 }
+// ── Ventana del historial ────────────────────────────────────────────────────
+// Antes esto era .limit(200) fijo. Medido contra la base, 200 filas son:
+//   P4 9,1 h · P2 9,3 h · P3 10,0 h · P7 11,8 h · P6 13,5 h · P5 30,9 h
+// O sea que en las oficinas grandes NO alcanzaba ni para el turno en curso, y todo lo de
+// ayer quedaba fuera del panel: no había con qué cotejar. Ahora la ventana se mide en
+// TIEMPO (que es lo que el operador tiene en la cabeza), no en cantidad de filas.
+window._HIST_PERIODO = window._HIST_PERIODO || "TURNO";
+const _HIST_PERIODOS = {
+  TURNO: { horas: 12,  limite: 1500, nombre: "Turno actual" },
+  HOY:   { horas: 24,  limite: 2500, nombre: "Últimas 24 h" },
+  D7:    { horas: 168, limite: 5000, nombre: "7 días" },
+  D30:   { horas: 720, limite: 8000, nombre: "30 días" }
+};
+function _histVentana(){
+  const cfg = _HIST_PERIODOS[String(window._HIST_PERIODO||"TURNO")] || _HIST_PERIODOS.TURNO;
+  let horas = cfg.horas;
+  // En TURNO la ventana arranca donde arrancó el turno, pero nunca menos de 12 h: si son las
+  // 06:10 y el turno recién empezó, el operador igual necesita ver lo que dejó el turno anterior.
+  if(window._HIST_PERIODO==="TURNO" || !window._HIST_PERIODO){
+    try{
+      const ar = new Date(Date.now() - 3*3600*1000);
+      const h = ar.getUTCHours();
+      const inicio = h>=6 && h<14 ? 6 : (h>=14 && h<22 ? 14 : 22);
+      let desdeTurno = (h - inicio + 24) % 24;
+      horas = Math.max(12, desdeTurno + 1);
+    }catch(_e){}
+  }
+  return {
+    desde: new Date(Date.now() - horas*3600*1000).toISOString(),
+    limite: cfg.limite,
+    horas: horas,
+    nombre: cfg.nombre
+  };
+}
+// Cambiar el período RECONSULTA al servidor: es la única forma de ver lo que quedó fuera.
+window.setHistorialPeriodo = async function(clave){
+  window._HIST_PERIODO = String(clave||"TURNO").toUpperCase();
+  const sel = document.getElementById("filtroPeriodoSelect");
+  if(sel && sel.value !== window._HIST_PERIODO) sel.value = window._HIST_PERIODO;
+  try{ toast("Trayendo "+((_HIST_PERIODOS[window._HIST_PERIODO]||{}).nombre||"")+"...", "blue"); }catch(_e){}
+  await cargarHistorial();
+};
+
 async function cargarHistorial(){
   _historialCargado = true;
   const el = document.getElementById("historialTable");
@@ -4651,12 +4694,14 @@ async function cargarHistorial(){
 
   // Incluimos LANDING/PORTAL para diferenciar claramente operaciones manuales
   // de operaciones que nacen desde solicitudes del portal.
+  const _v = _histVentana();
   const { data, error } = await supabaseClient
     .from("historial_ops")
     .select("*")
     .in("pc_codigo", pcAliasesHist())
+    .gte("created_at", _v.desde)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(_v.limite);
 
   if(error){
     if(el) el.innerHTML = '<div class="err-box">Error: '+escapeHtml(error.message||'')+'</div>';
@@ -4804,15 +4849,29 @@ function renderHistorial(lista){
     if(t==='RETIRO') return '⬇️';
     if(t==='CONSULTA') return '👁';
     if(t==='RESET_CLAVE') return '🔑';
+    if(t==='MOV_BILLETERA') return '🔀';
+    if(t==='CAMBIO_BILLETERA') return '💳';
+    if(t==='DEPOSITO_SR') return '💜';
+    if(t==='PROPINA') return '🎁';
+    if(t==='RECARGA_FICHAS') return '🎰';
     return '➡️';
   }
 
-  let html = '<div class="table-wrap"><table><thead><tr>'+
+  // La tabla se arma entera en un innerHTML: con el periodo en 30 dias serian miles de <tr>
+  // de un saque y la vista se cuelga. Se pintan las mas nuevas y se avisa cuantas quedaron.
+  const _TOPE_FILAS = 500;
+  const _recortada = lista.length > _TOPE_FILAS;
+  const _visibles = _recortada ? lista.slice(0, _TOPE_FILAS) : lista;
+
+  let html = (_recortada
+    ? '<div class="alert-box">Mostrando las <b>' + _TOPE_FILAS + '</b> más nuevas de <b>' + lista.length + '</b>. Afiná los filtros o buscá por usuario / N° de movimiento para llegar al resto.</div>'
+    : '') +
+    '<div class="table-wrap"><table><thead><tr>'+
     '<th>Fecha</th><th>Tipo</th><th>Usuario</th><th>Monto</th><th>Saldo pre</th><th>Saldo post</th>'+
     '<th>Billetera</th><th>Origen</th><th>Estado</th><th>Op</th><th></th>'+
     '</tr></thead><tbody>';
 
-  lista.forEach(function(h){
+  _visibles.forEach(function(h){
     try{ window._histPorId[String(h.id)] = h; }catch(_e){}
     const rowClass = h.estado==='REVERTIDA'?'hrow-revertida':h.estado==='ERROR'?'hrow-error':
       h.origen==='MANUAL'?'hrow-manual':h.origen==='AUTO'?'hrow-auto':h.origen==='PANEL'?'hrow-panel':'hrow-landing';
@@ -5116,6 +5175,33 @@ async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
 // HISTORIAL UNIFICADO + SELECCIÓN EN LOTE + BLACKLIST + CACHÉ LOCAL
 // ════════════════════════════════════════════════════════════════════════════
 let _seleccionLote = new Set();
+
+// Movimientos que se hacen EN Chunior y no nacen de una solicitud del portal. Hasta ahora sólo
+// se veían en el Historial de Inicio y con el tipo crudo en mayúsculas ("DEPOSITO_SR").
+// Medido en 30 días: 666 movimientos de estos, de los cuales el panel mostraba 21.
+const TIPOS_CHUNIOR = ["MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR","PROPINA","RECARGA_FICHAS","RESET_CLAVE","CONSULTA"];
+const _ETIQUETA_TIPO = {
+  MOV_BILLETERA:    "🔀 TRANSFERENCIA",
+  CAMBIO_BILLETERA: "💳 CAMBIO BILLETERA",
+  DEPOSITO_SR:      "💜 DEPÓSITO S/RECLAMAR",
+  PROPINA:          "🎁 PROPINA",
+  RECARGA_FICHAS:   "🎰 RECARGA FICHAS",
+  RESET_CLAVE:      "🔑 CAMBIO DE CLAVE",
+  CONSULTA:         "🔍 CONSULTA",
+  COMBINACION:      "🧩 COMBINACIÓN",
+  MOVER_RETIRO:     "📦 MOVER RETIRO",
+  FALTANTE:         "⚠️ FALTANTE",
+  CREAR_DEPO:       "➕ CREAR DEPÓSITO",
+  MANUAL:           "✋ MANUAL"
+};
+function _tipoEtiqueta(t){
+  const k = String(t||"").toUpperCase();
+  return _ETIQUETA_TIPO[k] || escapeHtml(k || "—");
+}
+function _esTipoChunior(t){ return TIPOS_CHUNIOR.includes(String(t||"").toUpperCase()); }
+
+// Filas traídas por la búsqueda contra el servidor (fuera de la ventana cargada).
+window._histBusquedaServidor = window._histBusquedaServidor || [];
 let _histUnificadoCache = [];
 
 function construirHistorialUnificado(){
@@ -5187,6 +5273,27 @@ function construirHistorialUnificado(){
       saldo_post: h.saldo_post!=null ? h.saldo_post : null,
       saldo_pre: h.saldo_pre!=null ? h.saldo_pre : null,
       operador: h.operador || '',
+      pendiente: false
+    });
+  });
+
+  // Filas que trajo la búsqueda contra el servidor: pueden ser de otro día o de otra oficina.
+  // Van marcadas para que en pantalla se vea que NO son de la ventana cargada.
+  (window._histBusquedaServidor || []).forEach(function(h){
+    if(h && h.id!=null && _historialIdSet.has(String(h.id))) return;   // ya está en la ventana
+    items.push({
+      fuente:"OPERACION", _raw:h, _remoto:true,
+      id: h.id, fecha: h.created_at||null,
+      tipo: normalizar(h.tipo), usuario: h.usuario||"", nombre:"",
+      billetera_nombre: h.billetera_nombre||"",
+      monto: h.monto||0, estado: h.estado||"",
+      chunior_movimiento_id: h.chunior_movimiento_id||null,
+      billetera_id: h.billetera_id||null, historial_id: h.id,
+      solicitud_id: h.solicitud_id || null,
+      saldo_post: h.saldo_post!=null ? h.saldo_post : null,
+      saldo_pre: h.saldo_pre!=null ? h.saldo_pre : null,
+      operador: h.operador || "",
+      pc_codigo: h.pc_codigo || "",
       pendiente: false
     });
   });
@@ -5339,9 +5446,10 @@ window.setSolicitudesFiltroRapido = function(modo){
     'TODAS': 'tabFiltroTodas',
     'CARGAS': 'tabFiltroCargas',
     'RETIROS': 'tabFiltroRetiros',
-    'RECHAZADAS': 'tabFiltroRechazadas'
+    'RECHAZADAS': 'tabFiltroRechazadas',
+    'CHUNIOR': 'tabFiltroChunior'
   };
-  ['tabFiltroTodas', 'tabFiltroCargas', 'tabFiltroRetiros', 'tabFiltroRechazadas'].forEach(function(tid){
+  ['tabFiltroTodas', 'tabFiltroCargas', 'tabFiltroRetiros', 'tabFiltroRechazadas', 'tabFiltroChunior'].forEach(function(tid){
     const tabEl = document.getElementById(tid);
     if(tabEl) tabEl.classList.toggle('active', tid === tabMap[modo]);
   });
@@ -5358,6 +5466,13 @@ window.setSolicitudesFiltroRapido = function(modo){
   } else if(modo === 'RECHAZADAS'){
     if(elEstado) elEstado.value = "RECHAZADA";
     if(elTipo) elTipo.value = "";
+  } else if(modo === 'CHUNIOR'){
+    if(elEstado) elEstado.value = "";
+    if(elTipo) elTipo.value = "__CHUNIOR__";
+    // Son ~3 por dia por oficina: filtrarlos ademas por turno los deja casi siempre en cero.
+    _filtroTurno = "TODOS";
+    const _selT = document.getElementById("filtroTurnoSelect");
+    if(_selT) _selT.value = "TODOS";
   }
   renderHistorialUnificado();
 };
@@ -5370,6 +5485,7 @@ window.limpiarFiltrosSolicitudes = function(){
   const selTurno = document.getElementById("filtroTurnoSelect");
   if(selTurno) selTurno.value = "ACTUAL";
   _filtroTurno = "ACTUAL";
+  window._histBusquedaServidor = [];
   const tabTodas = document.getElementById("tabFiltroTodas");
   if(tabTodas) tabTodas.click();
   else renderHistorialUnificado();
@@ -5384,9 +5500,14 @@ function renderSolicitudesStream(lista){
     streamEl.innerHTML = `
       <div class="sol-empty-dossier" style="padding:30px 15px">
         <span style="font-size:32px;margin-bottom:8px">🔍</span>
-        <h4 style="color:#cbd5e1;font-size:14px;margin:0 0 4px 0">Sin movimientos en este turno</h4>
-        <p style="font-size:11px;color:#64748b">Probá cambiar los filtros o consultar otro turno.</p>
-        <button type="button" class="mini-btn gray" onclick="limpiarFiltrosSolicitudes()" style="margin-top:10px;font-size:11px">Limpiar filtros</button>
+        <h4 style="color:#cbd5e1;font-size:14px;margin:0 0 4px 0">Sin movimientos en la ventana cargada</h4>
+        <p style="font-size:11px;color:#64748b">${_textoBuscado()
+          ? 'Nada con ese texto en lo que está cargado. Buscalo en todo el historial 👇'
+          : 'Probá cambiar los filtros, ampliar el período o consultar otro turno.'}</p>
+        <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:10px">
+          ${_textoBuscado() ? `<button type="button" class="mini-btn green" onclick="buscarHistorialServidor()" style="font-size:11px">🔎 Buscar en todo el historial</button>` : ''}
+          <button type="button" class="mini-btn gray" onclick="limpiarFiltrosSolicitudes()" style="font-size:11px">Limpiar filtros</button>
+        </div>
       </div>`;
     const dossierPane = document.getElementById("solicitudesDossierPane");
     if(dossierPane){
@@ -5463,6 +5584,12 @@ function renderSolicitudesStream(lista){
     ` : '';
 
     const esManual = it.fuente === 'OPERACION';
+    const esChu = _esTipoChunior(it.tipo);
+    const origenTxt = esManual ? (esChu ? 'Chunior' : 'Manual') : 'Portal';
+    // Lo que trajo la busqueda contra el servidor puede ser de otro dia o de otra oficina.
+    const remotoTag = it._remoto
+      ? `<span class="sol-mov-tag" style="background:rgba(192,132,252,.14);color:#c084fc;border-color:#c084fc44" title="Fuera de la ventana cargada">📅 ${escapeHtml(formatFecha(it.fecha))}${it.pc_codigo ? ' · ' + escapeHtml(it.pc_codigo) : ''}</span>`
+      : '';
 
     html += `
       <div id="solCard-${escapeHtml(selId)}" class="sol-card-item${isActive ? ' is-active' : ''}${checked ? ' is-selected-lote' : ''}" onclick="seleccionarSolicitudStream('${escapeHtml(selId)}')">
@@ -5476,7 +5603,7 @@ function renderSolicitudesStream(lista){
             </div>
           </div>
           <div style="text-align:right">
-            <span class="sol-pill-type ${tipoClass}">${esRetiro ? '⬇️ RETIRO' : (esCarga ? '⬆️ CARGA' : escapeHtml(it.tipo))}</span>
+            <span class="sol-pill-type ${tipoClass}">${esRetiro ? '⬇️ RETIRO' : (esCarga ? '⬆️ CARGA' : _tipoEtiqueta(it.tipo))}</span>
           </div>
         </div>
 
@@ -5490,8 +5617,9 @@ function renderSolicitudesStream(lista){
 
         <div class="sol-card-details-box">
           <div class="sol-card-meta-line">
-            <span class="sol-origin-badge ${esManual ? 'manual' : 'portal'}">${esManual ? 'Manual' : 'Portal'}</span>
+            <span class="sol-origin-badge ${esManual ? 'manual' : 'portal'}">${origenTxt}</span>
             ${it.chunior_movimiento_id ? `<span class="sol-mov-tag">N° ${escapeHtml(it.chunior_movimiento_id)}</span>` : ''}
+            ${remotoTag}
           </div>
         </div>
       </div>
@@ -5502,7 +5630,42 @@ function renderSolicitudesStream(lista){
   actualizarDossierActivo(lista);
 }
 
+function _textoBuscado(){
+  return String((document.getElementById("filtroTexto")||{}).value||"").trim();
+}
+
+// Busqueda contra el SERVIDOR, no contra las filas ya cargadas.
+// Sin esto el buscador prometia "N° de movimiento" pero solo miraba la ventana en memoria:
+// un numero de ayer no aparecia nunca, y eso es justo lo que hace falta para cotejar.
+// Un numero de movimiento se busca en TODAS las oficinas a proposito: el numero es de Chunior,
+// no de la PC, y cuando se cotea no siempre se sabe en que oficina se cargo.
+window.buscarHistorialServidor = async function(){
+  const texto = _textoBuscado();
+  if(texto.length < 3){ try{ toast("Escribí al menos 3 caracteres para buscar.","yellow"); }catch(_e){} return; }
+  const streamEl = document.getElementById("solicitudesStreamList");
+  if(streamEl) streamEl.innerHTML = '<div class="sol-empty-dossier" style="padding:30px 15px">Buscando en todo el historial…</div>';
+  const soloDigitos = /^[0-9]+$/.test(texto);
+  try{
+    let q = supabaseClient.from("historial_ops").select("*").order("created_at",{ascending:false}).limit(300);
+    if(soloDigitos){
+      q = q.or("chunior_movimiento_id.eq." + texto + ",solicitud_id.eq." + texto);
+    }else{
+      q = q.ilike("usuario", "%" + texto + "%");
+    }
+    const { data, error } = await q;
+    if(error) throw error;
+    window._histBusquedaServidor = data || [];
+    const n = window._histBusquedaServidor.length;
+    try{ toast(n ? (n + " resultado" + (n===1?"":"s") + " en todo el historial") : "No hay nada con \"" + texto + "\" en el historial completo.", n ? "green" : "orange"); }catch(_e){}
+  }catch(e){
+    window._histBusquedaServidor = [];
+    try{ toast("Error buscando: " + (e.message||e), "red"); }catch(_e){}
+  }
+  renderHistorialUnificado();
+};
+
 function actualizarDossierActivo(lista){
+
   const dossierPane = document.getElementById("solicitudesDossierPane");
   if(!dossierPane) return;
   if(!_solicitudActivaId){
@@ -5542,8 +5705,10 @@ function renderHistorialUnificado(){
   const turnoEfectivo = _filtroTurno === 'ACTUAL' ? _turnoActual() : _filtroTurno;
   let lista = listaCompleta.slice();
 
-  // Filtrar por turno
-  if(turnoEfectivo !== 'TODOS'){
+  // Filtrar por turno. Con una busqueda del servidor activa NO se filtra: el operador pidio
+  // expresamente algo de otro dia, esconderlo por turno seria devolverle una lista vacia.
+  const _hayBusquedaRemota = (window._histBusquedaServidor || []).length > 0;
+  if(turnoEfectivo !== 'TODOS' && !_hayBusquedaRemota){
     lista = lista.filter(function(it){
       if(!it.fecha) return true;
       return _obtenerTurnoDeFecha(it.fecha) === turnoEfectivo;
@@ -5551,7 +5716,8 @@ function renderHistorialUnificado(){
   }
 
   if(fuente) lista = lista.filter(function(it){ return it.fuente===fuente; });
-  if(tipo)   lista = lista.filter(function(it){ return it.tipo===tipo; });
+  if(tipo === "__CHUNIOR__") lista = lista.filter(function(it){ return _esTipoChunior(it.tipo); });
+  else if(tipo) lista = lista.filter(function(it){ return it.tipo===tipo; });
   if(estado) lista = lista.filter(function(it){ return _coincideEstadoFiltro(it, estado); });
 
   if(texto){
@@ -5567,6 +5733,22 @@ function renderHistorialUnificado(){
       return blob.includes(texto);
     });
   }
+
+  // Decir SIEMPRE que ventana se esta mirando. Lo que no esta cargado no existe para los
+  // filtros ni para el buscador, y el operador tiene que saberlo antes de concluir "no esta".
+  try{
+    const _inf = document.getElementById("histVentanaInfo");
+    if(_inf && typeof _histVentana === "function"){
+      const _v = _histVentana();
+      const _rem = (window._histBusquedaServidor || []).length;
+      _inf.textContent = _rem
+        ? ("🔎 " + _rem + " del historial completo")
+        : ("Cargadas últimas " + _v.horas + " h · " + listaCompleta.length + " movimientos");
+      _inf.title = _rem
+        ? "Resultados traídos del servidor, fuera de la ventana cargada. Limpiá la búsqueda para volver."
+        : "Sólo se filtra sobre lo cargado. Para ver más atrás, ampliá el período o usá la búsqueda en todo el historial.";
+    }
+  }catch(_e){}
 
   _histUnificadoCache = lista;
   _guardarHistorialLocal();

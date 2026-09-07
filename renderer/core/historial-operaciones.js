@@ -8,6 +8,49 @@ function pcAliasesHist(){
   for(const k in grupos){ if(grupos[k].includes(v)) return grupos[k]; }
   return v ? [v] : ["P1"];
 }
+// ── Ventana del historial ────────────────────────────────────────────────────
+// Antes esto era .limit(200) fijo. Medido contra la base, 200 filas son:
+//   P4 9,1 h · P2 9,3 h · P3 10,0 h · P7 11,8 h · P6 13,5 h · P5 30,9 h
+// O sea que en las oficinas grandes NO alcanzaba ni para el turno en curso, y todo lo de
+// ayer quedaba fuera del panel: no había con qué cotejar. Ahora la ventana se mide en
+// TIEMPO (que es lo que el operador tiene en la cabeza), no en cantidad de filas.
+window._HIST_PERIODO = window._HIST_PERIODO || "TURNO";
+const _HIST_PERIODOS = {
+  TURNO: { horas: 12,  limite: 1500, nombre: "Turno actual" },
+  HOY:   { horas: 24,  limite: 2500, nombre: "Últimas 24 h" },
+  D7:    { horas: 168, limite: 5000, nombre: "7 días" },
+  D30:   { horas: 720, limite: 8000, nombre: "30 días" }
+};
+function _histVentana(){
+  const cfg = _HIST_PERIODOS[String(window._HIST_PERIODO||"TURNO")] || _HIST_PERIODOS.TURNO;
+  let horas = cfg.horas;
+  // En TURNO la ventana arranca donde arrancó el turno, pero nunca menos de 12 h: si son las
+  // 06:10 y el turno recién empezó, el operador igual necesita ver lo que dejó el turno anterior.
+  if(window._HIST_PERIODO==="TURNO" || !window._HIST_PERIODO){
+    try{
+      const ar = new Date(Date.now() - 3*3600*1000);
+      const h = ar.getUTCHours();
+      const inicio = h>=6 && h<14 ? 6 : (h>=14 && h<22 ? 14 : 22);
+      let desdeTurno = (h - inicio + 24) % 24;
+      horas = Math.max(12, desdeTurno + 1);
+    }catch(_e){}
+  }
+  return {
+    desde: new Date(Date.now() - horas*3600*1000).toISOString(),
+    limite: cfg.limite,
+    horas: horas,
+    nombre: cfg.nombre
+  };
+}
+// Cambiar el período RECONSULTA al servidor: es la única forma de ver lo que quedó fuera.
+window.setHistorialPeriodo = async function(clave){
+  window._HIST_PERIODO = String(clave||"TURNO").toUpperCase();
+  const sel = document.getElementById("filtroPeriodoSelect");
+  if(sel && sel.value !== window._HIST_PERIODO) sel.value = window._HIST_PERIODO;
+  try{ toast("Trayendo "+((_HIST_PERIODOS[window._HIST_PERIODO]||{}).nombre||"")+"...", "blue"); }catch(_e){}
+  await cargarHistorial();
+};
+
 async function cargarHistorial(){
   _historialCargado = true;
   const el = document.getElementById("historialTable");
@@ -17,12 +60,14 @@ async function cargarHistorial(){
 
   // Incluimos LANDING/PORTAL para diferenciar claramente operaciones manuales
   // de operaciones que nacen desde solicitudes del portal.
+  const _v = _histVentana();
   const { data, error } = await supabaseClient
     .from("historial_ops")
     .select("*")
     .in("pc_codigo", pcAliasesHist())
+    .gte("created_at", _v.desde)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(_v.limite);
 
   if(error){
     if(el) el.innerHTML = '<div class="err-box">Error: '+escapeHtml(error.message||'')+'</div>';
@@ -170,15 +215,29 @@ function renderHistorial(lista){
     if(t==='RETIRO') return '⬇️';
     if(t==='CONSULTA') return '👁';
     if(t==='RESET_CLAVE') return '🔑';
+    if(t==='MOV_BILLETERA') return '🔀';
+    if(t==='CAMBIO_BILLETERA') return '💳';
+    if(t==='DEPOSITO_SR') return '💜';
+    if(t==='PROPINA') return '🎁';
+    if(t==='RECARGA_FICHAS') return '🎰';
     return '➡️';
   }
 
-  let html = '<div class="table-wrap"><table><thead><tr>'+
+  // La tabla se arma entera en un innerHTML: con el periodo en 30 dias serian miles de <tr>
+  // de un saque y la vista se cuelga. Se pintan las mas nuevas y se avisa cuantas quedaron.
+  const _TOPE_FILAS = 500;
+  const _recortada = lista.length > _TOPE_FILAS;
+  const _visibles = _recortada ? lista.slice(0, _TOPE_FILAS) : lista;
+
+  let html = (_recortada
+    ? '<div class="alert-box">Mostrando las <b>' + _TOPE_FILAS + '</b> más nuevas de <b>' + lista.length + '</b>. Afiná los filtros o buscá por usuario / N° de movimiento para llegar al resto.</div>'
+    : '') +
+    '<div class="table-wrap"><table><thead><tr>'+
     '<th>Fecha</th><th>Tipo</th><th>Usuario</th><th>Monto</th><th>Saldo pre</th><th>Saldo post</th>'+
     '<th>Billetera</th><th>Origen</th><th>Estado</th><th>Op</th><th></th>'+
     '</tr></thead><tbody>';
 
-  lista.forEach(function(h){
+  _visibles.forEach(function(h){
     try{ window._histPorId[String(h.id)] = h; }catch(_e){}
     const rowClass = h.estado==='REVERTIDA'?'hrow-revertida':h.estado==='ERROR'?'hrow-error':
       h.origen==='MANUAL'?'hrow-manual':h.origen==='AUTO'?'hrow-auto':h.origen==='PANEL'?'hrow-panel':'hrow-landing';
