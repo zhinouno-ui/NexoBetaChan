@@ -1515,8 +1515,45 @@ async function iniciarValidacionUsuarioBackground(usuario){
   }catch(e){}
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  MODO PRUEBAS · BORRAR ANTES DEL DEPLOY A LOS DOMINIOS DE PRODUCCIÓN      ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+// Con ?prueba=p1 el portal apunta a la oficina P1 y NO se muda al dominio propio.
+// Sin esto, cualquier copia subida a otro enlace resuelve la ruta, ve que el host de la
+// agencia es otro y hace location.replace() al portal de producción: nunca llegás a probar
+// el tuyo. Ver el bloque "Si llegaron por el dominio genérico" acá abajo.
+// Se activa SOLO con el parámetro en la URL: sin él, el portal se comporta igual que siempre.
+const RUTAS_PRUEBA = { p1:"rt-a8f31", p2:"rt-k6d92", p3:"rt-m4q77", p4:"rt-z9p42",
+                       p5:"rt-x2v61", p6:"rt-r5023", p7:"rt-m2z3r" };
+const MODO_PRUEBA = (function(){
+  try{
+    const v = (new URLSearchParams(location.search).get("prueba")||"").trim().toLowerCase();
+    return v && RUTAS_PRUEBA[v] ? { oficina:v.toUpperCase(), ruta:RUTAS_PRUEBA[v] } : null;
+  }catch(_e){ return null; }
+})();
+if(MODO_PRUEBA){
+  try{ localStorage.setItem("bet300_public_code", MODO_PRUEBA.ruta); }catch(_e){}
+  // Un cartel bien visible: que nadie confunda esta copia con la que usan los clientes.
+  document.addEventListener("DOMContentLoaded", function(){
+    const d=document.createElement("div");
+    d.textContent="⚠ PRUEBAS · "+MODO_PRUEBA.oficina;
+    d.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#b45309;color:#fff;font:700 12px system-ui,sans-serif;text-align:center;padding:6px;letter-spacing:.04em";
+    document.body.appendChild(d);
+  });
+}
+// ── fin del modo pruebas ─────────────────────────────────────────────────
+
 // ── Ruta e inicialización ─────────────────────────────────────────────────
 async function initRoute(){
+  // MODO PRUEBAS (borrar con el bloque de arriba): la oficina la fija el ?prueba=
+  if(MODO_PRUEBA){
+    state.publicCode = MODO_PRUEBA.ruta;
+    const rp = await rpc("landing_resolver_ruta_publica",{p_public_code:state.publicCode});
+    const filaP = rp.error ? null : normalize(rp.data);
+    if(filaP){ state.pcCodigo = filaP.pc_codigo||filaP.pc||filaP.codigo_pc||null; }
+    console.log("[BET300 PRUEBAS]", MODO_PRUEBA.oficina, state.publicCode, "->", state.pcCodigo);
+    return;                       // sin mudanza de dominio: te quedás donde estás
+  }
   // 1) ?r= explícito (compatibilidad vieja / override) → se persiste para la PWA.
   const qp=(new URLSearchParams(location.search).get("r")||"").trim();
   if(qp){ state.publicCode=qp; try{ localStorage.setItem("bet300_public_code", qp); }catch(_e){} }
