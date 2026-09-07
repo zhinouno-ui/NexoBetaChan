@@ -248,13 +248,9 @@ async function cargarOperacionesAgente(){
     const { data, error } = await supabaseClient.rpc("panel_crm_vinculos", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     window._crmVinculos = (!error && Array.isArray(data)) ? data : (window._crmVinculos||[]);
   }catch(_e){ window._crmVinculos = window._crmVinculos||[]; }
-  // Total de registrados en WTK (contador barato) → GLOBAL (todas las oficinas), sin cargar los 53k+ vínculos.
-  try{
-    const { data } = await supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
-    window._crmWtkTotal = (data === 0 || data) ? Number(data) : null;
-    const el = document.getElementById("crmWtkTotal");
-    if(el && window._crmWtkTotal != null) el.textContent = Number(window._crmWtkTotal).toLocaleString("es-AR");
-  }catch(_e){}
+  // Acá iba el contador global de registrados (las siete oficinas juntas). Se sacó junto con
+  // la tarjeta que lo mostraba: el CRM ahora lista los registrados DE LA OFICINA, paginados
+  // (panel_crm_vinculos_listar). Una consulta menos cada vez que se abre la pestaña.
   return window._agenteResumen;
 }
 

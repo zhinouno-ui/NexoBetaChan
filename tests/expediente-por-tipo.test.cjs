@@ -315,3 +315,13 @@ test('sin desfase de billetera no aparece ningún aviso', () => {
   const html = apiConBilleteraVieja(null).construirDossierCompletoHtml(item);
   assert.ok(!html.includes('No refrescó el portal'));
 });
+
+test('el flujo muestra una hora, no un pedazo de fecha', () => {
+  // Mostraba "34 p. m.": era fmtFecha(...).slice(-8) sobre "16/7 · 01:34 p. m.",
+  // que corta la hora al medio y deja el minuto suelto con el am/pm pegado.
+  const html = construirApi().construirDossierCompletoHtml(CARGA);
+  const paso1 = (html.match(/1\. Registro[\s\S]{0,120}?<\/div>/) || [''])[0];
+
+  assert.ok(!/p\.\s*m\./.test(paso1), 'no puede quedar el "p. m." colgado de un corte');
+  assert.match(paso1, /\d{2}:\d{2}/, 'tiene que verse una hora entera');
+});

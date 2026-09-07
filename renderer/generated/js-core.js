@@ -3496,90 +3496,13 @@ try{
 }catch(_e){}
 
 // ── UI de la base de jugadores + PERFIL (portado de NexoBetaChan 1.0.85) ─────────
-window.mostrarBaseLocalJugadores = function(filtro){
-  const map = _jugStoreAll();
-  const q = String(filtro||'').toLowerCase().trim();
-  let lista = Object.values(map);
-  const total = lista.length;
-  if(q) lista = lista.filter(function(j){
-    return (j.usuario+' '+Object.keys(j.telefonos||{}).join(' ')+' '
-      +Object.values(j.cbus||{}).map(function(c){return c.raw;}).join(' ')+' '
-      +Object.values(j.titulares||{}).map(function(t){return t.raw;}).join(' ')).toLowerCase().includes(q);
-  });
-  lista.sort(function(a,b){ return String(b.ultimaAct||'').localeCompare(String(a.ultimaAct||'')); });
-  const filas = lista.slice(0,400).map(function(j){
-    const tels = Object.keys(j.telefonos||{});
-    const cbus = Object.values(j.cbus||{});
-    const tits = Object.values(j.titulares||{});
-    const bonos = Array.isArray(j.bonos)?j.bonos:[];
-    const ultBono = bonos.length?bonos[bonos.length-1]:null;
-    const bonosTxt = !bonos.length ? '<span style="color:#5a6474">—</span>'
-      : (ultBono.estado==='APLICADO'
-          ? '<span style="color:#22c55e;font-weight:700">🎁 aplicado'+(ultBono.pct?(' '+ultBono.pct+'%'):'')+'</span>'
-          : '<span style="color:#f5c518;font-weight:700">⏳ pendiente'+(ultBono.pct?(' '+ultBono.pct+'%'):'')+'</span>')
-        + '<div class="small" style="color:#8b949e">'+bonos.length+' bono/s</div>';
-    return '<tr style="border-top:1px solid rgba(255,255,255,.07)">'
-      + '<td style="padding:7px 8px;vertical-align:top"><b>'+escapeHtml(j.usuario)+'</b>'
-      +   '<div class="small" style="color:#8b949e">'+escapeHtml(formatFecha(j.ultimaAct||''))+'</div></td>'
-      + '<td style="padding:7px 8px;vertical-align:top;font-family:ui-monospace,monospace;font-size:12px">'+(tels.length?tels.map(function(t){ return escapeHtml(t)+((j.telefonos[t]||{}).verificado?' <span title="Verificado al vincular" style="color:#22c55e">✓</span>':''); }).join('<br>'):'<span style="color:#5a6474">—</span>')+'</td>'
-      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+(cbus.length?cbus.map(function(c){ return '<div style="font-family:ui-monospace,monospace">'+escapeHtml(c.raw)+' <span style="color:#8b949e">×'+c.veces+'</span>'+(c.verificado?' <span title="Ya cobró en este destino (retiro OK)" style="color:#22c55e">✓</span>':'')+'</div>'; }).join(''):'<span style="color:#5a6474">—</span>')+'</td>'
-      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+(tits.length?tits.map(function(t){ return escapeHtml(t.raw); }).join('<br>'):'<span style="color:#5a6474">—</span>')+'</td>'
-      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+bonosTxt+'</td>'
-      + '<td style="padding:7px 8px;vertical-align:top"><button class="mini-btn blue" style="font-size:10px" onclick="abrirPerfilJugador(\''+escapeHtml(j.usuario)+'\')" title="Perfil completo del jugador">🌳</button></td>'
-      + '</tr>';
-  }).join('');
-  const body =
-      '<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
-    +   '<input id="jugLocalBuscar" placeholder="Buscar usuario / teléfono / CBU / titular…" value="'+escapeHtml(q)+'" oninput="mostrarBaseLocalJugadoresRefiltrar(this.value)" style="flex:1;min-width:200px">'
-    +   '<span class="small">👥 <b>'+lista.length+'</b>'+(q?(' de '+total):'')+' jugador/es con datos</span>'
-    + '</div>'
-    + '<div style="max-height:56vh;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:10px">'
-    +   '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead>'
-    +     '<tr style="position:sticky;top:0;background:#161b26;z-index:1"><th style="padding:8px;text-align:left">Usuario</th><th style="padding:8px;text-align:left">Teléfonos</th><th style="padding:8px;text-align:left">Destinos (CBU/alias)</th><th style="padding:8px;text-align:left">Titulares</th><th style="padding:8px;text-align:left">Bonos</th><th></th></tr>'
-    +   '</thead><tbody>'+(filas||'<tr><td colspan="6" style="padding:14px;color:#8b949e">Sin datos todavía. La base se llena sola: verificaciones (teléfono) y retiros (destino/titular), tanto manuales como del portal.</td></tr>')+'</tbody></table>'
-    + '</div>';
-  // "abierto" = el buscador existe Y es visible (si el modal se cerró, el nodo puede quedar
-  // en el DOM oculto → antes el botón actualizaba un modal invisible y parecía roto).
-  const _inpPrev = document.getElementById('jugLocalBuscar');
-  const yaAbierto = !!(_inpPrev && _inpPrev.offsetParent !== null);
-  if(yaAbierto){
-    const mb = document.getElementById('modalBody') || document.querySelector('#modal .modal-body');
-    if(mb){ mb.innerHTML = body; const inp=document.getElementById('jugLocalBuscar'); if(inp){ inp.focus(); inp.setSelectionRange(inp.value.length,inp.value.length); } }
-  } else {
-    abrirModal('📇 Base local de jugadores', body, null, 'Cerrar');
-    try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
-  }
-};
-// Modal de DESTINOS del usuario: todos sus cbu/alias en tarjetas copiables (un toque = copiar),
-// ordenados por último uso — para transferir cómodo y revisar el último usado si metió uno nuevo
-// por error (y cerrar el retiro ANTES de transferir).
-window.mostrarDestinosUsuario = function(usuario){
-  const u = String(usuario||'').toLowerCase().trim();
-  const j = _jugStoreAll()[u] || {};
-  const cbus = Object.values(j.cbus||{}).sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); });
-  const titsSet = Object.values(j.titulares||{}).map(function(t){ return String(t.raw).toLowerCase().trim(); });
-  const filas = cbus.map(function(c,i){
-    const ajeno = c.titular && titsSet.length && titsSet.indexOf(String(c.titular).toLowerCase().trim())===-1;
-    return '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+escapeHtml(c.raw)+'" title="Tocá para copiar" '
-      + 'style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;cursor:pointer;background:#161b22;border:1.5px solid '+(ajeno?'rgba(239,68,68,.55)':(i===0?'rgba(245,197,24,.5)':'#30363d'))+';border-radius:10px;padding:9px 12px;color:#e6edf3;margin-bottom:7px">'
-      + '<span style="min-width:0;flex:1">'
-      +   '<span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">'+(i===0?'⭐ último usado':'destino')+(c.verificado?' · ✓ ya cobró acá':' · ● nunca cobró')+(ajeno?' · 🚨 TITULAR DISTINTO':'')+'</span>'
-      +   '<span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:'+(ajeno?'#fca5a5':'#e6edf3')+'">'+escapeHtml(c.raw)+'</span>'
-      +   '<span class="small" style="color:#8b949e">'+(c.titular?escapeHtml(c.titular)+' · ':'')+'×'+c.veces+(c.ultima?(' · últ. '+escapeHtml(formatFecha(c.ultima))):'')+'</span>'
-      + '</span><span class="pcopy-ico" style="flex-shrink:0;font-size:16px">📋</span></button>';
-  }).join('');
-  abrirModal('📇 Destinos de '+escapeHtml(usuario),
-    (filas || '<div class="small" style="color:#8b949e;padding:10px">Sin destinos registrados para este usuario.</div>')
-    + '<div class="small" style="color:#8b949e;margin-top:6px">Un toque copia el CBU/alias. Si el que llegó en el retiro no coincide con estos, revisá con el usuario y cerrá el retiro ANTES de transferir.</div>',
-    null, 'Cerrar');
-  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
-};
-
-let _jugRefiltroT = null;
-window.mostrarBaseLocalJugadoresRefiltrar = function(v){
-  clearTimeout(_jugRefiltroT);
-  _jugRefiltroT = setTimeout(function(){ mostrarBaseLocalJugadores(v); }, 250);
-};
+// La pantalla "📇 Base local" se sacó: era una herramienta de desarrollo que nunca terminó
+// de funcionar (mostraba casi todo en "—"), y esa función la cumple Nexo, que ve todas las
+// oficinas en vez de lo que junto esta PC. Para consultas puntuales está el SQL.
+//
+// El ALMACÉN local (_jugStoreAll / jugadorRegistrarDato) NO se borra: lo leen el perfil del
+// jugador (perfil-jugador.js), el cotejo del alta (cotejo-alta.js) y lo que se le manda a
+// Nexo (nexo.js). Lo que se fue es la pantalla, no el dato.
 
 // ══════════════════════════════════════════════════════════════════════════
 // PERFIL DE JUGADOR — layout de "record page" copiado de los CRM probados
@@ -4954,13 +4877,9 @@ async function cargarOperacionesAgente(){
     const { data, error } = await supabaseClient.rpc("panel_crm_vinculos", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     window._crmVinculos = (!error && Array.isArray(data)) ? data : (window._crmVinculos||[]);
   }catch(_e){ window._crmVinculos = window._crmVinculos||[]; }
-  // Total de registrados en WTK (contador barato) → GLOBAL (todas las oficinas), sin cargar los 53k+ vínculos.
-  try{
-    const { data } = await supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
-    window._crmWtkTotal = (data === 0 || data) ? Number(data) : null;
-    const el = document.getElementById("crmWtkTotal");
-    if(el && window._crmWtkTotal != null) el.textContent = Number(window._crmWtkTotal).toLocaleString("es-AR");
-  }catch(_e){}
+  // Acá iba el contador global de registrados (las siete oficinas juntas). Se sacó junto con
+  // la tarjeta que lo mostraba: el CRM ahora lista los registrados DE LA OFICINA, paginados
+  // (panel_crm_vinculos_listar). Una consulta menos cada vez que se abre la pestaña.
   return window._agenteResumen;
 }
 

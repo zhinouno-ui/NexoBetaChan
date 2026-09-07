@@ -24,6 +24,17 @@ const api = {};
     if(typeof deps.window?.formatFecha === 'function') return deps.window.formatFecha(v);
     return v ? new Date(v).toLocaleString('es-AR') : '—';
   }
+  // fmtFecha da "16/7 · 01:34 p. m.". El flujo quiere SOLO la hora: cortar los últimos 8
+  // caracteres dejaba "34 p. m." (el minuto suelto). Se saca la hora de verdad.
+  function soloHora(v){
+    if(!v) return "";
+    try{
+      return new Date(v).toLocaleTimeString("es-AR", {
+        timeZone: "America/Argentina/Buenos_Aires",
+        hour: "2-digit", minute: "2-digit", hour12: false
+      });
+    }catch(_e){ return String(fmtFecha(v)).trim(); }
+  }
 
   function portalParseMonto(v){
     const raw = String(v ?? '').trim().replace(/\$/g,'').replace(/\s/g,'');
@@ -623,7 +634,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       stepperHtml = `
           <div class="sol-step-item done">
             ✓ 1. Pedido
-            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+            <div style="font-size:9.5px;opacity:.8">${soloHora(fechaCreacion)}</div>
           </div>
           <div class="sol-step-item ${abierta ? 'idle' : 'done'}">
             ${abierta ? '·' : '✓'} 2. Agente
@@ -641,7 +652,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       stepperHtml = `
           <div class="sol-step-item done">
             ✓ 1. Pedido
-            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+            <div style="font-size:9.5px;opacity:.8">${soloHora(fechaCreacion)}</div>
           </div>
           <div class="sol-step-item ${abierta ? 'idle' : 'done'}">
             ${abierta ? '·' : '✓'} 2. Consultado
@@ -655,7 +666,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       stepperHtml = `
           <div class="sol-step-item done">
             ✓ 1. Registro
-            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+            <div style="font-size:9.5px;opacity:.8">${soloHora(fechaCreacion)}</div>
           </div>
           <div class="sol-step-item ${movId ? 'done' : (saldoPre != null ? 'done' : 'idle')}">
             ${movId ? '✓' : '·'} 2. Chunior

@@ -1067,3 +1067,72 @@ defined`, el `try/catch` de `_billeteraVieja` se lo comía y devolvía `null`. E
 del test tiene que ser el mismo que el del HTML o el test miente.
 
 Suite: 70/70.
+
+---
+
+## D-41 · Limpieza del CRM: filtros muertos, base local y registrados por oficina
+
+Pedido de Juan: *«eliminá los filtros de la pantalla principal del CRM, son una verga y no
+sirven. La base local por alguna razón no guarda usuarios, eliminala… los registrados en WTK
+deben de ser por oficina, la oficina en la que iniciás sesión, en todo caso mostrá en formato
+lista algunos y poné páginas para que se consulten en el momento, eso es un CRM»*.
+
+### 1 · Los cuatro filtros
+
+Segmento / turno / origen / orden filtraban sobre `buildCRM()`, la misma función de D-34 y de
+la campaña eliminada: abre con `if(!window._crmCargado){ return []; }`. Sin apretar «Cargar
+lista» filtraban **sobre una lista vacía**. Fuera los cuatro. Queda la búsqueda —que es la que
+pega contra el servidor y sí funciona desde D-29— y el orden por score por defecto.
+
+### 2 · La pantalla «📇 Base local»
+
+Fuera, con una aclaración importante: **se sacó la pantalla, no el dato.**
+
+El almacén (`_jugStoreAll` / `jugadorRegistrarDato`) lo leen **otras tres cosas**:
+
+| Quién | Para qué |
+|---|---|
+| `perfil-jugador.js:127` | la ficha del jugador (CBUs, titulares, timeline) |
+| `cotejo-alta.js:30` | el cotejo al dar de alta un usuario |
+| `nexo.js:50` | lo que NODO le manda a Nexo |
+
+Borrar el almacén rompía las tres. Lo que se fue son `mostrarBaseLocalJugadores` y su
+refiltrado, que era la herramienta de desarrollo que nunca terminó de andar.
+
+### 3 · Registrados: eran de las siete oficinas juntas
+
+La tarjeta decía «Registrados (WTK)» con un número, y la llamada era:
+
+```js
+supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null, ... })
+```
+
+`p_pc_codigos: null` significa **todas las oficinas**. La RPC ya aceptaba el filtro; el panel
+le pasaba `null`. Y encima era un número que no se podía abrir.
+
+**Ahora**: `panel_crm_vinculos_listar(p_pc_codigos, p_q, p_limit, p_offset, p_secret)` devuelve
+la página de registrados **de la oficina en la que estás logueado** (la que sale del login de
+Chunior, vía `pcAliasesHist()`), con usuario, teléfono, titular, estado del vínculo, si tiene la
+app y la fecha de alta, más el total al lado para paginar. 25 por página, con buscador propio
+—usuario, titular o teléfono comparando los **últimos 10 dígitos**, mismo criterio que D-29— y
+botones Anterior / Siguiente. Cada fila abre el perfil.
+
+Verificado contra P1: **6.635 registrados**, con teléfono y estado.
+
+Se sacaron además las **dos llamadas al contador global** que quedaron sin dónde pintarse: una
+consulta menos cada vez que se abre la pestaña.
+
+---
+
+## D-42 · El test de arranque cargaba de menos (otra vez)
+
+D-40 dejó `tests/panel-arranque.test.cjs` cargando `js-modules.js` + `js-core.js`. Al probar el
+CRM nuevo, el test dijo «falta `crmRegistradosCargar`». **No faltaba**: el CRM vive en
+`js-jugadores-crm.js`, que el arnés no cargaba. Es el mismo error que en D-40, donde faltaba
+`js-modules.js` y `normalizar()` tiraba `NodoDomain is not defined`.
+
+Dos veces el mismo problema es un problema de diseño del test, no un descuido. Ahora el arnés
+**lee el orden de los `<script>` del HTML generado** y carga los 26 bundles en ese orden. Si
+mañana se agrega uno, el test lo toma solo.
+
+Suite: 73/73.
