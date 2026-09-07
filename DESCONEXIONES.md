@@ -1289,3 +1289,55 @@ semana), les calcula el grupo sólo a ellos, y trae el resto por `ix_vinc_pc_id_
 
 Es la misma lección que D-41b y que el CRM de D-32: el problema nunca fue la cantidad de datos,
 fue pedirle a la base que evalúe algo caro sobre todo el conjunto para después tirar el 99 %.
+---
+
+## D-44 · Datos de ingreso del jugador · y las claves que no quedaban en ningún lado
+
+Pedido: *«ya tenemos promo, push, cargar, retirar; precisamos uno que le entregue la información
+de ingreso a los usuarios: el usuario y su clave, su número de teléfono registrado, para poder
+ingresar a la página»*.
+
+### El botón
+
+**🔑 Ingreso** en la ficha del jugador. Abre un cuadro con usuario, clave, teléfono vinculado y
+el link de la plataforma, más **📋 Copiar para mandar** y **💬 Mandar por WhatsApp** (al teléfono
+vinculado, con el `549` puesto si el número viene de 10 dígitos).
+
+### El problema real: casi nunca sabíamos la clave
+
+La clave no se guarda en ningún lado por diseño. Sólo se puede saber si **se la pusimos
+nosotros**. Y de los tres caminos que la cambian, **dos no dejaban rastro**:
+
+| Camino | ¿Quedaba registrada? |
+|---|---|
+| `_resetClaveManual` (después del alta) | sí, `notas: 'clave → xxxx'` |
+| `resetClaveRapido` (chat y perfil) | **no** |
+| Alta de usuario | **no** — sólo en `window._altaClaveNueva`, se perdía al cerrar |
+| Cambio pedido desde el portal | sí, en `metadata.password_nuevo` |
+
+Medido sobre 3.000 usuarios de P4: **117 con clave recuperable, el 3,9 %**.
+
+Se cerraron los dos agujeros: `resetClaveRapido` y el alta ahora registran la clave igual que
+`_resetClaveManual`. De acá en adelante todo cambio de clave queda recuperable; lo viejo no se
+puede reconstruir.
+
+### Lo que el botón NO hace
+
+**No inventa una clave.** Si no la sabemos lo dice —*«No sabemos cuál es · nunca se la cambiamos
+desde acá»*— y ofrece **🔑 Cambiarle la clave ahora**, que la cambia en el agente, la registra, y
+vuelve al cuadro ya con el dato. Ese va a ser el camino normal hasta que se acumule historial.
+Sin clave tampoco arma el texto ni muestra el botón de copiar: mandar «Clave: —» es peor que no
+mandar nada.
+
+### Nota sobre las claves en la base
+
+Quedan en `historial_ops.notas` en texto plano, que es como ya venía funcionando desde antes
+(1.593 filas de 90 días). No es una práctica nueva que se introduzca acá: es la que hace posible
+lo que se pidió. Si alguna vez se quiere cambiar, hay que cambiarla en los cuatro caminos a la
+vez y aceptar que la clave deje de poder pasarse.
+
+### RPC
+
+`panel_datos_ingreso(p_usuario, p_pc_codigos, p_secret)` — toma la clave **más reciente entre las
+dos fuentes** (`RESET_CLAVE` del panel y `CAMBIO_CLAVE` del portal), y devuelve además el teléfono
+vinculado, el titular y el host de la oficina.

@@ -265,3 +265,48 @@ test('la página pedida se traduce a offset, no se filtra en el navegador', asyn
   assert.equal(visto.p_limit, 25);
   assert.equal(visto.p_offset, 75, 'página 3 de a 25 arranca en la 75');
 });
+
+test('los datos de ingreso no inventan una clave que no sabemos', async () => {
+  // La clave no se puede recuperar: sólo se sabe si se la pusimos nosotros. Mandar
+  // "Clave: —" es peor que no mandar nada, así que sin clave no se arma el texto ni el botón.
+  const sinClave = { usuario: 'lmaurod', telefono: '3517352547', titular: 'Lmaurod', clave: null };
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: [sinClave], error: null }) });
+
+  sb.toast = () => {};
+  let modal = null;
+  sb.abrirModal = (titulo, cuerpo) => { modal = { titulo, cuerpo }; };
+  await sb.pjDatosIngreso('lmaurod');
+
+  assert.match(modal.cuerpo, /No sabemos cuál es/);
+  assert.match(modal.cuerpo, /Cambiarle la clave ahora/, 'el camino real es cambiarla y pasarla');
+  assert.ok(!/Copiar para mandar/.test(modal.cuerpo), 'sin clave no hay nada que copiar');
+  assert.match(modal.cuerpo, /3517352547/, 'el teléfono sí lo sabemos');
+});
+
+test('con clave conocida arma el texto listo para mandar', async () => {
+  const conClave = {
+    usuario: 'lmaurod', telefono: '3517352547', clave: 'zorro77',
+    clave_fecha: '2026-09-01T10:00:00Z', clave_origen: 'panel'
+  };
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: [conClave], error: null }) });
+  sb.toast = () => {};
+  sb.abrirModal = () => {};
+  await sb.pjDatosIngreso('lmaurod');
+
+  const t = sb._pjTextoIngreso;
+  assert.match(t, /Usuario: lmaurod/);
+  assert.match(t, /Clave: zorro77/);
+  assert.match(t, /Teléfono registrado: 3517352547/);
+  assert.match(t, /bet-300/, 'y adónde entrar');
+});
+
+test('el WhatsApp de ingreso le pega el 549 a un número de 10 dígitos', () => {
+  const sb = arrancarPanel();
+  let abierto = '';
+  sb.open = (u) => { abierto = u; };
+  sb._pjTextoIngreso = 'Usuario: x\nClave: y\nTeléfono registrado: 3517352547\nEntrá en: https://bet-300.pw';
+  sb.pjIngresoWhatsapp('x');
+
+  assert.match(abierto, /phone=5493517352547/, 'sin el 549 WhatsApp no lo encuentra');
+  assert.match(abierto, /web\.whatsapp\.com/);
+});

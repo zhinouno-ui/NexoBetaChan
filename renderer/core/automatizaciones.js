@@ -291,9 +291,36 @@ async function resetClaveRapido(usuario, claveNueva="12345a"){
   const r = await callDrex("cambiarClave", claveNueva);
   if(r && r.ok === false){ toast("Error: "+(r.message||"falló"),"red"); return; }
 
+  // Sin esto la clave no quedaba en ningún lado: _resetClaveManual sí la registraba, este
+  // camino no. Y es el que usan el chat y el perfil, así que después no se le podía decir
+  // al jugador cuál es su clave (medido: sólo el 3,9 % de los usuarios la tenía recuperable).
+  try{
+    await registrarEnHistorial({ usuario, tipo:'RESET_CLAVE', monto:0, origen:'MANUAL',
+      estado:'OK', notas:'clave → '+claveNueva });
+  }catch(_e){}
+
   toast(`Clave reseteada a "${claveNueva}"`, "green");
   await window.ctrlElectron.navigateAgent();
 }
+
+// Cambiar la clave desde la ficha del jugador, preguntando cuál poner. Va por
+// resetClaveRapido porque ese busca al usuario en el agente antes de cambiarla.
+window.cambiarClaveJugador = function(usuario){
+  const u = String(usuario||"").trim();
+  if(!u){ toast("Sin usuario.","red"); return; }
+  abrirModal('🔑 Cambiar la clave de '+escapeHtml(u),
+    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Se la cambiamos en el agente y queda anotada, '
+    + 'así después se la podés pasar desde «Datos de ingreso».</div>'
+    + '<label>Clave nueva</label>'
+    + '<input id="claveNuevaJug" type="text" autocomplete="off" value="12345a">',
+    async function(){
+      const c = String((document.getElementById("claveNuevaJug")||{}).value||"").trim();
+      if(c.length < 6){ toast("La clave tiene que tener al menos 6 caracteres.","red"); return; }
+      cerrarModal();
+      await resetClaveRapido(u, c);
+      try{ pjDatosIngreso(u); }catch(_e){}   // volver a la ficha, ya con la clave
+    }, 'Cambiar clave');
+};
 
 async function retirarSaldoRapido(usuario, monto){
   if(!window.ctrlElectron){ alert("Solo en la app de escritorio."); return; }

@@ -57,6 +57,13 @@ async function _ejecutarCrearUsuario(){
       // de resultado, si no, ofrece copiar el mensaje con "12345a" fijo — que sería mentira
       // cuando el operador puso otra.
       try{ window._altaClaveNueva = claveFinal; }catch(_e){}
+      // La clave del alta sólo vivía en memoria: cerrabas el panel y se perdía. Queda
+      // registrada igual que un cambio de clave, así "Datos de ingreso" la puede mostrar
+      // después sin tener que resetearla.
+      try{
+        await registrarEnHistorial({ usuario: aliasFinal, tipo:'RESET_CLAVE', monto:0,
+          origen:'MANUAL', estado:'OK', notas:'clave → '+claveFinal+' · alta' });
+      }catch(_e){}
       try{ cerrarModal(); }catch(_e){}
       await ejecutarVincular(aliasFinal, telefono, false);
       return;

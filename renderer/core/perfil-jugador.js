@@ -1,3 +1,112 @@
+// ── Datos de ingreso del jugador ────────────────────────────────────────────
+// Lo que hay que mandarle para que entre a la plataforma: usuario, clave y el teléfono con el
+// que quedó vinculado. La clave NO se inventa: sale de la última que le pusimos nosotros
+// —RESET_CLAVE del panel o CAMBIO_CLAVE del portal— y si no hay ninguna, se dice y se ofrece
+// cambiarla. Medido: sólo el 3,9 % de los usuarios tiene clave conocida, así que el camino
+// normal va a ser "no la sé → se la cambio → se la paso".
+window.PLATAFORMA_URL = localStorage.getItem("nodo_plataforma_url") || "https://bet-300.pw";
+
+window.pjDatosIngreso = async function(usuario){
+  const u = String(usuario||"").trim();
+  if(!u){ toast("Sin usuario.","red"); return; }
+
+  toast("Buscando los datos de "+u+"…","blue");
+  let d = null;
+  try{
+    const oficinas = (typeof pcAliasesHist === "function") ? pcAliasesHist() : null;
+    const { data, error } = await supabaseClient.rpc("panel_datos_ingreso", {
+      p_usuario: u, p_pc_codigos: oficinas, p_secret: window.PANEL_DATA_SECRET
+    });
+    if(error) throw error;
+    d = Array.isArray(data) ? data[0] : data;
+  }catch(e){
+    toast("No se pudieron leer los datos: "+(e.message||e),"red");
+    return;
+  }
+  if(!d){ toast(u+" no tiene vínculo en esta oficina.","yellow"); return; }
+
+  const clave = String(d.clave||"").trim();
+  const tel   = String(d.telefono||"").trim();
+  const cuando = d.clave_fecha ? new Date(d.clave_fecha).toLocaleDateString("es-AR") : "";
+  const uEsc = u.replace(/'/g,"\\'");
+
+  // El texto que se copia y se manda. Sin la clave no se arma: mandar "Clave: —" es peor que
+  // no mandar nada.
+  const texto = "Usuario: " + u + "\n"
+              + (clave ? ("Clave: " + clave + "\n") : "")
+              + (tel ? ("Teléfono registrado: " + tel + "\n") : "")
+              + "Entrá en: " + window.PLATAFORMA_URL;
+  window._pjTextoIngreso = texto;
+
+  const fila = function(k, v, extra){
+    return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #1e293b">'
+      + '<span class="small" style="color:#8b949e">'+k+'</span>'
+      + '<span style="text-align:right">'+v+(extra||'')+'</span></div>';
+  };
+
+  const cuerpo =
+      fila('Usuario', '<b class="mono" style="font-size:15px;color:#fff">'+escapeHtml(u)+'</b>')
+    + fila('Clave', clave
+        ? '<b class="mono" style="font-size:15px;color:#facc15">'+escapeHtml(clave)+'</b>'
+          + (cuando ? '<div class="small" style="color:#8b949e">puesta el '+escapeHtml(cuando)
+              + (d.clave_origen==='portal' ? ' · la pidió él' : ' · se la pusimos') + '</div>' : '')
+        : '<span style="color:#f87171">No sabemos cuál es</span>'
+          + '<div class="small" style="color:#8b949e">nunca se la cambiamos desde acá</div>')
+    + fila('Teléfono registrado', tel
+        ? '<b class="mono" style="font-size:15px">'+escapeHtml(tel)+'</b>'
+        : '<span style="color:#f87171">Sin teléfono</span>')
+    + fila('Entra en', '<span class="mono">'+escapeHtml(window.PLATAFORMA_URL)+'</span>')
+    + (clave ? '' :
+        '<div class="alert-box" style="margin-top:12px">La clave no se puede recuperar: no se guarda en ningún lado '
+        + 'salvo cuando se la cambiamos nosotros. Cambiásela y te la paso acá mismo.</div>');
+
+  const acciones =
+      (clave ? '<button class="btn btn-green" onclick="pjCopiarIngreso()">📋 Copiar para mandar</button>' : '')
+    + (clave && tel ? '<button class="mini-btn blue" onclick="pjIngresoWhatsapp(\''+escapeHtml(uEsc)+'\')">💬 Mandar por WhatsApp</button>' : '')
+    + '<button class="mini-btn yellow" onclick="cerrarModal();cambiarClaveJugador(\''+escapeHtml(uEsc)+'\')">🔑 '
+      + (clave ? 'Cambiar la clave' : 'Cambiarle la clave ahora') + '</button>';
+
+  abrirModal('🔑 Datos de ingreso · '+escapeHtml(u),
+    cuerpo + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'+acciones+'</div>',
+    null, '');
+};
+
+window.pjCopiarIngreso = function(){
+  const t = window._pjTextoIngreso || "";
+  if(!t){ toast("No hay nada para copiar.","yellow"); return; }
+  // Mismo camino que el resto del panel: clipboard moderno y, si falla (file:// no es contexto
+  // seguro en Electron), textarea + execCommand. Sólo se canta "copiado" si de verdad se copió.
+  const ok = function(){ toast("Datos copiados","green"); };
+  const porTextarea = function(){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=t; ta.setAttribute('readonly','');
+      ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+      document.body.appendChild(ta); ta.select();
+      const bien=document.execCommand('copy'); ta.remove();
+      if(bien) ok(); else toast("No se pudo copiar — copialo a mano del cuadro","red");
+    }catch(_e){ toast("No se pudo copiar — copialo a mano del cuadro","red"); }
+  };
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(ok).catch(porTextarea);
+    } else porTextarea();
+  }catch(_e){ porTextarea(); }
+};
+
+window.pjIngresoWhatsapp = function(usuario){
+  const t = window._pjTextoIngreso || "";
+  if(!t){ toast("No hay nada para mandar.","yellow"); return; }
+  // Se manda al teléfono VINCULADO, que es el mismo que aparece en el cuadro.
+  const m = t.match(/Tel[eé]fono registrado:\s*(\S+)/i);
+  const tel = m ? String(m[1]).replace(/\D/g,'') : '';
+  if(!tel){ toast("Ese jugador no tiene teléfono cargado.","yellow"); return; }
+  const numero = tel.length === 10 ? ('549' + tel) : tel;
+  try{
+    window.open("https://web.whatsapp.com/send?phone="+numero+"&text="+encodeURIComponent(t), "_blank");
+  }catch(_e){ toast("No se pudo abrir WhatsApp.","red"); }
+};
+
 // PERFIL DE JUGADOR — layout de "record page" copiado de los CRM probados
 // (Twenty/Attio/HubSpot): carril IZQUIERDO de identidad/campos + timeline de
 // actividad a la DERECHA. Mismos tokens dark (Primer/shadcn) que el resto del
@@ -247,6 +356,7 @@ window.abrirPerfilJugador = function(usuario){
     +     '<div style="min-width:0;flex:1"><div style="font-size:17px;font-weight:900">'+esc(u)
     +       ' <span title="Push" style="opacity:'+(fl.push?1:.25)+'">🔔</span><span title="App" style="opacity:'+(fl.app?1:.25)+'">📱</span>'+segChip+'</div>'
     +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es · '+esc(crm.accion||'')+'</div></div>'
+    +     '<button class="mini-btn yellow" title="Usuario, clave y teléfono para que pueda entrar a la plataforma" onclick="pjDatosIngreso(\''+uEsc+'\')">🔑 Ingreso</button>'
     +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
     +     '<button class="mini-btn green" onclick="crmPushIndividual(\''+uEsc+'\')">📲 Push</button>'
     +     '<button class="mini-btn blue" title="Copia un enlace que lo mete al portal ya validado, en Cargar. Vale 30 min y un solo uso." onclick="crmEnlaceAcceso(\''+uEsc+'\',\'CARGAR\')">🔗 Cargar</button>'
