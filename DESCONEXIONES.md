@@ -1124,6 +1124,49 @@ consulta menos cada vez que se abre la pestaña.
 
 ---
 
+## D-41b · El CRM quedaba en «Cargando…» · y por qué
+
+Primera versión de D-41: dos tarjetas —«Buscar jugador» y «Registrados en P1»— y la de abajo
+se quedaba cargando para siempre.
+
+**No era la base.** Medido: la consulta tarda **126 ms** para P1.
+
+**Era una carrera en mi código.**  abría con un candado booleano:
+
+
+
+ repinta la vista **varias veces** (el override de , el 
+de 1 s). La primera llamada tomaba el candado; el repintado siguiente creaba una caja nueva y
+disparaba otra llamada que **se salteaba** por el candado; y la respuesta de la primera
+terminaba escrita en la caja vieja, ya fuera del DOM. La que veía el operador se quedaba en
+«Cargando…» sin que fallara nada.
+
+**Arreglado con un token de pedido** en vez de un candado: cada llamada toma un número, ninguna
+se saltea, y al volver se descarta la respuesta si ya hay una búsqueda más nueva. La caja se
+vuelve a buscar por id al pintar, porque entre el pedido y la respuesta la vista pudo repintarse.
+
+### Rediseño, por lo que marcó Juan
+
+*«no es necesario que P3 sepa que hay 2 oficinas atrás, los chicos no precisan saber eso… son
+dos apartados distintos, no creo que sea bueno separarlos, si vamos al caso es la misma
+búsqueda… hacé que sólo busque 10 usuarios y que permita filtrar de a más con un desplegable…
+que cargue lo que el usuario quiera que cargue, acá no hay pestañas tampoco»*.
+
+- **Una sola tarjeta.** Las dos hacían lo mismo: una filtraba memoria, la otra pedía al servidor.
+- **Sin nombre de oficina.** El operador ya está adentro de la suya; que haya siete atrás no le
+  sirve. La oficina se sigue usando para filtrar, pero no se muestra.
+- **10 por defecto**, con desplegable 10 / 25 / 50 / 100. Sin páginas.
+- **Una lista a la vez**: si buscás, se apaga la lista completa de «Cargar lista», y al revés.
+  Si no, quedaban dos tablas apiladas — el problema de los dos apartados otra vez, escondido.
+
+### La RPC, simplificada
+
+ es **UNIQUE (pc_codigo, usuario)**: dentro de una oficina no hay usuarios
+repetidos, así que el  de la primera versión sólo forzaba a ordenar todo el
+conjunto al pedo. Se sacó, y el orden pasa a , que tiene índice propio
+().
+
+---
 ## D-42 · El test de arranque cargaba de menos (otra vez)
 
 D-40 dejó `tests/panel-arranque.test.cjs` cargando `js-modules.js` + `js-core.js`. Al probar el

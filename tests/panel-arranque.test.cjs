@@ -21,7 +21,7 @@ function elemento() {
   };
 }
 
-function arrancarPanel() {
+function arrancarPanel(opciones) {
   const doc = {
     getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
     createElement: () => elemento(), addEventListener: noop,
@@ -41,6 +41,11 @@ function arrancarPanel() {
     alert: noop, confirm: () => false, requestAnimationFrame: () => 0,
     Notification: function () {}, CustomEvent: function () {}, Event: function () {}
   };
+  // supabaseClient es un `const` del bundle: se arma con window.supabase.createClient al
+  // cargar, asi que el cliente falso hay que dejarlo puesto ANTES, no despues.
+  if (opciones && opciones.rpc) {
+    sb.supabase = { createClient: () => ({ rpc: opciones.rpc, from: () => ({}), channel: () => ({ on: () => ({ subscribe: noop }) }) }) };
+  }
   sb.window = sb; sb.globalThis = sb; sb.self = sb;
   vm.createContext(sb);
 
@@ -117,39 +122,66 @@ test('la ventana del historial se mide en tiempo y el turno nunca baja de 12 h',
   assert.equal(v30.horas, 720, '30 días son 720 h');
 });
 
-test('el CRM quedó sin los filtros muertos y con la lista por oficina', () => {
+test('el CRM quedó con un solo buscador, sin filtros ni base local', () => {
   const sb = arrancarPanel();
 
-  // Las funciones de la lista paginada tienen que existir.
-  for (const f of ['crmRegistradosCargar', 'crmRegistradosIr', 'crmRegistradosBuscar']) {
+  for (const f of ['crmBuscarServidor', 'crmBusqTexto', 'crmBusqCantidad']) {
     assert.equal(typeof sb[f], 'function', 'falta ' + f);
   }
-  assert.ok(sb._crmRegPag, 'falta el estado de paginación');
-  assert.equal(sb._crmRegPag.pagina, 0);
+  assert.equal(sb._crmBusq.cantidad, 10, 'arranca trayendo 10');
 
   // Lo que se sacó no puede seguir colgando.
-  assert.equal(typeof sb.mostrarBaseLocalJugadores, 'undefined', 'la pantalla Base local se sacó');
-  assert.equal(typeof sb.mostrarBaseLocalJugadoresRefiltrar, 'undefined');
+  for (const f of ['mostrarBaseLocalJugadores', 'mostrarBaseLocalJugadoresRefiltrar',
+                   'crmRegistradosCargar', 'crmRegistradosIr']) {
+    assert.equal(typeof sb[f], 'undefined', f + ' se sacó');
+  }
 
   // Pero el almacén que leen el perfil, el alta y Nexo tiene que seguir.
-  assert.equal(typeof sb.jugadorRegistrarDato, 'function', 'el dato lo siguen leyendo otras tres cosas');
+  assert.equal(typeof sb.jugadorRegistrarDato, 'function', 'el dato lo leen otras tres cosas');
 });
 
-test('la paginación no se pasa de la última página ni va antes de la primera', () => {
+test('el desplegable de cantidad se queda dentro de lo razonable', () => {
   const sb = arrancarPanel();
-  sb._crmRegPag.total = 60;      // 3 páginas de 25 → índices 0,1,2
-  sb._crmRegPag.porPagina = 25;
-  sb.crmRegistradosCargar = () => {};   // no tocar la red en el test
+  sb.crmBuscarServidor = () => {};      // no tocar la red
 
-  sb._crmRegPag.pagina = 0;
-  sb.crmRegistradosIr(-1);
-  assert.equal(sb._crmRegPag.pagina, 0, 'no hay página antes de la primera');
+  sb.crmBusqCantidad('50');
+  assert.equal(sb._crmBusq.cantidad, 50);
 
-  sb._crmRegPag.pagina = 2;
-  sb.crmRegistradosIr(1);
-  assert.equal(sb._crmRegPag.pagina, 2, 'no hay página después de la última');
+  sb.crmBusqCantidad('99999');
+  assert.equal(sb._crmBusq.cantidad, 200, 'se corta en 200, igual que la RPC');
 
-  sb._crmRegPag.pagina = 1;
-  sb.crmRegistradosIr(1);
-  assert.equal(sb._crmRegPag.pagina, 2);
+  sb.crmBusqCantidad('0');
+  assert.equal(sb._crmBusq.cantidad, 10, '0 no es una cantidad: vuelve al default');
+
+  sb.crmBusqCantidad('cualquier cosa');
+  assert.equal(sb._crmBusq.cantidad, 10, 'sin número válido vuelve al default');
+});
+
+test('una respuesta vieja no pisa a la nueva (era el "Cargando…" eterno)', async () => {
+  // renderCRM repinta la vista varias veces. Con el candado booleano anterior, la segunda
+  // llamada se salteaba y la respuesta de la primera terminaba escrita en una caja que ya no
+  // estaba en pantalla: la visible se quedaba en "Cargando…" para siempre.
+  let resolverPrimera;
+  let llamada = 0;
+  const sb = arrancarPanel({
+    rpc: () => {
+      llamada++;
+      if (llamada === 1) return new Promise((r) => { resolverPrimera = r; });
+      return Promise.resolve({ data: [{ usuario: 'nuevo', total: 1 }], error: null });
+    }
+  });
+
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'crmResultados' ? caja : null);
+
+  const primera = sb.crmBuscarServidor();     // queda colgada a propósito
+  const segunda = sb.crmBuscarServidor();     // NO se saltea: pisa a la primera
+  await segunda;
+  assert.match(caja.innerHTML, /nuevo/, 'la segunda búsqueda tiene que pintar');
+
+  resolverPrimera({ data: [{ usuario: 'viejo', total: 1 }], error: null });
+  await primera;
+  assert.match(caja.innerHTML, /nuevo/, 'la respuesta vieja no puede pisar a la nueva');
+  assert.ok(!/viejo/.test(caja.innerHTML));
+  assert.ok(!/Buscando/.test(caja.innerHTML), 'y no puede quedar en "Buscando…"');
 });

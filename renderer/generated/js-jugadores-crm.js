@@ -196,7 +196,10 @@
     return '<span title="'+M[2]+'" style="background:'+M[1]+'22;color:'+M[1]+';border:1px solid '+M[1]
       + '55;border-radius:999px;padding:1px 7px;font-size:9.5px;font-weight:900;margin-right:6px">'+M[0]+'</span>';
   }
-  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=(window._crmCargado?`<div class="alert-box">No hay jugadores para esos filtros.</div>`:`<div class="alert-box" style="padding:16px;line-height:1.7"><b>Escribí en el buscador</b> para encontrar a cualquiera de los registrados — la búsqueda va al servidor, no hace falta cargar nada.<br><span class="small" style="color:#8b949e">Si necesitás la lista entera de la oficina, usá <b>📥 Cargar lista</b> arriba. Tarda unos segundos.</span></div>`);return}
+  function renderCRMTabla(arr){
+    const box=document.getElementById("crmTabla"); if(!box) return;
+    // La lista completa manda: se apaga la búsqueda del servidor para no apilar dos tablas.
+    if(arr && arr.length){ const otro=document.getElementById("crmResultados"); if(otro) otro.innerHTML=""; }if(!arr.length){box.innerHTML=(window._crmCargado?`<div class="alert-box">No hay jugadores para esos filtros.</div>`:`<div class="alert-box" style="padding:16px;line-height:1.7"><b>Escribí en el buscador</b> para encontrar a cualquiera de los registrados — la búsqueda va al servidor, no hace falta cargar nada.<br><span class="small" style="color:#8b949e">Si necesitás la lista entera de la oficina, usá <b>📥 Cargar lista</b> arriba. Tarda unos segundos.</span></div>`);return}
   // De a 50: dibujar 2000 filas juntas, y encima en cada tecla, era lo que trababa la app.
   const _tope=window._crmTope||50, _hay=arr.length; arr=arr.slice(0,_tope);
   let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${_motivoBadge(j.motivo)}${j.totalOps} ops · ${j.origenHabitual||'sin origen'}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn blue" title="Escribirle por WhatsApp con el mensaje de recuperación" onclick="crmContactar('${uEsc}')">💬</button><button class="mini-btn yellow" title="Prevalidar: ver si ya tiene otra cuenta, si cobró el bono o si su CBU se repite" onclick="crmPrevalidarRapido('${uEsc}')">✅</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;
@@ -1121,111 +1124,120 @@ window.crmBuscarDebounce=function(){
   // casi siempre. Y aun cargando, contaban solo lo que esta PC bajo, no la oficina.
   // La segmentacion real la tiene que dar Nexo, que ve todas las operaciones y no una copia local.
   // Queda "Registrados (WTK)", que es un count(*) del servidor y si es cierto.
-  view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn ${window._crmCargado?'gray':'yellow'}" onclick="crmCargarLista()" title="Arma la lista completa de la oficina. Tarda unos segundos: normalmente alcanza con buscar.">📥 ${window._crmCargado?'Recargar lista':'Cargar lista'}</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="card"><h2 class="card-title">🔎 Buscar jugador</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Buscá usuario o teléfono…" oninput="crmBuscarDebounce()"><div class="small" style="display:flex;align-items:center;color:var(--muted)">Resultados: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div><div class="card" style="margin-top:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><h2 class="card-title" style="margin:0">📋 Registrados en ${(typeof pcOperativa!=="undefined"&&pcOperativa)||"esta oficina"}</h2><input id="crmRegBuscar" placeholder="Filtrar esta lista…" oninput="crmRegistradosBuscar(this.value)" style="max-width:260px"></div><div id="crmRegistradosBox"><div class="small" style="padding:14px;color:var(--muted)">Cargando…</div></div></div>`;renderCRMTabla(data);
-  // La lista de registrados se pide sola al abrir: es una sola página, no la oficina entera.
-  try{ setTimeout(crmRegistradosCargar, 0); }catch(_e){}
+  view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn ${window._crmCargado?'gray':'yellow'}" onclick="crmCargarLista()" title="Arma la lista completa de la oficina. Tarda unos segundos: normalmente alcanza con buscar.">📥 ${window._crmCargado?'Recargar lista':'Cargar lista'}</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><h2 class="card-title" style="margin:0">🔎 Buscar jugador</h2><div style="display:flex;align-items:center;gap:8px"><span class="small" style="color:var(--muted)">Mostrar</span><select id="crmBusqCantidad" onchange="crmBusqCantidad(this.value)" class="sol-select" style="max-width:110px"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></div></div><div class="crm-toolbar"><input id="crmBuscar" placeholder="Buscá usuario, titular o teléfono…" oninput="crmBusqTexto(this.value)"><div class="small" style="display:flex;align-items:center;color:var(--muted)">Resultados: <b id="crmTotalVisible" style="margin-left:5px">0</b></div></div><div id="crmResultados"><div class="small" style="padding:14px;color:var(--muted)">Buscando…</div></div><div id="crmTabla"></div></div>`;renderCRMTabla(data);
+  // Al abrir se traen los primeros, sin que nadie apriete nada. Es una consulta con LIMIT,
+  // no la oficina entera: eso sigue estando detrás de "Cargar lista".
+  try{ setTimeout(crmBuscarServidor, 0); }catch(_e){}
 }
-  // ── Registrados de la oficina, con páginas ──────────────────────────────────
-  // Antes esto era un solo número —"Registrados (WTK)"— y encima de las SIETE oficinas
-  // juntas, porque la llamada mandaba p_pc_codigos:null. Un número que no se puede abrir no
-  // sirve para operar. Ahora es la lista de la oficina en la que estás logueado, paginada.
-  window._crmRegPag = { pagina: 0, porPagina: 25, total: null, q: "", cargando: false };
+  // ── Buscador de jugadores ───────────────────────────────────────────────────
+  // Un solo apartado. Antes eran dos tarjetas —"Buscar jugador" y "Registrados"— y en el fondo
+  // es la misma búsqueda: la de arriba filtraba lo que había en memoria y la de abajo pedía al
+  // servidor. Ahora hay un buscador, y cuántos traer se elige en el desplegable.
+  // Sin paginado: se trae lo que el operador pide, no páginas que hay que ir pasando.
+  // Tampoco se nombra la oficina: el operador ya está adentro de la suya, saber que hay siete
+  // atrás no le sirve para nada.
+  window._crmBusq = { cantidad: 10, q: "", pedido: 0, total: null };
 
-  window.crmRegistradosIr = function(delta){
-    const st = window._crmRegPag;
-    const maxPag = st.total != null ? Math.max(0, Math.ceil(st.total / st.porPagina) - 1) : st.pagina + 1;
-    const destino = Math.min(Math.max(0, st.pagina + delta), maxPag);
-    if(destino === st.pagina) return;
-    st.pagina = destino;
-    crmRegistradosCargar();
+  window.crmBusqCantidad = function(v){
+    window._crmBusq.cantidad = Math.max(1, Math.min(200, Number(v) || 10));
+    crmBuscarServidor();
   };
 
-  window.crmRegistradosBuscar = function(v){
-    const st = window._crmRegPag;
-    st.q = String(v||"").trim();
-    st.pagina = 0;
-    clearTimeout(window._crmRegT);
-    window._crmRegT = setTimeout(crmRegistradosCargar, 300);
+  window.crmBusqTexto = function(v){
+    window._crmBusq.q = String(v || "").trim();
+    clearTimeout(window._crmBusqT);
+    window._crmBusqT = setTimeout(crmBuscarServidor, 300);
   };
 
-  window.crmRegistradosCargar = async function(){
-    const st = window._crmRegPag;
-    const caja = document.getElementById("crmRegistradosBox");
-    if(!caja || st.cargando) return;
-    st.cargando = true;
+  window.crmBuscarServidor = async function(){
+    const st = window._crmBusq;
+    const caja = document.getElementById("crmResultados");
+    if(!caja) return;
+
+    // Token en vez de candado booleano: renderCRM repinta la vista varias veces, y con un
+    // candado la segunda llamada se salteaba y la respuesta de la primera terminaba escrita en
+    // una caja que ya no estaba en pantalla — quedaba "Cargando…" para siempre.
+    const miPedido = ++st.pedido;
     caja.innerHTML = '<div class="small" style="padding:14px;color:var(--muted)">Buscando…</div>';
 
-    // La oficina sale del login de Chunior, igual que el historial. Sin oficina no se pide
-    // nada: traer las siete juntas es lo que estaba mal.
+    // La oficina sale del login de Chunior, igual que el historial. No se muestra en pantalla:
+    // se usa para no traer las otras seis.
     const oficinas = (typeof pcAliasesHist === "function") ? pcAliasesHist() : null;
+
     let filas = [];
     try{
       const { data, error } = await supabaseClient.rpc("panel_crm_vinculos_listar", {
         p_pc_codigos: oficinas,
         p_q: st.q || null,
-        p_limit: st.porPagina,
-        p_offset: st.pagina * st.porPagina,
+        p_limit: st.cantidad,
+        p_offset: 0,
         p_secret: window.PANEL_DATA_SECRET
       });
       if(error) throw error;
       filas = data || [];
-      st.total = filas.length ? Number(filas[0].total) : (st.q ? 0 : st.total);
+      st.total = filas.length ? Number(filas[0].total) : 0;
     }catch(e){
-      st.cargando = false;
-      const msg = String(e.message||e);
-      caja.innerHTML = '<div class="alert-box">No se pudo leer la lista: ' + escapeHtml(msg)
+      if(miPedido !== st.pedido) return;              // llegó tarde: ya hay otra búsqueda
+      const box = document.getElementById("crmResultados");
+      const msg = String((e && e.message) || e);
+      if(box) box.innerHTML = '<div class="alert-box">No se pudo buscar: ' + escapeHtml(msg)
         + (/NO_AUTORIZADO/.test(msg) ? '<br><span class="small">Falta PANEL_DATA_SECRET en el .env de esta PC.</span>' : '')
         + '</div>';
       return;
     }
-    st.cargando = false;
+
+    if(miPedido !== st.pedido) return;                // respuesta vieja, la descartamos
+    // Se vuelve a buscar la caja: entre el pedido y la respuesta la vista pudo repintarse.
+    const box = document.getElementById("crmResultados");
+    if(!box) return;
+
+    // Misma regla al revés: si buscás, se apaga la lista completa.
+    const tabla = document.getElementById("crmTabla");
+    if(tabla) tabla.innerHTML = "";
+
+    const cnt = document.getElementById("crmTotalVisible");
+    if(cnt) cnt.textContent = String(filas.length);
 
     if(!filas.length){
-      caja.innerHTML = '<div class="small" style="padding:14px;color:var(--muted)">'
-        + (st.q ? 'Nadie con «' + escapeHtml(st.q) + '» en esta oficina.' : 'Sin registrados en esta oficina.')
+      box.innerHTML = '<div class="small" style="padding:14px;color:var(--muted)">'
+        + (st.q ? 'Nadie con «' + escapeHtml(st.q) + '».' : 'Sin jugadores para mostrar.')
         + '</div>';
       return;
     }
 
-    const desde = st.pagina * st.porPagina + 1;
-    const hasta = st.pagina * st.porPagina + filas.length;
-    const hayMas = st.total != null && hasta < st.total;
+    const hayMas = st.total != null && st.total > filas.length;
 
-    caja.innerHTML =
+    box.innerHTML =
       '<div class="crm-table-wrap"><table><thead><tr>'
-      + '<th>Usuario</th><th>Teléfono</th><th>Titular</th><th>Alta</th><th>Acciones</th>'
+      + '<th>Jugador</th><th>Teléfono</th><th>Titular</th><th>Alta</th><th>Acciones</th>'
       + '</tr></thead><tbody>'
       + filas.map(function(f){
-          const u = String(f.usuario||"");
+          const u = String(f.usuario || "");
           const uEsc = u.replace(/'/g, "\\'");
-          const tel = String(f.telefono||"");
+          const tel = String(f.telefono || "");
           const alta = f.created_at ? new Date(f.created_at).toLocaleDateString("es-AR") : "—";
-          return '<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador(\'' + escapeHtml(uEsc) + '\')">'
+          const estado = String(f.estado_vinculo || "").toUpperCase();
+          return '<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador(\'' + escapeHtml(uEsc) + '\')" title="Abrir perfil completo">'
             + '<td><b>' + escapeHtml(u) + '</b>'
               + (f.app_instalada ? ' <span title="App instalada">📱</span>' : '')
-              + (String(f.estado_vinculo||"").toUpperCase() !== "VINCULADO"
-                  ? ' <span class="small" style="color:#f59e0b">' + escapeHtml(String(f.estado_vinculo||"")) + '</span>' : '')
+              + (estado && estado !== "VINCULADO" ? ' <span class="small" style="color:#f59e0b">' + escapeHtml(estado) + '</span>' : '')
             + '</td>'
             + '<td>' + (tel ? escapeHtml(tel) : '<span style="color:var(--muted)">—</span>') + '</td>'
             + '<td>' + (f.titular ? escapeHtml(String(f.titular)) : '<span style="color:var(--muted)">—</span>') + '</td>'
             + '<td class="small">' + escapeHtml(alta) + '</td>'
             + '<td onclick="event.stopPropagation()"><div class="crm-actions">'
               + (tel ? '<button class="mini-btn blue" title="Escribirle por WhatsApp" onclick="crmContactar(\'' + escapeHtml(uEsc) + '\')">💬</button>' : '')
+              + '<button class="mini-btn green" title="Notificación al jugador" onclick="crmPushIndividual(\'' + escapeHtml(uEsc) + '\')">📲</button>'
+              + '<button class="mini-btn yellow" title="Prevalidar: otra cuenta, bono cobrado o CBU repetido" onclick="crmPrevalidarRapido(\'' + escapeHtml(uEsc) + '\')">✅</button>'
               + '<button class="mini-btn gray" title="Perfil completo" onclick="abrirPerfilJugador(\'' + escapeHtml(uEsc) + '\')">🌳</button>'
             + '</div></td>'
             + '</tr>';
         }).join("")
       + '</tbody></table></div>'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">'
-      +   '<span class="small" style="color:var(--muted)">'
-      +     desde + '–' + hasta + (st.total != null ? ' de <b>' + Number(st.total).toLocaleString("es-AR") + '</b>' : '')
-      +     ' · ' + escapeHtml(String((typeof pcOperativa !== "undefined" && pcOperativa) || "esta oficina"))
-      +   '</span>'
-      +   '<span style="display:flex;gap:6px">'
-      +     '<button class="mini-btn gray" onclick="crmRegistradosIr(-1)"' + (st.pagina === 0 ? ' disabled' : '') + '>← Anterior</button>'
-      +     '<button class="mini-btn gray" onclick="crmRegistradosIr(1)"' + (hayMas ? '' : ' disabled') + '>Siguiente →</button>'
-      +   '</span>'
-      + '</div>';
+      + (hayMas
+          ? '<div class="small" style="margin-top:8px;color:var(--muted)">Mostrando <b>' + filas.length + '</b> de '
+            + Number(st.total).toLocaleString("es-AR") + '. Subí la cantidad arriba o afiná la búsqueda.</div>'
+          : '');
   };
 
   // ── Push, de a un jugador por vez ─────────────────────────────────────────
@@ -1301,7 +1313,7 @@ window.crmBuscarDebounce=function(){
       oldMostrarVista(v);
       if(v!=="jugadores") return;
       if(!window._crmCargado){
-        // renderCRM ya dispara crmRegistradosCargar(), que trae UNA página de la oficina.
+        // renderCRM ya dispara crmBuscarServidor(), que trae los primeros de la oficina.
         // Antes acá se pedía además el contador global de las siete oficinas juntas.
         setTimeout(renderCRM,80);
         return;
