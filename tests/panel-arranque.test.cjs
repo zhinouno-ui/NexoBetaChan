@@ -310,3 +310,49 @@ test('el WhatsApp de ingreso le pega el 549 a un número de 10 dígitos', () => 
   assert.match(abierto, /phone=5493517352547/, 'sin el 549 WhatsApp no lo encuentra');
   assert.match(abierto, /web\.whatsapp\.com/);
 });
+
+test('actualizarSolicitudSupabase escribe donde viven las solicitudes de verdad', async () => {
+  // Escribía en la tabla `solicitudes`, muerta desde el 30 de mayo (156 filas). Las del portal
+  // viven en landing_solicitudes (191.608). Los 16 llamadores hacían un update que no tocaba
+  // nada y el error se iba a console.error: se cambiaba la clave, funcionaba, y la solicitud
+  // quedaba PENDIENTE para siempre.
+  let visto = null;
+  const sb = arrancarPanel({
+    rpc: (fn, args) => { visto = { fn, args }; return Promise.resolve({ data: { id: 188138 }, error: null }); }
+  });
+
+  const r = await sb.actualizarSolicitudSupabase(188138, {
+    estado: 'APROBADA', operador_usuario: 'xprueba'
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(visto.fn, 'panel_v15_5_actualizar_solicitud_portal', 'tiene que ir por la RPC del portal');
+  assert.equal(visto.args.p_id, 188138);
+  assert.equal(visto.args.p_estado, 'APROBADA');
+  assert.equal(visto.args.p_operador, 'xprueba');
+});
+
+test('lo que no es estado, operador ni monto viaja como metadata', async () => {
+  let visto = null;
+  const sb = arrancarPanel({
+    rpc: (fn, args) => { visto = args; return Promise.resolve({ data: {}, error: null }); }
+  });
+
+  await sb.actualizarSolicitudSupabase(1, {
+    estado: 'RECHAZADA', operador_usuario: 'op', monto: 5000, etapa: 'AUTO_RECHAZO', motivo: 'x'
+  });
+
+  assert.equal(visto.p_monto, 5000);
+  assert.deepEqual({ ...visto.p_metadata }, { etapa: 'AUTO_RECHAZO', motivo: 'x' });
+  assert.ok(!('estado' in visto.p_metadata), 'el estado no se duplica en el metadata');
+});
+
+test('si la RPC falla, avisa en vez de decir que salió bien', async () => {
+  const sb = arrancarPanel({
+    rpc: () => Promise.resolve({ data: null, error: { message: 'SOLICITUD_NO_ENCONTRADA' } })
+  });
+  const r = await sb.actualizarSolicitudSupabase(999, { estado: 'APROBADA' });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /SOLICITUD_NO_ENCONTRADA/);
+});

@@ -452,7 +452,12 @@ async function testRetirar(){
     document.getElementById("autoResultVal").textContent = `RETIRO · ${usuario} · $${monto.toLocaleString("es-AR")}`;
     autoResBox("autoRetirarRes", true, `✅ ${r.message || "Retiro realizado."}`);
     
-    // Registrar el retiro en Supabase para que quede en el historial y se valide en 24hs
+    // Iba a la tabla `solicitudes`, muerta desde mayo: el retiro no quedaba en el historial ni
+    // lo veía la regla de 24 h. Se registra donde se mira de verdad.
+    try{
+      await registrarEnHistorial({ usuario, tipo:'RETIRO', monto, billetera_id:null,
+        billetera_nombre:null, origen:'MANUAL', estado:'OK', notas:'Retiro desde el panel de agentes' });
+    }catch(_e){}
     await supabaseClient.from("solicitudes").insert({
       tipo: "RETIRO",
       usuario: usuario,

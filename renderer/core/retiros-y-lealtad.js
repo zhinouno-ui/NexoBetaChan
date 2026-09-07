@@ -16,10 +16,12 @@ async function verificarRetiro24h(usuario) {
   // no los cruzaba y el usuario podía retirar dos veces. Escapamos %/_ del patrón (portado de tu nodo).
   const _uPat = String(usuario).replace(/[\\%_]/g, function(c){ return '\\'+c; });
 
-  // 1. Buscar en solicitudes (retiros cerrados desde el panel de solicitudes o chat)
+  // 1. Retiros del PORTAL. Antes esto miraba la tabla `solicitudes`, muerta desde el 30 de mayo:
+  //    la fuente 1 del chequeo de 24 h no devolvía nunca nada. La regla igual funcionaba por la
+  //    fuente 2 (historial_ops), pero un retiro del portal sin fila en el historial se colaba.
   try {
     const { data: dataSol } = await supabaseClient
-      .from("solicitudes")
+      .from("landing_solicitudes")
       .select("id, created_at, monto")
       .ilike("usuario", _uPat)
       .eq("tipo", "RETIRO")

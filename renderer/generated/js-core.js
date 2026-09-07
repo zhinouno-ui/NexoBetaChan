@@ -690,10 +690,12 @@ async function verificarRetiro24h(usuario) {
   // no los cruzaba y el usuario podía retirar dos veces. Escapamos %/_ del patrón (portado de tu nodo).
   const _uPat = String(usuario).replace(/[\\%_]/g, function(c){ return '\\'+c; });
 
-  // 1. Buscar en solicitudes (retiros cerrados desde el panel de solicitudes o chat)
+  // 1. Retiros del PORTAL. Antes esto miraba la tabla `solicitudes`, muerta desde el 30 de mayo:
+  //    la fuente 1 del chequeo de 24 h no devolvía nunca nada. La regla igual funcionaba por la
+  //    fuente 2 (historial_ops), pero un retiro del portal sin fila en el historial se colaba.
   try {
     const { data: dataSol } = await supabaseClient
-      .from("solicitudes")
+      .from("landing_solicitudes")
       .select("id, created_at, monto")
       .ilike("usuario", _uPat)
       .eq("tipo", "RETIRO")
@@ -906,23 +908,36 @@ async function cargarSolicitudesSupabase(){
   };
 }
 
+// Esta función escribía en la tabla `solicitudes`, que está MUERTA desde el 30 de mayo: 156
+// filas, ninguna nueva desde entonces. Las solicitudes del portal viven en
+// `landing_solicitudes` (191.608 filas). O sea que los 16 lugares que la llamaban venían
+// haciendo un update que no tocaba nada, y el error se iba a console.error sin que nadie lo
+// viera. El síntoma: se cambiaba la clave del jugador, funcionaba, y la solicitud quedaba
+// PENDIENTE en la bandeja para siempre. Lo mismo con cargas, retiros y rechazos que pasaran
+// por acá. Verificado en la #188138: la clave se cambió y `updated_at` seguía siendo la fecha
+// de creación.
+//
+// Se redirige la función entera en vez de tocar los 16 llamadores: la firma no cambia.
 async function actualizarSolicitudSupabase(id, cambios){
-  const { data, error } = await supabaseClient
-    .from("solicitudes")
-    .update(cambios)
-    .eq("id", id)
-    .select()
-    .single();
+  const c = Object.assign({}, cambios || {});
+  const estado   = c.estado != null ? String(c.estado) : null;
+  const operador = c.operador_usuario || c.operador || "";
+  const monto    = c.monto != null ? Number(c.monto) : null;
+  delete c.estado; delete c.operador_usuario; delete c.operador; delete c.monto;
 
-  if(error){
-    console.error("Error actualizando solicitud:", error);
-    return { ok:false, error:error.message || "No se pudo actualizar la solicitud" };
+  const r = await supabaseClient.rpc("panel_v15_5_actualizar_solicitud_portal", {
+    p_id: Number(id),
+    p_estado: estado,
+    p_operador: operador,
+    p_monto: monto,
+    p_metadata: c            // lo que sobre viaja como metadata, igual que en el resto del panel
+  });
+
+  if(r && r.error){
+    console.error("Error actualizando solicitud:", r.error);
+    return { ok:false, error:(r.error.message || "No se pudo actualizar la solicitud") };
   }
-
-  return {
-    ok:true,
-    solicitud:mapSolicitudSupabase(data)
-  };
+  return { ok:true, solicitud:(r && r.data) || null };
 }
 
 
@@ -9055,7 +9070,12 @@ async function testRetirar(){
     document.getElementById("autoResultVal").textContent = `RETIRO · ${usuario} · $${monto.toLocaleString("es-AR")}`;
     autoResBox("autoRetirarRes", true, `✅ ${r.message || "Retiro realizado."}`);
     
-    // Registrar el retiro en Supabase para que quede en el historial y se valide en 24hs
+    // Iba a la tabla `solicitudes`, muerta desde mayo: el retiro no quedaba en el historial ni
+    // lo veía la regla de 24 h. Se registra donde se mira de verdad.
+    try{
+      await registrarEnHistorial({ usuario, tipo:'RETIRO', monto, billetera_id:null,
+        billetera_nombre:null, origen:'MANUAL', estado:'OK', notas:'Retiro desde el panel de agentes' });
+    }catch(_e){}
     await supabaseClient.from("solicitudes").insert({
       tipo: "RETIRO",
       usuario: usuario,
@@ -9421,7 +9441,14 @@ async function retirarSaldoRapido(usuario, monto){
   const r = await callDrex("retirarSaldo", monto);
   if(r && r.ok === false){ toast("Error: " + (r.message||"falló"), "red"); return; }
 
-  // Registrar en solicitudes para validar política de 24hs
+  // Esto insertaba en la tabla `solicitudes`, muerta desde el 30 de mayo: el retiro salía y no
+  // quedaba registrado en ningún lado vivo. Y como la regla de 24 h mira historial_ops, este
+  // retiro era invisible para ella: la persona podía sacar por acá y volver a sacar por el
+  // portal el mismo día. Ahora va al historial de verdad.
+  try{
+    await registrarEnHistorial({ usuario, tipo:'RETIRO', monto, billetera_id:null,
+      billetera_nombre:null, origen:'CHAT', estado:'OK', notas:'Retiro rápido desde el chat' });
+  }catch(_e){}
   await supabaseClient.from("solicitudes").insert({
     tipo: "RETIRO",
     usuario: usuario,

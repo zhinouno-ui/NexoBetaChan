@@ -345,7 +345,14 @@ async function retirarSaldoRapido(usuario, monto){
   const r = await callDrex("retirarSaldo", monto);
   if(r && r.ok === false){ toast("Error: " + (r.message||"falló"), "red"); return; }
 
-  // Registrar en solicitudes para validar política de 24hs
+  // Esto insertaba en la tabla `solicitudes`, muerta desde el 30 de mayo: el retiro salía y no
+  // quedaba registrado en ningún lado vivo. Y como la regla de 24 h mira historial_ops, este
+  // retiro era invisible para ella: la persona podía sacar por acá y volver a sacar por el
+  // portal el mismo día. Ahora va al historial de verdad.
+  try{
+    await registrarEnHistorial({ usuario, tipo:'RETIRO', monto, billetera_id:null,
+      billetera_nombre:null, origen:'CHAT', estado:'OK', notas:'Retiro rápido desde el chat' });
+  }catch(_e){}
   await supabaseClient.from("solicitudes").insert({
     tipo: "RETIRO",
     usuario: usuario,

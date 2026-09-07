@@ -1419,3 +1419,72 @@ las flechitas del spinner, que se montaban encima del texto. Probado:
 | `12a34` | `1234` |
 | `-500` | `500` |
 | `1e5` | `15` |
+---
+
+## D-48 · La tabla muerta · por qué el cambio de clave no se cerraba nunca
+
+Juan: *«no se va, el hdp, después de cambiar la clave no desaparece»*. La solicitud `#188138`
+seguía en la bandeja con «▶ Realizar» después de que la clave se cambiara bien.
+
+### Lo medido
+
+```sql
+select id, estado, updated_at from landing_solicitudes where id = 188138;
+-- 188138 | PENDIENTE | 2026-09-06 13:52:19   ← la fecha de CREACIÓN
+```
+
+`updated_at` nunca se movió: **el update jamás ocurrió**. Y `ejecutarAutoClave` sí lo llamaba:
+
+```js
+await actualizarSolicitudSupabase(id, { estado: "APROBADA", operador_usuario: ... });
+```
+
+La función escribía acá:
+
+```js
+supabaseClient.from("solicitudes").update(cambios).eq("id", id)
+```
+
+**`solicitudes` está muerta desde el 30 de mayo.**
+
+| Tabla | Filas | Última |
+|---|---:|---|
+| `solicitudes` | 156 | 2026-05-30 |
+| `landing_solicitudes` | **191.608** | hoy |
+
+El update no matcheaba ninguna fila, `.single()` devolvía error, y el error se iba a
+`console.error` — invisible para el operador. La clave se cambiaba de verdad, el jugador recibía
+el aviso, y la solicitud quedaba pendiente para siempre.
+
+**Eran 16 llamadores**, no uno: cambios de clave, cargas, retiros, aprobaciones y rechazos en
+`automatizaciones.js` y `lotes-y-solicitudes.js`. Se redirigió la función entera a la RPC que usa
+el resto del panel (`panel_v15_5_actualizar_solicitud_portal`) en vez de tocar los 16: la firma no
+cambia y `estado` / `operador_usuario` / `monto` se mapean a sus parámetros; lo que sobra viaja
+como metadata.
+
+### Tirando del hilo: tres usos más de la tabla muerta
+
+**Dos retiros que no quedaban registrados en ningún lado vivo.** El retiro rápido del chat
+(`retirarSaldoRapido`) y el del panel de agentes insertaban en `solicitudes` «para validar la
+política de 24 hs», y **ninguno de los dos** llamaba a `registrarEnHistorial`. O sea: salía la
+plata y no quedaba rastro en el sistema vivo. Peor: como la regla de 24 h mira `historial_ops`,
+esos retiros eran **invisibles para ella** — se podía sacar por ahí y volver a sacar por el
+portal el mismo día. Ahora los dos escriben en `historial_ops`.
+
+**La fuente 1 del chequeo de 24 h leía la tabla muerta.** El chequeo tiene tres fuentes; la 1
+(«retiros cerrados desde el panel de solicitudes o chat») apuntaba a `solicitudes` y no devolvía
+nunca nada. La regla igual funcionaba por la fuente 2 (`historial_ops`), pero un retiro del portal
+sin fila en el historial se colaba. Ahora la 1 lee `landing_solicitudes`.
+
+**`cargarSolicitudesSupabase()`** también lee la tabla muerta, pero es el camino viejo: cuando el
+puente del portal está arriba, `cargarSolicitudes` delega en `v154pCargarSolicitudes` y esto no se
+usa. Queda anotado, no tocado.
+
+### La lección
+
+El error existía y estaba escrito: `console.error("Error actualizando solicitud:", error)`. Nadie
+lo ve nunca. Un `console.error` en un flujo que el operador dispara a mano es lo mismo que no
+tener nada — la operación «funciona», la pantalla no cambia, y el que está adelante piensa que la
+app se colgó.
+
+Suite: 86/86.
