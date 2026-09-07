@@ -1528,7 +1528,14 @@ const RUTAS_PRUEBA = { p1:"rt-a8f31", p2:"rt-k6d92", p3:"rt-m4q77", p4:"rt-z9p42
 const MODO_PRUEBA = (function(){
   try{
     const v = (new URLSearchParams(location.search).get("prueba")||"").trim().toLowerCase();
-    return v && RUTAS_PRUEBA[v] ? { oficina:v.toUpperCase(), ruta:RUTAS_PRUEBA[v] } : null;
+    if(v && RUTAS_PRUEBA[v]) return { oficina:v.toUpperCase(), ruta:RUTAS_PRUEBA[v] };
+    // En una copia de pruebas (GitHub Pages / archivo local) va derecho a P1 sin pedir nada.
+    // El chequeo es por HOST y no puede activarse en produccion: los dominios reales terminan
+    // en portal-bet-300.com, que nunca matchea con esto.
+    const h = String(location.hostname||"").toLowerCase();
+    const esCopiaDePrueba = h.endsWith(".github.io") || h==="localhost" || h==="127.0.0.1" || h==="";
+    if(esCopiaDePrueba) return { oficina:"P1", ruta:RUTAS_PRUEBA.p1 };
+    return null;
   }catch(_e){ return null; }
 })();
 if(MODO_PRUEBA){
