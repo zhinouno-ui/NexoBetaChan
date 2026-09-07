@@ -655,7 +655,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
           </div>
           <div class="sol-step-item ${movId ? 'done' : (saldoPre != null ? 'done' : 'idle')}">
             ${movId ? '✓' : '·'} 2. Chunior
-            <div style="font-size:9.5px;opacity:.8">${movId ? `N° ${esc(movId)}` : (saldoPre != null ? fmtMoney(saldoPre) : 'Sin N° anotado')}</div>
+            <div style="font-size:9.5px;opacity:.8">${movId ? `N° ${esc(movId)}` : (abierta ? 'Sin ejecutar' : 'Sin N° anotado')}</div>
           </div>
           <div class="sol-step-item ${bilNombre ? 'done' : 'idle'}">
             ${bilNombre ? '✓' : '·'} 3. Billetera
@@ -800,9 +800,17 @@ ${stepperHtml}
               </div>
             </div>` : ''}
 
-          ${(esCarga || esRetiro) && destinoDifiere ? `
+          ${esRetiro && destinoDifiere ? `
             <div class="sol-cotejo-row">
-              <span class="sol-cotejo-lbl" style="color:#f59e0b">${esRetiro ? '⚠ Cobra en otra cuenta:' : '⚠ Transfirió a otra billetera:'}</span>
+              <span class="sol-cotejo-lbl">Cuenta de cobro del jugador:</span>
+              <div class="sol-cotejo-val" style="color:#6ee7b7">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino)}</span>
+                <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">Copiar</button>
+              </div>
+            </div>` : ''}
+          ${esCarga && destinoDifiere ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl" style="color:#f59e0b">⚠ Transfirió a otra billetera:</span>
               <div class="sol-cotejo-val" style="color:#fbbf24;border-color:#f59e0b55">
                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino)}</span>
                 <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">Copiar</button>

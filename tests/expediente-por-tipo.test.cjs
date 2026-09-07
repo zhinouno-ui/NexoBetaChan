@@ -200,3 +200,78 @@ test('un movimiento con N° ofrece editarlo, apuntando a su fila de historial', 
   assert.match(html, /expedienteEditarMovimiento\('991'\)/, 'tiene que apuntar a la fila correcta');
   assert.match(html, /operador que lo anotó/, 'el botón avisa la regla antes de apretarlo');
 });
+
+test('en un retiro la cuenta de cobro no es una alarma, es el dato', () => {
+  // El destino de un retiro es la cuenta del jugador: que NO sea nuestra billetera es lo
+  // normal. Marcarlo en ámbar como "cobra en otra cuenta" seria alarma en cada retiro.
+  const retiro = {
+    fuente: 'SOLICITUD', id: '81071', tipo: 'RETIRO', usuario: 'noex90', monto: 50000,
+    estado: 'PAGADA', fecha: '2026-09-07T14:12:00Z', billetera_nombre: 'Prueba.mp',
+    _raw: {
+      ID: 81071, TIPO: 'RETIRO', USUARIO: 'noex90', ESTADO: 'PAGADA', MONTO_DECLARADO: 50000,
+      BILLETERA_NOMBRE: 'Prueba.mp', TITULAR: 'Probando parcial', DESTINO: 'cbu.del.jugador',
+      FECHA_CREACION: '2026-09-07T14:12:00Z', METADATA: {}
+    }
+  };
+  const html = construirApi().construirDossierCompletoHtml(retiro);
+
+  assert.match(html, /Cuenta de cobro del jugador/);
+  assert.match(html, /cbu\.del\.jugador/);
+  assert.ok(!html.includes('⚠ Cobra en otra cuenta'), 'no es una anomalía, es el destino del pago');
+  assert.ok(!html.includes('Transfirió a otra billetera'), 'eso es de cargas, no de retiros');
+});
+
+test('en un retiro, destino igual a nuestra billetera no se repite', () => {
+  const retiro = {
+    fuente: 'SOLICITUD', id: '81072', tipo: 'RETIRO', usuario: 'pruebaxx', monto: 130000,
+    estado: 'PAGADA', fecha: '2026-09-07T14:12:00Z', billetera_nombre: 'Prueba.mp',
+    _raw: {
+      ID: 81072, TIPO: 'RETIRO', USUARIO: 'pruebaxx', ESTADO: 'PAGADA', MONTO_DECLARADO: 130000,
+      BILLETERA_NOMBRE: 'Prueba.mp', DESTINO: 'Prueba.mp',
+      FECHA_CREACION: '2026-09-07T14:12:00Z', METADATA: {}
+    }
+  };
+  const html = construirApi().construirDossierCompletoHtml(retiro);
+  assert.ok(!html.includes('Cuenta de cobro del jugador'), 'es el mismo valor que la billetera');
+});
+
+test('el N° encontrado se dibuja aunque la operación sea vieja y esté fuera de la ventana', () => {
+  // Caso real: carga del 16/7 con la ventana en 12 h. Se busca el N° en Chunior, se guarda,
+  // pero cargarHistorial() no trae esa fila porque quedó fuera del período. Antes de esto la
+  // ficha seguía diciendo "Sin N° anotado" con el número ya en la base.
+  const solicitudVieja = {
+    ID: 187500, TIPO: 'CARGA', USUARIO: 'pruebaxx', ESTADO: 'ACREDITADA',
+    MONTO_DECLARADO: 100000, BILLETERA_NOMBRE: 'SALVATIERRA X',
+    FECHA_CREACION: '2026-07-16T16:34:00Z', METADATA: {},
+    chunior_movimiento_id: '9190812'          // lo escribió expedienteBuscarMovChunior
+  };
+  const item = {
+    fuente: 'SOLICITUD', id: '187500', tipo: 'CARGA', usuario: 'pruebaxx', monto: 100000,
+    estado: 'ACREDITADA', fecha: '2026-07-16T16:34:00Z',
+    billetera_nombre: 'SALVATIERRA X', chunior_movimiento_id: '9190812',
+    _raw: solicitudVieja
+  };
+  const html = construirApi().construirDossierCompletoHtml(item);
+
+  assert.match(html, /9190812/, 'el número está guardado: hay que mostrarlo');
+  assert.ok(!html.includes('Sin N° anotado'), 'ya no falta el número');
+  assert.ok(!html.includes('Buscar en Chunior'), 'ya no hay nada que buscar');
+});
+
+test('el paso 2 del flujo no pone un saldo donde va el N° de movimiento', () => {
+  const sinN = {
+    fuente: 'OPERACION', id: 555, tipo: 'CARGA', usuario: 'pruebaxx', monto: 100000,
+    estado: 'OK', fecha: '2026-07-16T16:34:00Z', chunior_movimiento_id: null,
+    billetera_nombre: 'SALVATIERRA X', historial_id: 555,
+    _raw: {
+      id: 555, tipo: 'CARGA', usuario: 'pruebaxx', monto: 100000, estado: 'OK',
+      origen: 'PORTAL', created_at: '2026-07-16T16:34:00Z',
+      billetera_nombre: 'SALVATIERRA X', saldo_pre: 2636, saldo_post: 102636
+    }
+  };
+  const html = construirApi().construirDossierCompletoHtml(sinN);
+  const paso = (html.match(/2\. Chunior[\s\S]{0,140}?<\/div>/) || [''])[0];
+
+  assert.ok(!/2\.636/.test(paso), 'el saldo previo no es un número de movimiento');
+  assert.match(paso, /Sin N° anotado/);
+});

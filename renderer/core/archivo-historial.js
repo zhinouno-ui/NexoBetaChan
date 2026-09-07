@@ -215,23 +215,95 @@ window.verRetirosParciales = function(){
   abrirModal('💸 Retiros pagándose por partes · '+arr.length
     + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), filas, null, '');
 };
-// Cierra un retiro que YA cobró el total pero quedó abierto (típico: el último pago no llegó a
-// marcarlo PAGADA). No mueve fichas ni plata: solo pone la solicitud en su estado final.
+// Cierra un retiro parcial. Antes era un confirm() y listo: la operación quedaba PAGADA con
+// plata sin pagar y NADIE sabía por qué. En el caso que disparó esto: 50% pagado, $25.000 sin
+// pagar, estado PAGADA, cero explicación ni acá ni en el portal.
+// Ahora la nota es obligatoria y viaja al portal, así el cliente deja de ver "faltan $25.000"
+// para siempre. La lista de motivos es un punto de partida: son los que aparecen en la
+// operación, y quedan para ajustar.
+window._MOTIVOS_CIERRE_PARCIAL = [
+  { k:'COBRO_TODO',       t:'Ya cobró el total (el último pago no lo marcó)' },
+  { k:'SIN_FICHAS',       t:'No tenía las fichas al reintentar' },
+  { k:'SE_LO_JUGO',       t:'Se jugó el saldo antes de terminar de cobrar' },
+  { k:'CLIENTE_DESISTIO', t:'El cliente no quiso el resto' },
+  { k:'MONTO_MAL',        t:'El monto estaba mal cargado' },
+  { k:'OTRO',             t:'Otro (explicar abajo)' }
+];
+
 window.cerrarRetiroSaldado = async function(id){
   const s = (window._parcialesEnProceso||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
   const pp = (s && window._retiroParcialInfo) ? window._retiroParcialInfo(s) : null;
-  if(!confirm('Cerrar el retiro #'+id+' como PAGADO.\n\n'
-    + (pp ? ('Ya cobró '+money(pp.pagado)+' de '+money(pp.total)+'.\n\n') : '')
-    + 'Esto NO transfiere ni retira nada: solo marca la solicitud como terminada.')) return;
-  try{
-    await window.actualizarSolicitudPortal(String(id), 'PAGADA', {
-      etapa:'RETIRO_CIERRE_MANUAL',
-      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
-    });
-    try{ cerrarModal(); }catch(_e){}
-    toast('✔ Retiro #'+id+' cerrado','green');
-    try{ await cargarSolicitudesPortal(true); }catch(_e){}
-  }catch(e){ toast('No se pudo cerrar: '+(e.message||e),'red'); }
+  const faltante = pp ? Math.max(0, pp.restante) : 0;
+  const quedaPlata = faltante > 0.5;
+
+  const opciones = window._MOTIVOS_CIERRE_PARCIAL
+    .filter(function(m){ return quedaPlata ? m.k !== 'COBRO_TODO' : true; })
+    .map(function(m){ return '<option value="'+m.k+'">'+escapeHtml(m.t)+'</option>'; }).join('');
+
+  abrirModal('✔ Cerrar el retiro #'+id,
+    (pp
+      ? '<div style="padding:8px 10px;border-radius:8px;margin-bottom:10px;'
+        + (quedaPlata
+            ? 'background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.4);color:#fde68a">'
+              + '⚠ Cobró <b>'+money(pp.pagado)+'</b> de <b>'+money(pp.total)+'</b>. '
+              + 'Queda sin pagar <b>'+money(faltante)+'</b>.'
+            : 'background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4);color:#bbf7d0">'
+              + 'Cobró el total: <b>'+money(pp.pagado)+'</b>.')
+        + '</div>'
+      : '')
+    + '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Esto <b>no</b> transfiere ni retira nada: cierra la solicitud. '
+    + 'Lo que anotes lo ve el jugador en el portal.</div>'
+    + '<label>¿Qué pasó?</label>'
+    + '<select id="cierreParcialMotivo">'+opciones+'</select>'
+    + '<label style="margin-top:8px">Nota <span class="small" style="color:#8b949e;font-weight:400">· obligatoria</span></label>'
+    + '<textarea id="cierreParcialNota" rows="3" placeholder="Qué pasó, en una línea. Lo lee el jugador."'
+    + ' style="width:100%;border-radius:10px;padding:10px;background:#0e1525;color:#fff;border:1px solid #2d3342;resize:vertical"></textarea>',
+    async function(){
+      const motivo = String((document.getElementById('cierreParcialMotivo')||{}).value || '').trim();
+      const nota   = String((document.getElementById('cierreParcialNota')||{}).value || '').trim();
+      // Sin chance de cerrar sin anotar: es el único registro de por qué quedó a medias.
+      if(nota.length < 8){ toast('Escribí qué pasó (al menos una línea). Es lo único que queda registrado.','red'); return; }
+
+      const etiqueta = (window._MOTIVOS_CIERRE_PARCIAL.find(function(m){ return m.k===motivo; })||{}).t || motivo;
+      const opNombre = (window.operador && (window.operador.usuario||window.operador.nombre)) || 'panel';
+
+      // p_metadata hace merge SHALLOW: si mandamos retiro_parcial suelto pisamos pagos y pagado.
+      // Se arma el objeto completo con lo que ya estaba + el cierre.
+      let rpPrevio = {};
+      try{
+        let m = (s && (s.METADATA!==undefined ? s.METADATA : s.metadata)) || {};
+        if(typeof m === 'string'){ try{ m = JSON.parse(m); }catch(_e){ m = {}; } }
+        rpPrevio = (m && m.retiro_parcial) || {};
+      }catch(_e){}
+
+      const cierre = {
+        motivo: motivo, etiqueta: etiqueta, nota: nota,
+        operador: opNombre, fecha: new Date().toISOString(),
+        pagado: pp ? pp.pagado : null, total: pp ? pp.total : null, faltante: faltante
+      };
+
+      try{
+        await window.actualizarSolicitudPortal(String(id), 'PAGADA', {
+          etapa:'RETIRO_CIERRE_MANUAL',
+          operador: opNombre,
+          cierre_motivo: motivo,
+          cierre_nota: nota,
+          retiro_parcial: Object.assign({}, rpPrevio, { cierre: cierre })
+        });
+        try{ cerrarModal(); }catch(_e){}
+        toast('✔ Retiro #'+id+' cerrado · '+etiqueta,'green');
+        // El motivo también queda del lado nuestro, no sólo en la solicitud del portal.
+        try{
+          await registrarEnHistorial({
+            usuario: String((s && (s.USUARIO||s.USUARIO_JUGADOR)) || ''),
+            tipo:'RETIRO', monto: 0, origen:'MANUAL', estado:'OK', solicitud_id:String(id),
+            notas:'Cierre de retiro parcial · '+etiqueta+' · '+nota
+                  + (quedaPlata ? (' · quedó sin pagar '+money(faltante)) : '')
+          });
+        }catch(_e){}
+        try{ await cargarSolicitudesPortal(true); }catch(_e){}
+      }catch(e){ toast('No se pudo cerrar: '+(e.message||e),'red'); }
+    }, 'Cerrar retiro');
 };
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
 // Copiar el CBU/alias. El bug que tenía: navigator.clipboard.writeText() falla en Electron sobre

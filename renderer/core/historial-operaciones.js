@@ -53,19 +53,66 @@ window.expedienteBuscarMovChunior = async function(historialId, usuario, monto, 
     return;
   }
 
+  // .update() sin match NO devuelve error: si el id no existía, esto cantaba "guardado" igual.
+  // Con .select() sabemos si de verdad se tocó una fila.
+  let guardadas = [];
   try{
-    const { error } = await supabaseClient.from('historial_ops')
+    const { data, error } = await supabaseClient.from('historial_ops')
       .update({ chunior_movimiento_id: String(r.movimientoId) })
-      .eq('id', Number(historialId));
+      .eq('id', Number(historialId))
+      .select('id');
     if(error) throw error;
+    guardadas = data || [];
   }catch(e){
     toast('Lo encontré (N° '+r.movimientoId+') pero no pude guardarlo: '+(e.message||e), 'red'); return;
   }
+  if(!guardadas.length){
+    toast('Encontré el N° '+r.movimientoId+' pero la operación #'+historialId+' no existe en el historial. No se guardó nada.', 'red');
+    return;
+  }
+
+  // Refrescar EN MEMORIA además de recargar. La operación puede ser de hace semanas y quedar
+  // fuera de la ventana cargada: entonces cargarHistorial() no la trae y la ficha seguía
+  // diciendo "Sin N° anotado" aunque el número ya estuviera guardado en la base.
+  _marcarMovEnMemoria(historialId, String(r.movimientoId));
 
   toast('✓ Movimiento N° '+r.movimientoId+' vinculado a la operación.', 'green');
   try{ await cargarHistorial(); }catch(_e){}
+  try{ _marcarMovEnMemoria(historialId, String(r.movimientoId)); }catch(_e){}
   try{ renderHistorialUnificado(); }catch(_e){}
 };
+
+// Escribe el N° recién encontrado en TODAS las copias que hay dando vueltas: la fila del
+// historial, la solicitud del portal que la originó y el item ya construido de la vista.
+// Sin esto el dato queda sólo en la base y la pantalla sigue mostrando lo viejo.
+function _marcarMovEnMemoria(historialId, movId){
+  const idStr = String(historialId);
+  let solicitudId = null;
+  try{
+    ((typeof _historialData !== "undefined" && _historialData) || []).forEach(function(h){
+      if(String(h.id) === idStr){ h.chunior_movimiento_id = movId; if(h.solicitud_id != null) solicitudId = String(h.solicitud_id); }
+    });
+  }catch(_e){}
+  try{
+    (window._histUnificadoCache || []).forEach(function(it){
+      const coincide = String(it.historial_id) === idStr ||
+        (solicitudId && String(it.solicitud_id) === solicitudId);
+      if(coincide){
+        it.chunior_movimiento_id = movId;
+        if(it._raw){ it._raw.chunior_movimiento_id = movId; }
+      }
+    });
+  }catch(_e){}
+  // La solicitud del portal es la que arma la ficha cuando la operación es vieja.
+  try{
+    const sols = (window.V154P && window.V154P.solicitudes) || window.solicitudes || [];
+    sols.forEach(function(x){
+      const xid = String(x.HISTORIAL_ID || x.historial_id || "");
+      const xsol = String(x.ID || x.SOLICITUD_ID || x.id || "");
+      if(xid === idStr || (solicitudId && xsol === solicitudId)) x.chunior_movimiento_id = movId;
+    });
+  }catch(_e){}
+}
 
 // ── Ventana del historial ────────────────────────────────────────────────────
 // Antes esto era .limit(200) fijo. Medido contra la base, 200 filas son:

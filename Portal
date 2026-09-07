@@ -304,6 +304,8 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .rp-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--gold-deep),var(--gold));transition:width .6s ease;min-width:6px}
 .rp-pct{font-size:11px;color:var(--gold-2);margin-top:6px;font-weight:700;text-align:center}
 .rp-list{margin-top:11px;display:flex;flex-direction:column;gap:5px}
+.rp-cierre{margin-top:11px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);font-size:12.5px;line-height:1.5}
+.rp-cierre-nota{margin-top:6px;font-style:italic;color:var(--gold-2)}
 .rp-item{display:flex;justify-content:space-between;gap:8px;font-size:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
 .rp-item .rp-m{font-weight:800;color:var(--green);white-space:nowrap}
 .rp-item .rp-f{color:var(--muted)}
@@ -1444,6 +1446,25 @@ async function cargarProgresoRetiro(){
   const total=Number(prog.total||0), pagado=Number(prog.pagado||0);
   let pct=Number(prog.pct||0); if(pct<0)pct=0; if(pct>100)pct=100;
   if(!(total>0) || !(pagado>0)){ box.innerHTML=""; return; }   // sin parciales aún → sin barra
+
+  // Cierre a mano: el operador terminó la operación aunque quedara plata sin pagar. Sin esto
+  // el portal seguía mostrando "faltan $25.000" para siempre, sin decir que ya había cerrado
+  // ni por qué. La nota es obligatoria del lado del panel, así que siempre hay algo que leer.
+  let cierre=prog.cierre; if(typeof cierre==="string"){ try{cierre=JSON.parse(cierre);}catch(_e){cierre=null;} }
+  if(cierre && (cierre.nota || cierre.etiqueta)){
+    try{ const s2=$("screenEstado"); const h=s2&&s2.querySelector(".estado-h"); if(h)h.textContent="Retiro cerrado";
+         const sub=s2&&s2.querySelector(".estado-sub"); if(sub)sub.textContent="Cobraste "+_money(pagado)+" de "+_money(total); }catch(_e){}
+    box.innerHTML=`<div class="rp-wrap">
+      <div class="rp-top"><span>Cobrado</span><span class="rp-nums">${_money(pagado)} / ${_money(total)}</span></div>
+      <div class="rp-track"><div class="rp-fill" style="width:${pct}%"></div></div>
+      <div class="rp-cierre">
+        <b>Este retiro se cerró.</b>
+        ${cierre.etiqueta?`<div>${esc(cierre.etiqueta)}</div>`:""}
+        ${cierre.nota?`<div class="rp-cierre-nota">"${esc(cierre.nota)}"</div>`:""}
+      </div>
+    </div>`;
+    return;
+  }
   try{
     const k="bet300_retiro_pagado_"+sid, last=Number(localStorage.getItem(k)||0);
     if(pagado>last){ localStorage.setItem(k,String(pagado));

@@ -96,7 +96,10 @@ function construirHistorialUnificado(){
       nombre: s.NOMBRE_COMPLETO||'',
       billetera_nombre: s.BILLETERA_NOMBRE||s.NOMBRE_BILLETERA||'',
       monto: s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO||0,
-      estado: s.ESTADO||'', chunior_movimiento_id: _movPorSolicitud[sid] || null,
+      // Si la fila de historial_ops quedó fuera de la ventana cargada, el N° igual puede estar
+      // en la solicitud (lo escribe la búsqueda en Chunior). Sin este respaldo se pisaba con
+      // null y la ficha volvía a decir "Sin N° anotado" con el número ya guardado en la base.
+      estado: s.ESTADO||'', chunior_movimiento_id: _movPorSolicitud[sid] || s.chunior_movimiento_id || null,
       billetera_id: s.ID_BILLETERA||null,
       historial_id: histId || null,
       solicitud_id: sid || null,
