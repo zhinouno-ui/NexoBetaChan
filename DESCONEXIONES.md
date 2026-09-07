@@ -1241,3 +1241,51 @@ Probado contra P1:
 Además la lista dice de entrada **qué está mostrando**: con búsqueda, «Coinciden con «x» ·
 ordenadas por qué tan fuerte es la coincidencia»; sin búsqueda, «Últimas altas de tu oficina».
 Sin ese encabezado, las primeras 10 filas se leen como si fueran «los jugadores», y no lo son.
+---
+
+## D-43b · Corrección: eso no eran motivos, y las páginas hacían falta
+
+Juan sobre D-43: *«las páginas sí tienen que figurar, si no sólo verías desde 10 hasta 100 y
+serían siempre los mismos, inútil. Y esos no son motivos: recordá que ahora dibujamos unos pares
+de usuarios de onda, deberían de aparecer más arriba por qué…?»*.
+
+Las dos cosas eran ciertas.
+
+### Las páginas
+
+Las había sacado por el pedido anterior («acá no hay pestañas tampoco»), y el desplegable de
+cantidad no las reemplaza: con 10..100 se ven siempre los mismos primeros. Una oficina tiene
+**6.635 registrados en P1 y 13.759 en P4**; sin avanzar, la lista no sirve para recorrerla.
+Vuelven Anterior / Siguiente, y el desplegable pasa a ser el tamaño de página. Cambiar el tamaño
+vuelve a la primera, porque la página vieja ya no señala lo mismo.
+
+### «exacto / usuario / teléfono / titular» no son motivos
+
+Son la **mecánica de la búsqueda**. Sirven cuando buscás algo —ahí la pregunta es «por qué
+matcheó esta fila»— pero la lista por defecto no tiene búsqueda, así que no explicaban nada:
+los diez primeros aparecían porque eran las últimas altas, que no es una razón para atender a
+nadie.
+
+Ahora la lista sin búsqueda se ordena por **prioridad operativa**, y el motivo dice qué hacer:
+
+| Motivo | Qué significa | En P4 |
+|---|---|---:|
+| 🔴 `esperando` | tiene una solicitud abierta **ahora** | 13 |
+| 🔁 `sin_operar` | se registró y nunca hizo una operación | 12 |
+| 🆕 `alta_nueva` | alta de los últimos 7 días | 35 |
+| · `registrado` | el resto, por alta más reciente | — |
+
+Con búsqueda siguen valiendo los de coincidencia, porque ahí la pregunta vuelve a ser otra.
+
+### El costo, que casi lo arruina
+
+La primera forma —un `case` con `not exists` sobre `historial_ops` dentro del `order by`—
+tardaba **772 ms** en P4: evaluaba el `not exists` para los 13.759 registrados antes de aplicar
+el `limit`. Segundo intento con `left join`: **427 ms**, seguía ordenando todo.
+
+La que quedó arma primero los **conjuntos chicos** (40 solicitudes abiertas, 48 altas de la
+semana), les calcula el grupo sólo a ellos, y trae el resto por `ix_vinc_pc_id_desc` con
+`limit (offset + limit)`. **261 ms.**
+
+Es la misma lección que D-41b y que el CRM de D-32: el problema nunca fue la cantidad de datos,
+fue pedirle a la base que evalúe algo caro sobre todo el conjunto para después tirar el 99 %.

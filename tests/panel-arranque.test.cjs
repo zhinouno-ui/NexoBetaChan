@@ -210,17 +210,58 @@ test('cada fila de la lista dice por qué está ahí', async () => {
   assert.match(caja.innerHTML, /Coinciden con/, 'y la lista dice qué está mostrando');
 });
 
-test('sin búsqueda la lista aclara que son las últimas altas, no "todos"', async () => {
-  const sb = arrancarPanel({
-    rpc: () => Promise.resolve({ data: [{ usuario: 'nuevo1', motivo: 'reciente', total: 6635 }], error: null })
-  });
+test('sin búsqueda el motivo dice qué hacer, no cómo se encontró', async () => {
+  // "exacto / usuario / teléfono" es la mecánica de la búsqueda: sin buscar no explica nada.
+  // Lo que hay que decir es por qué mirar a ese jugador antes que a otro.
+  const filas = [
+    { usuario: 'juandiaz730', motivo: 'esperando',  total: 13759 },
+    { usuario: 'mari4198x',   motivo: 'sin_operar', total: 13759 },
+    { usuario: 'leami20',     motivo: 'alta_nueva', total: 13759 },
+    { usuario: 'francoiba3',  motivo: 'registrado', total: 13759 }
+  ];
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: filas, error: null }) });
   const caja = { innerHTML: '' };
   sb.document.getElementById = (id) => (id === 'crmResultados' ? caja : null);
 
   sb._crmBusq.q = '';
   await sb.crmBuscarServidor();
 
-  assert.match(caja.innerHTML, /Últimas altas/, 'no es "todos": conviene decirlo');
-  assert.match(caja.innerHTML, /🆕 alta reciente/);
-  assert.match(caja.innerHTML, /de 6\.635/, 'y cuántos hay detrás');
+  assert.match(caja.innerHTML, /🔴 esperando/, 'el que tiene una solicitud abierta va primero');
+  assert.match(caja.innerHTML, /🔁 nunca operó/);
+  assert.match(caja.innerHTML, /🆕 alta nueva/);
+  assert.match(caja.innerHTML, /primero los que esperan/, 'la lista dice con qué criterio ordenó');
+  assert.match(caja.innerHTML, /de <b>13\.759<\/b>/, 'y cuántos hay detrás');
+  assert.match(caja.innerHTML, /Siguiente/, 'con páginas: sin ellas verías siempre los mismos');
+});
+
+test('las páginas no se pasan de la última ni van antes de la primera', () => {
+  const sb = arrancarPanel();
+  sb.crmBuscarServidor = () => {};
+  sb._crmBusq.total = 60; sb._crmBusq.cantidad = 25;   // 3 páginas: 0, 1, 2
+
+  sb._crmBusq.pagina = 0; sb.crmBusqPagina(-1);
+  assert.equal(sb._crmBusq.pagina, 0);
+  sb._crmBusq.pagina = 2; sb.crmBusqPagina(1);
+  assert.equal(sb._crmBusq.pagina, 2);
+  sb._crmBusq.pagina = 1; sb.crmBusqPagina(1);
+  assert.equal(sb._crmBusq.pagina, 2);
+
+  // Cambiar la cantidad vuelve al principio: la página vieja ya no significa lo mismo.
+  sb._crmBusq.pagina = 2; sb.crmBusqCantidad('50');
+  assert.equal(sb._crmBusq.pagina, 0);
+});
+
+test('la página pedida se traduce a offset, no se filtra en el navegador', async () => {
+  let visto = null;
+  const sb = arrancarPanel({
+    rpc: (_fn, args) => { visto = args; return Promise.resolve({ data: [], error: null }); }
+  });
+  sb.document.getElementById = () => ({ innerHTML: '' });
+
+  sb._crmBusq.cantidad = 25;
+  sb._crmBusq.pagina = 3;
+  await sb.crmBuscarServidor();
+
+  assert.equal(visto.p_limit, 25);
+  assert.equal(visto.p_offset, 75, 'página 3 de a 25 arranca en la 75');
 });

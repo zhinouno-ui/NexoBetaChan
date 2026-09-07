@@ -191,8 +191,13 @@
       usuario:  ['👤 usuario',  '#7cc4ff', 'El nombre de usuario contiene lo que buscaste'],
       telefono: ['📱 teléfono', '#a78bfa', 'Mismo teléfono (comparado por los últimos 10 dígitos)'],
       titular:  ['🧾 titular',  '#fbbf24', 'El titular de la cuenta contiene lo que buscaste'],
-      reciente: ['🆕 alta reciente', '#94a3b8', 'Sin búsqueda: se muestran las últimas altas de la oficina'],
-      otro:     ['· coincidencia', '#94a3b8', 'Coincide, pero no por usuario, teléfono ni titular']
+      otro:     ['· coincidencia', '#94a3b8', 'Coincide, pero no por usuario, teléfono ni titular'],
+      // Sin búsqueda la pregunta es otra: no "por qué matcheó" sino "por qué lo tengo que
+      // mirar a este". Estos motivos dicen qué hacer, no cómo se encontró.
+      esperando:  ['🔴 esperando',   '#f87171', 'Tiene una solicitud abierta ahora mismo'],
+      sin_operar: ['🔁 nunca operó', '#fbbf24', 'Se registró y todavía no hizo ninguna operación'],
+      alta_nueva: ['🆕 alta nueva',  '#7cc4ff', 'Se registró en los últimos 7 días'],
+      registrado: ['· registrado',   '#94a3b8', 'Registrado, sin nada pendiente']
     }[String(m||'').toLowerCase()];
     if(!M) return '';
     return '<span title="'+M[2]+'" style="background:'+M[1]+'22;color:'+M[1]+';border:1px solid '+M[1]
@@ -1138,15 +1143,29 @@ window.crmBuscarDebounce=function(){
   // Sin paginado: se trae lo que el operador pide, no páginas que hay que ir pasando.
   // Tampoco se nombra la oficina: el operador ya está adentro de la suya, saber que hay siete
   // atrás no le sirve para nada.
-  window._crmBusq = { cantidad: 10, q: "", pedido: 0, total: null };
+  window._crmBusq = { cantidad: 10, q: "", pedido: 0, total: null, pagina: 0 };
+
+  // Las páginas SÍ hacen falta: sin ellas sólo se ven los primeros 10..100 y siempre los
+  // mismos. Una oficina tiene 6.635 registrados (P1) o 13.759 (P4): la lista no sirve para
+  // recorrerla si no se puede avanzar.
+  window.crmBusqPagina = function(delta){
+    const st = window._crmBusq;
+    const ultima = st.total != null ? Math.max(0, Math.ceil(st.total / st.cantidad) - 1) : st.pagina + 1;
+    const destino = Math.min(Math.max(0, st.pagina + delta), ultima);
+    if(destino === st.pagina) return;
+    st.pagina = destino;
+    crmBuscarServidor();
+  };
 
   window.crmBusqCantidad = function(v){
     window._crmBusq.cantidad = Math.max(1, Math.min(200, Number(v) || 10));
+    window._crmBusq.pagina = 0;   // cambia el tamaño: la página vieja ya no significa lo mismo
     crmBuscarServidor();
   };
 
   window.crmBusqTexto = function(v){
     window._crmBusq.q = String(v || "").trim();
+    window._crmBusq.pagina = 0;
     clearTimeout(window._crmBusqT);
     window._crmBusqT = setTimeout(crmBuscarServidor, 300);
   };
@@ -1172,7 +1191,7 @@ window.crmBuscarDebounce=function(){
         p_pc_codigos: oficinas,
         p_q: st.q || null,
         p_limit: st.cantidad,
-        p_offset: 0,
+        p_offset: st.pagina * st.cantidad,
         p_secret: window.PANEL_DATA_SECRET
       });
       if(error) throw error;
@@ -1210,10 +1229,21 @@ window.crmBuscarDebounce=function(){
     // Encabezado que dice qué es esta lista. Sin búsqueda no es "todos": son las últimas
     // altas, y conviene decirlo antes de que alguien saque conclusiones de lo que ve.
     const encabezado = st.q
-      ? 'Coinciden con «<b>' + escapeHtml(st.q) + '</b>» · ordenadas por qué tan fuerte es la coincidencia'
-      : 'Últimas altas de tu oficina · escribí arriba para buscar en todas';
+      ? 'Coinciden con «<b>' + escapeHtml(st.q) + '</b>» · primero las coincidencias más fuertes'
+      : 'Ordenados por lo que hay que atender: primero los que esperan, después los que nunca operaron';
 
-    const hayMas = st.total != null && st.total > filas.length;
+    const desde = st.pagina * st.cantidad + 1;
+    const hasta = st.pagina * st.cantidad + filas.length;
+    const hayMas = st.total != null && hasta < st.total;
+    const pie =
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">'
+      +   '<span class="small" style="color:var(--muted)">' + desde + '–' + hasta
+      +     (st.total != null ? ' de <b>' + Number(st.total).toLocaleString("es-AR") + '</b>' : '') + '</span>'
+      +   '<span style="display:flex;gap:6px">'
+      +     '<button class="mini-btn gray" onclick="crmBusqPagina(-1)"' + (st.pagina === 0 ? ' disabled' : '') + '>← Anterior</button>'
+      +     '<button class="mini-btn gray" onclick="crmBusqPagina(1)"' + (hayMas ? '' : ' disabled') + '>Siguiente →</button>'
+      +   '</span>'
+      + '</div>';
 
     box.innerHTML =
       '<div class="small" style="color:var(--muted);margin-bottom:8px">' + encabezado + '</div>'
@@ -1246,10 +1276,7 @@ window.crmBuscarDebounce=function(){
             + '</tr>';
         }).join("")
       + '</tbody></table></div>'
-      + (hayMas
-          ? '<div class="small" style="margin-top:8px;color:var(--muted)">Mostrando <b>' + filas.length + '</b> de '
-            + Number(st.total).toLocaleString("es-AR") + '. Subí la cantidad arriba o afiná la búsqueda.</div>'
-          : '');
+      + pie;
   };
 
   // ── Push, de a un jugador por vez ─────────────────────────────────────────
