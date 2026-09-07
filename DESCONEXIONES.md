@@ -1538,3 +1538,47 @@ El mismo `typeof` roto estaba en `chunior-recuperacion-y-transferencias.js:53`.
 
 Si mañana el update a la base vuelve a fallar, el peor caso pasa a ser una solicitud que queda en
 la bandeja — no setenta cambios de clave.
+---
+
+## D-50 · Sonda de sesión: enterarse antes de que lo descubra una carga
+
+Idea de Juan: *«hay oficinas en las cuales literalmente se está cerrando la sesión de agentes —
+NODO obviamente lo detecta cuando va a realizar una carga, que es el momento en que te avisa—.
+Deberías generar un usuario de prueba y cambiar la contraseña si pasan más de 6 minutos sin
+cargas, refrescando automáticamente el panel»*.
+
+El problema es real y el momento del descubrimiento es el peor posible: con un cliente esperando
+y la plata ya transferida.
+
+### Cómo quedó
+
+Cada minuto se fija: si pasaron **más de 6 minutos** sin ninguna operación real contra el agente
+**y** no hay nada en curso, hace una operación de prueba. Si la sesión murió, salta el mismo
+cortacircuitos de siempre (`_drexMarcarSinSesion`) y aparece el login — pero con el mostrador
+vacío. Si está viva, refresca el panel en silencio.
+
+El reloj no es un contador aparte: `callDrex` es el punto único por el que pasa todo, y ahí se
+marca `_drexUltimaOpOk` cada vez que una operación real vuelve sin pedir login. Mientras se opera,
+la sonda no hace nada.
+
+Guardas: no sondea si el agente está ocupado (meterse en medio de una carga es peor que esperar),
+ni si el login ya está en pantalla, ni fuera de la app de escritorio.
+
+### Un cambio sobre lo pedido, y por qué
+
+**No cambia la clave de un usuario de prueba: hace `buscarUsuario`.**
+
+`buscarUsuario` es la **primera parte de toda carga**. Si la sesión murió, falla exactamente
+igual que fallaría la carga, así que detecta el mismo problema. La diferencia es que no escribe
+nada. Cambiar una clave cada 6 minutos son ~240 escrituras por día en el sistema de juego sin
+ninguna necesidad, y si ese usuario alguna vez resulta ser de alguien real, lo deja afuera de su
+cuenta. Mismo diagnóstico, cero efecto.
+
+### Configuración
+
+`sondaSesionUsuario('elusuario')` desde la consola del panel guarda el usuario de prueba de esa
+oficina. **Sin uno configurado** la sonda cae a `ensureDrexSession()`, que navega y muestra el
+login si hace falta: detecta menos casos —no prueba una operación real— pero no queda a ciegas.
+Conviene cargar uno por oficina.
+
+Los umbrales están en `SONDA_MINUTOS` (6) y `SONDA_CADA_MS` (60 s).

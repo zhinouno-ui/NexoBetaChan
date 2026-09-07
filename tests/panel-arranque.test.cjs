@@ -389,3 +389,75 @@ test('el ciclo de clave no repite una que ya ejecutó', async () => {
   await sb._claveAutoTick();
   assert.equal(ejecuciones, 0, 'ya se ejecutó una vez: no se toca de nuevo');
 });
+
+// ── Sonda de sesión de agentes ───────────────────────────────────────────────
+function panelConSonda(extra) {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  sb.ctrlElectron = { openAgentWindow: async () => {}, navigateAgent: async () => {} };
+  sb.refrescarTodo = async () => {};
+  Object.assign(sb, extra || {});
+  return sb;
+}
+
+test('la sonda no toca el agente si hace poco que se operó', async () => {
+  const sb = panelConSonda();
+  let llamadas = 0;
+  sb.callDrex = async () => { llamadas++; return {}; };
+  sb._drexUltimaOpOk = Date.now();          // recién operado
+  sb.localStorage.getItem = () => 'usuario_de_prueba';
+
+  await sb._sondaSesionTick();
+  assert.equal(llamadas, 0, 'operar ya prueba que la sesión vive');
+});
+
+test('pasados los 6 minutos quietos, sondea con una operación real', async () => {
+  const sb = panelConSonda();
+  let visto = null;
+  sb.callDrex = async (m, u) => { visto = { m, u }; return { needsLogin: false }; };
+  sb._drexUltimaOpOk = Date.now() - 7 * 60 * 1000;
+  sb.localStorage.getItem = (k) => (k === 'nodo_sonda_usuario' ? 'usuario_de_prueba' : null);
+
+  await sb._sondaSesionTick();
+  assert.equal(visto.m, 'buscarUsuario', 'es la primera parte de toda carga: si falla, la carga fallaría');
+  assert.equal(visto.u, 'usuario_de_prueba');
+  assert.ok(!/cambiarClave/.test(String(visto.m)), 'no se le cambia la clave a nadie cada 6 minutos');
+});
+
+test('la sonda no se mete si el agente está ocupado', async () => {
+  const sb = panelConSonda();
+  let llamadas = 0;
+  sb.callDrex = async () => { llamadas++; return {}; };
+  sb._drexUltimaOpOk = Date.now() - 30 * 60 * 1000;
+  sb.localStorage.getItem = () => 'usuario_de_prueba';
+  sb._drexGlobalBusy = true;
+
+  await sb._sondaSesionTick();
+  assert.equal(llamadas, 0, 'meterse en medio de una carga es peor que esperar');
+});
+
+test('con el login ya en pantalla la sonda se queda quieta', async () => {
+  const sb = panelConSonda();
+  let llamadas = 0;
+  sb.callDrex = async () => { llamadas++; return {}; };
+  sb._drexUltimaOpOk = Date.now() - 30 * 60 * 1000;
+  sb._drexSinSesion = true;
+  sb.localStorage.getItem = () => 'usuario_de_prueba';
+
+  await sb._sondaSesionTick();
+  assert.equal(llamadas, 0, 'ya se sabe que está caída, no hay nada que descubrir');
+});
+
+test('sonda OK refresca el panel y reinicia el reloj', async () => {
+  const sb = panelConSonda();
+  let refrescos = 0;
+  sb.refrescarTodo = async () => { refrescos++; };
+  sb.callDrex = async () => ({ needsLogin: false });
+  const antes = Date.now() - 7 * 60 * 1000;
+  sb._drexUltimaOpOk = antes;
+  sb.localStorage.getItem = () => 'usuario_de_prueba';
+
+  await sb._sondaSesionTick();
+  assert.equal(refrescos, 1, 'después de 6 minutos quieto lo que se ve ya envejeció');
+  assert.ok(sb._drexUltimaOpOk > antes, 'el reloj arranca de nuevo');
+});

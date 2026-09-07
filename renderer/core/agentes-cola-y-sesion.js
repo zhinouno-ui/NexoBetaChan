@@ -173,6 +173,9 @@ async function callDrex(method, ...args){
       // Sólo cuenta si el que se encontró sin sesión fue una operación REAL, que ya daba por hecho
       // que había sesión.
       const _esChequeo = (method==='estadoPagina' || method==='iniciarSesion');
+      // Reloj de la sonda: cualquier operación real que NO pidió login prueba que la sesión
+      // está viva. Mientras se opere, no hace falta sondear nada.
+      if(!_esChequeo && _r && !_r.needsLogin){ try{ window._drexUltimaOpOk = Date.now(); }catch(_e){} }
       if(_r && _r.needsLogin && !_esChequeo) window._drexMarcarSinSesion(method);
       else if(_r && _r.needsLogin === false) window._drexSesionRepuesta();
       else if(_r && _r.ok === true && method === 'iniciarSesion') window._drexSesionRepuesta();
@@ -476,3 +479,79 @@ async function testRetirar(){
 // Le manda un mensaje al chat del usuario (en el portal) para que sepa el resultado de su solicitud.
 // Prioriza la búsqueda en el caché local (poblado por el portal RPC) para respetar el pc_codigo
 // del portal y evitar duplicados. Usa panel_core_enviar_chat_json cuando el chat ya existe.
+
+// ── Sonda de sesión: enterarse ANTES de que lo descubra una carga ────────────
+// En algunas oficinas la sesión de Agentes se cae sola y NODO se entera recién cuando va a
+// cargar: justo con un cliente esperando y la plata ya transferida. La sonda hace lo mismo que
+// haría una carga —una operación REAL contra el agente— cada tanto, cuando no hay nada en curso.
+// Si la sesión está muerta, salta el mismo cortacircuitos de siempre y aparece el login, pero
+// con el mostrador vacío en vez de en medio de una operación.
+//
+// Por qué NO se cambia la clave de un usuario de prueba, que fue la idea original: para detectar
+// la caída alcanza con una operación real, y buscarUsuario ES la primera que hace toda carga —
+// si la sesión murió, falla igual. Cambiar una clave cada 6 minutos escribe en el sistema de
+// juego sin necesidad, y si ese usuario alguna vez resulta ser de alguien real, lo deja afuera.
+// El diagnóstico es idéntico y no toca nada.
+const SONDA_MINUTOS = 6;
+const SONDA_CADA_MS = 60 * 1000;          // se fija cada minuto; sondea sólo si corresponde
+window._drexUltimaOpOk = window._drexUltimaOpOk || Date.now();
+let _sondaCorriendo = false;
+
+function _sondaAgenteOcupado(){
+  try{
+    return !!(window._drexGlobalBusy
+      || (typeof _watchdog !== 'undefined' && _watchdog && _watchdog.busy > 0)
+      || window._v154pParcialBusy
+      || window._operacionManualEnCurso
+      || window._portalSolicitudOperacionEnCurso
+      || (window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0)));
+  }catch(_e){ return true; }        // ante la duda, NO sondear
+}
+
+async function _sondaSesionTick(){
+  if(_sondaCorriendo) return;
+  if(!window.ctrlElectron) return;                    // sólo en la app de escritorio
+  if(window._drexSinSesion) return;                   // ya está el login en pantalla
+  if(_sondaAgenteOcupado()) return;                   // hay algo operando: eso ya prueba la sesión
+
+  const inactivo = Date.now() - (window._drexUltimaOpOk || 0);
+  if(inactivo < SONDA_MINUTOS * 60 * 1000) return;
+
+  _sondaCorriendo = true;
+  try{
+    // Usuario de prueba de la oficina. Sin uno configurado se cae a ensureDrexSession, que
+    // navega y muestra el login si hace falta: detecta menos casos, pero no queda a ciegas.
+    const prueba = String(localStorage.getItem('nodo_sonda_usuario') || '').trim();
+    if(prueba){
+      // Operación REAL: pasa por el mismo camino que la primera parte de una carga, así que
+      // si la sesión se cayó, callDrex levanta la bandera y salta el login solo.
+      await callDrex('buscarUsuario', prueba);
+    }else{
+      await ensureDrexSession();
+    }
+    if(!window._drexSinSesion){
+      window._drexUltimaOpOk = Date.now();
+      // Refrescar el panel, como pediste: si estuvo quieto seis minutos, lo que muestra ya
+      // envejeció. Silencioso: nadie quiere un toast cada seis minutos.
+      try{ await refrescarTodo(false); }catch(_e){}
+    }
+  }catch(e){
+    // Si falló por sesión, _drexMarcarSinSesion ya hizo su trabajo desde callDrex.
+    console.warn('[sonda sesión]', e && e.message);
+  }finally{
+    _sondaCorriendo = false;
+  }
+}
+
+// Configurar el usuario de prueba desde el panel.
+window.sondaSesionUsuario = function(u){
+  const v = String(u == null ? '' : u).trim();
+  try{
+    if(v) localStorage.setItem('nodo_sonda_usuario', v);
+    else localStorage.removeItem('nodo_sonda_usuario');
+  }catch(_e){}
+  try{ toast(v ? ('Sonda de sesión: se va a chequear con "' + v + '"') : 'Sonda de sesión sin usuario de prueba', 'blue'); }catch(_e){}
+  return v;
+};
+
+try{ setInterval(_sondaSesionTick, SONDA_CADA_MS); }catch(_e){}
