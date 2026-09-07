@@ -2442,6 +2442,10 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const usaChunior   = esCarga || esRetiro || esMovChunior;
     const esJugador    = esCarga || esRetiro || esClave || esConsulta;
 
+    // El jugador no refresco el portal y transfirio a la billetera anterior.
+    const bilVieja = (typeof deps.window._billeteraVieja === 'function' && itemUnified)
+      ? deps.window._billeteraVieja(itemUnified) : null;
+
     // La ficha mostraba "Cuenta de transferencia" y "Billetera asignada" con el MISMO valor:
     // en una carga el destino declarado es NUESTRA billetera, asi que se leia dos veces lo
     // mismo. El dato que sirve es cuando NO coinciden: ahi el jugador transfirio a otra
@@ -2798,11 +2802,18 @@ ${stepperHtml}
           ${usaChunior ? `
             <div class="sol-cotejo-row">
               <span class="sol-cotejo-lbl">Billetera asignada:</span>
-              <div class="sol-cotejo-val">
-                <b>${esc(bilNombre || 'Sin billetera')}</b>
+              <div class="sol-cotejo-val"${bilVieja ? ' style="border-color:#f59e0b55"' : ''}>
+                <b${bilVieja ? ' style="color:#fbbf24"' : ''}>${esc(bilNombre || 'Sin billetera')}</b>
                 ${bilAlias ? `<span style="color:#94a3b8;font-size:10.5px">(${esc(bilAlias)})</span>` : ''}
               </div>
             </div>
+            ${bilVieja ? `
+              <div class="sol-cotejo-row">
+                <span class="sol-cotejo-lbl" style="color:#f59e0b">⚠ No refrescó el portal:</span>
+                <div class="sol-cotejo-val" style="color:#fbbf24;border-color:#f59e0b55">
+                  <span>transfirió a <b>${esc(bilVieja.vieja)}</b>, la activa ahora es <b>${esc(bilVieja.actual)}</b></span>
+                </div>
+              </div>` : ''}
 
             <div class="sol-cotejo-row">
               <span class="sol-cotejo-lbl">N° Movimiento Chunior:</span>

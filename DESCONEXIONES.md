@@ -999,3 +999,71 @@ son **«📥 Traer: …»** (cuánto se pide al servidor) y **«🕒 Ver: …»*
 
 `tests/expediente-por-tipo.test.cjs` — 5 casos que arman la ficha de verdad y verifican que cada
 tipo muestre lo suyo y **no** lo que no le corresponde. Suite: 55/55.
+
+---
+
+## D-39 · Billetera vieja: el jugador no refrescó el portal · RESUELTO
+
+**Planteo de Juan** — *«algunos usuarios no refrescan antes de subir la solicitud, no se ve la
+billetera a la que transfirieron hasta que abrís el desplegable, deberías de avisar de alguna
+manera que no es la misma que está en portal porque el usuario no refrescó»*.
+
+### Corrección a lo que había medido en D-38
+
+En D-38 medí «0 de 81.471 cargas con destino distinto de la billetera asignada» y concluí que
+el dato no existía. **Esa medición respondía otra pregunta.** Comparé `metadata.destino` contra
+`metadata.billetera_nombre`, y esos dos salen de **la misma foto del portal**: siempre coinciden
+por construcción.
+
+El desfase real es contra la billetera **activa ahora**: la persona deja el portal abierto,
+nosotros cambiamos la billetera, y manda la solicitud sin refrescar. La solicitud llega con la
+billetera anterior adentro. Eso **sí** está en los datos:
+
+| | 7 días |
+|---|---:|
+| Cargas | 19.437 |
+| Con cambio de billetera respecto de la siguiente carga de la oficina | 452 |
+| …con el cambio a menos de 3 minutos (o sea: llegó con la vieja) | **271 · 1,39 %** |
+
+Unas 39 por día entre las siete oficinas.
+
+### Qué se hizo
+
+`_billeteraVieja(it)` compara la billetera de la solicitud contra `getBilleraLanding()` (por
+`ID_BILLETERA`, y por nombre cuando el metadata viejo no trae id). Devuelve `{vieja, actual}`.
+
+- **En la tarjeta de la lista**, arriba de todo: `⚠ Pagó a GIORDANO · ahora CASTRO`. Es lo que
+  decide a qué billetera mirar, y hasta ahora había que abrir el desplegable para saberlo.
+- **En la ficha**: la billetera asignada se pinta en ámbar y debajo va
+  *«⚠ No refrescó el portal: transfirió a **GIORDANO**, la activa ahora es **CASTRO**»*.
+
+**Sólo mientras la solicitud sigue abierta.** En una ya cerrada la billetera activa cambió mil
+veces y el aviso sería ruido. **Sólo en cargas**: en un retiro pagamos nosotros, no aplica.
+
+### Lo que NO cubre
+
+Esto detecta que la persona vio **otra billetera nuestra**. No detecta que haya transferido a
+una billetera que el portal nunca le mostró — para eso sigue haciendo falta el
+«¿Transferiste a otra billetera?» que está en PENDIENTES.
+
+---
+
+## D-40 · Prueba de arranque del bundle
+
+Varias veces en esta sesión pasó lo mismo: se entregaba algo que en pantalla no funcionaba. El
+caso peor fue el buscador del N° de Chunior, que guardaba bien y no se dibujaba.
+
+`tests/panel-arranque.test.cjs` levanta **el bundle generado** (`js-modules.js` + `js-core.js`,
+en el mismo orden que el HTML) dentro de un `vm` con un DOM mínimo y verifica:
+
+1. que arranque sin tirar;
+2. que las diez funciones que usa la pantalla queden definidas;
+3. que `_billeteraVieja` avise en los dos casos que corresponde y calle en los cuatro que no;
+4. que la ventana del historial se mida en tiempo y el turno nunca baje de 12 h.
+
+**Detalle que casi me come:** la primera corrida daba «sin aviso» en los seis casos. No era el
+código: al arnés le faltaba `js-modules.js`, así que `normalizar()` tiraba `NodoDomain is not
+defined`, el `try/catch` de `_billeteraVieja` se lo comía y devolvía `null`. El orden de carga
+del test tiene que ser el mismo que el del HTML o el test miente.
+
+Suite: 70/70.

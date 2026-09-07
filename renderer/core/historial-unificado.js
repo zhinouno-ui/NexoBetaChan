@@ -28,7 +28,35 @@ function _tipoEtiqueta(t){
   return _ETIQUETA_TIPO[k] || escapeHtml(k || "—");
 }
 function _esTipoChunior(t){ return TIPOS_CHUNIOR.includes(String(t||"").toUpperCase()); }
-function _esTipoClave(t){ const k=String(t||"").toUpperCase(); return k==="CAMBIO_CLAVE" || k==="RESET_CLAVE"; }
+// Hay gente que deja el portal abierto, nosotros cambiamos la billetera activa, y la persona
+// manda la solicitud SIN refrescar: transfirió a la billetera anterior. La solicitud llega con
+// esa billetera vieja adentro, pero el operador sólo ve la activa y no se entera hasta abrir
+// el desplegable. Medido: 271 cargas en 7 días (1,39 %) llegan asi.
+// Sólo se avisa mientras la solicitud sigue abierta: es el momento en que sirve. En una ya
+// cerrada la billetera activa cambió mil veces y el aviso seria ruido.
+function _billeteraVieja(it){
+  try{
+    if(!it || !it.pendiente) return null;
+    const t = String(it.tipo||"").toUpperCase();
+    if(t !== "CARGA") return null;              // en un retiro pagamos nosotros: no aplica
+    if(typeof getBilleraLanding !== "function") return null;
+    const activa = getBilleraLanding();
+    if(!activa) return null;
+    const idSol = String((it._raw && (it._raw.ID_BILLETERA || it._raw.id_billetera)) || it.billetera_id || "").trim();
+    const idAct = String(activa.ID_BILLETERA || "").trim();
+    const nomSol = String(it.billetera_nombre || "").trim();
+    const nomAct = String(activa.NOMBRE_VISIBLE || "").trim();
+    if(!nomSol && !idSol) return null;          // sin dato no se inventa un aviso
+    const mismo = (idSol && idAct) ? (idSol === idAct)
+                                   : (nomSol.toUpperCase() === nomAct.toUpperCase());
+    if(mismo) return null;
+    return { vieja: nomSol || idSol, actual: nomAct || idAct };
+  }catch(_e){ return null; }
+}
+window._billeteraVieja = _billeteraVieja;
+
+function _esTipoClave(t){
+ const k=String(t||"").toUpperCase(); return k==="CAMBIO_CLAVE" || k==="RESET_CLAVE"; }
 // La clave nueva viaja en el metadata del portal o, en las manuales, dentro de notas como
 // "clave → xxxx". En la lista es EL dato de la operación: sin eso la tarjeta mostraba un "—".
 function _claveDeItem(it){
@@ -439,6 +467,17 @@ function renderSolicitudesStream(lista){
       }
     }
 
+    // Va ARRIBA del todo en la tarjeta: es lo que decide a qué billetera mirar.
+    let bilPill = '';
+    const _bv = _billeteraVieja(it);
+    if(_bv){
+      bilPill = `
+        <div style="margin-top:5px;display:flex;align-items:center;gap:4px;font-size:10px;font-weight:800;color:#fbbf24;background:rgba(245,158,11,.12);padding:3px 6px;border-radius:6px;border:1px solid #f59e0b55">
+          <span>⚠</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Pagó a ${escapeHtml(_bv.vieja)} · ahora ${escapeHtml(_bv.actual)}</span>
+        </div>`;
+    }
+
     let diagPill = '';
     if(esRech){
       const badge = (r && r.badge) ? r.badge : 'Rechazada';
@@ -485,6 +524,7 @@ function renderSolicitudesStream(lista){
         </div>
 
         ${parcialMini}
+        ${bilPill}
         ${diagPill}
 
         <div class="sol-card-details-box">

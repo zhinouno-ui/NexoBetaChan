@@ -275,3 +275,43 @@ test('el paso 2 del flujo no pone un saldo donde va el N° de movimiento', () =>
   assert.ok(!/2\.636/.test(paso), 'el saldo previo no es un número de movimiento');
   assert.match(paso, /Sin N° anotado/);
 });
+
+// ── Billetera vieja: el jugador no refrescó el portal ────────────────────────
+function apiConBilleteraVieja(bilVieja) {
+  const win = { _billeteraVieja: () => bilVieja };
+  return construirApi(win);
+}
+
+test('avisa en la ficha cuando el jugador transfirió a la billetera anterior', () => {
+  const item = {
+    fuente: 'SOLICITUD', id: '190001', tipo: 'CARGA', usuario: 'pruebaxx', monto: 5000,
+    estado: 'PENDIENTE', fecha: '2026-09-07T15:00:00Z', pendiente: true,
+    billetera_nombre: 'GIORDANO',
+    _raw: {
+      ID: 190001, TIPO: 'CARGA', USUARIO: 'pruebaxx', ESTADO: 'PENDIENTE',
+      MONTO_DECLARADO: 5000, BILLETERA_NOMBRE: 'GIORDANO',
+      FECHA_CREACION: '2026-09-07T15:00:00Z', METADATA: {}
+    }
+  };
+  const html = apiConBilleteraVieja({ vieja: 'GIORDANO', actual: 'CASTRO' })
+    .construirDossierCompletoHtml(item);
+
+  assert.match(html, /No refrescó el portal/);
+  assert.match(html, /transfirió a <b>GIORDANO<\/b>/);
+  assert.match(html, /la activa ahora es <b>CASTRO<\/b>/);
+});
+
+test('sin desfase de billetera no aparece ningún aviso', () => {
+  const item = {
+    fuente: 'SOLICITUD', id: '190002', tipo: 'CARGA', usuario: 'pruebaxx', monto: 5000,
+    estado: 'PENDIENTE', fecha: '2026-09-07T15:00:00Z', pendiente: true,
+    billetera_nombre: 'CASTRO',
+    _raw: {
+      ID: 190002, TIPO: 'CARGA', USUARIO: 'pruebaxx', ESTADO: 'PENDIENTE',
+      MONTO_DECLARADO: 5000, BILLETERA_NOMBRE: 'CASTRO',
+      FECHA_CREACION: '2026-09-07T15:00:00Z', METADATA: {}
+    }
+  };
+  const html = apiConBilleteraVieja(null).construirDossierCompletoHtml(item);
+  assert.ok(!html.includes('No refrescó el portal'));
+});
