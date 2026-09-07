@@ -197,6 +197,198 @@ window.abrirModalAdminChunior = function(tipo){
     _watchdogTrigger(1500);
   }, esPropina?'Anotar propina':'Anotar depósito');
 };
+// ── Editar un movimiento ya anotado ─────────────────────────────────────────
+// Hasta acá un movimiento sólo se podía ANULAR (dejándole monto 0,10). Corregir un monto mal
+// tipeado o una nota obligaba a hacerlo a mano en Chunior, y no quedaba rastro de que ese
+// número había sido tocado. Dos reglas, las dos del lado del servidor (panel_mov_editar):
+//   · sólo lo edita el MISMO operador que lo hizo;
+//   · todo cambio queda con valor anterior, valor nuevo, quién y cuándo.
+// El cambio se aplica PRIMERO en Chunior y recién después se guarda acá: si Chunior lo
+// rechaza, NODO no queda diciendo un monto que allá nunca cambió.
+window._CHUNIOR_URL_POR_TIPO = {
+  CARGA:            'movimientoficha',
+  RETIRO:           'movimientoficha',
+  MOV_BILLETERA:    'movimientointerno',
+  CAMBIO_BILLETERA: 'movimientointerno',
+  PROPINA:          'propina',
+  DEPOSITO_SR:      'depositossinreclamar',
+  RECARGA_FICHAS:   'recargafichas'
+};
+
+async function _editarMovimientoChunior(tipoUrl, movId, cambios){
+  if(!window.chunior) return { ok:false, error:'Ventana de Chunior no disponible' };
+  if(!movId) return { ok:false, error:'Falta el N° de movimiento' };
+  const changeUrl = CHUNIOR_BASE + '/transacciones/' + tipoUrl + '/' + encodeURIComponent(movId) + '/change/';
+  try{ await window.chunior.navigate(changeUrl); }
+  catch(e){ return { ok:false, error:'No se pudo abrir el movimiento en Chunior: '+(e.message||'') }; }
+
+  const t0 = Date.now(); let ready = false;
+  while(Date.now() - t0 < 10000){
+    ready = await window.chunior.exec('(function(){return !!document.getElementById("id_monto");})()').catch(function(){return false;});
+    if(ready) break;
+    await new Promise(function(r){ setTimeout(r,300); });
+  }
+  if(!ready) return { ok:false, error:'El movimiento N° '+movId+' no abrió en Chunior (¿existe?)' };
+
+  const setMonto = (cambios && cambios.monto != null)
+    ? 'var m=document.getElementById("id_monto"); if(!m) return {ok:false,err:"sin campo monto"};'
+      + 'm.value=' + JSON.stringify(String(cambios.monto)) + '; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));'
+    : '';
+  const setNotas = (cambios && cambios.notas != null)
+    ? 'var n=document.getElementById("id_notas"); if(n){ n.value=' + JSON.stringify(String(cambios.notas)) + '; n.dispatchEvent(new Event("input",{bubbles:true})); n.dispatchEvent(new Event("change",{bubbles:true})); }'
+    : '';
+
+  let inj;
+  try{
+    inj = await window.chunior.exec(
+      '(function(){' + setMonto + setNotas +
+      'var b=document.querySelector("input[name=\'_save\']")||document.querySelector("input[type=\'submit\'],button[type=\'submit\']");' +
+      'if(!b) return {ok:false,err:"sin botón guardar"};' +
+      'b.click(); return {ok:true};' +
+      '})()'
+    );
+  }catch(e){ return { ok:false, error:e.message||'Error escribiendo en Chunior' }; }
+  if(!inj || !inj.ok) return { ok:false, error:'No se pudo escribir: '+JSON.stringify(inj) };
+
+  await new Promise(function(r){ setTimeout(r,2500); });
+  const conf = await window.chunior.exec(
+    '(function(){var li=document.querySelector("li.success"); if(li&&/modific/i.test(li.textContent||"")) return {ok:true, mensaje:(li.textContent||"").trim()};' +
+    'var err=document.querySelector(".errorlist,.errornote"); if(err) return {ok:false, error:(err.textContent||"").trim().substring(0,200)};' +
+    'if((location.href||"").indexOf("/change/")<0) return {ok:true, mensaje:"guardado"}; return {ok:false, error:"Chunior no confirmó el cambio"};})()'
+  ).catch(function(){ return { ok:false, error:'No se pudo leer la confirmación de Chunior' }; });
+  return conf || { ok:false, error:'Sin respuesta de Chunior' };
+}
+
+// Historial de cambios de ese mismo movimiento, para saber si ya fue tocado antes.
+window.expedienteVerEdiciones = async function(historialId){
+  const caja = document.getElementById('expEdiciones');
+  if(caja) caja.innerHTML = '<div class="small" style="color:var(--muted)">Buscando cambios anteriores…</div>';
+  let filas = [];
+  try{
+    const { data, error } = await supabaseClient.rpc('panel_mov_ediciones', { p_historial_id: Number(historialId) });
+    if(error) throw error;
+    filas = data || [];
+  }catch(e){
+    if(caja) caja.innerHTML = '<div class="small" style="color:#f87171">No se pudo leer el historial de cambios: '+escapeHtml(e.message||String(e))+'</div>';
+    return;
+  }
+  if(!caja) return;
+  if(!filas.length){
+    caja.innerHTML = '<div class="small" style="color:var(--muted)">Este movimiento nunca se editó.</div>';
+    return;
+  }
+  caja.innerHTML = filas.map(function(f){
+    const cuando = f.created_at ? new Date(f.created_at).toLocaleString('es-AR') : '';
+    const val = function(v){ return v == null || v === '' ? '—' : escapeHtml(String(v)); };
+    return '<div style="border-left:2px solid #f59e0b;padding:4px 0 4px 8px;margin-bottom:6px;font-size:11px">'
+      + '<b style="color:#fbbf24">' + escapeHtml(f.campo) + '</b> · ' + escapeHtml(f.operador||'') + ' · ' + escapeHtml(cuando)
+      + (f.aplicado_en_chunior ? '' : ' <span style="color:#f87171">· NO se aplicó en Chunior</span>')
+      + '<div style="color:#94a3b8">' + val(f.valor_anterior) + ' → <b style="color:#f1f5f9">' + val(f.valor_nuevo) + '</b></div>'
+      + (f.error ? '<div style="color:#f87171">' + escapeHtml(f.error) + '</div>' : '')
+      + '</div>';
+  }).join('');
+};
+
+window.expedienteEditarMovimiento = async function(historialId){
+  historialId = String(historialId||'').trim();
+  if(!/^\d+$/.test(historialId)){ toast('Esta fila no tiene operación registrada.','yellow'); return; }
+
+  const fila = ((typeof _historialData !== 'undefined' && _historialData) || [])
+    .find(function(x){ return String(x.id) === historialId; });
+  if(!fila){ toast('No tengo la operación cargada. Ampliá el período y probá de nuevo.','yellow'); return; }
+
+  const opFila = String(fila.operador||'').trim();
+  const opActual = String((typeof operador !== 'undefined' ? operador : '') || '').trim();
+  // Aviso temprano y claro. La regla la aplica igual el servidor (panel_mov_editar).
+  if(opFila && opActual && opFila.toLowerCase() !== opActual.toLowerCase()){
+    toast('Este movimiento lo hizo '+opFila+'. Sólo esa cuenta puede editarlo.','orange');
+    return;
+  }
+
+  const seg = window._CHUNIOR_URL_POR_TIPO[String(fila.tipo||'').toUpperCase()];
+  const movId = fila.chunior_movimiento_id || '';
+
+  abrirModal('✏️ Editar movimiento' + (movId ? ' N° '+movId : ''),
+    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">'
+    + escapeHtml(String(fila.tipo||'')) + ' de <b>' + escapeHtml(String(fila.usuario||'')) + '</b>'
+    + (movId ? '' : '<br><span style="color:#f59e0b">Sin N° de Chunior: se corrige sólo acá, allá no hay qué tocar.</span>')
+    + (movId && !seg ? '<br><span style="color:#f59e0b">Este tipo no se edita en Chunior desde el panel: se corrige sólo acá.</span>' : '')
+    + '</div>'
+    + '<label>Monto</label>'
+    + '<input id="edMovMonto" type="text" inputmode="decimal" autocomplete="off" value="' + escapeHtml(String(fila.monto != null ? fila.monto : '')) + '">'
+    + '<label style="margin-top:8px">Nota</label>'
+    + '<textarea id="edMovNotas" rows="3" style="width:100%;border-radius:10px;padding:10px;background:#0e1525;color:#fff;border:1px solid #2d3342;resize:vertical">'
+    + escapeHtml(String(fila.notas||'')) + '</textarea>'
+    + '<div style="margin-top:12px;border-top:1px solid #1e293b;padding-top:8px">'
+    + '<div class="small" style="font-weight:700;color:#cbd5e1;margin-bottom:6px">Cambios anteriores</div>'
+    + '<div id="expEdiciones"></div></div>',
+    async function(){
+      const montoTxt = String((document.getElementById('edMovMonto')||{}).value || '').trim().replace(/\./g,'').replace(',','.');
+      const notas = String((document.getElementById('edMovNotas')||{}).value || '').trim();
+      const montoNum = montoTxt === '' ? null : Number(montoTxt);
+      if(montoNum !== null && !Number.isFinite(montoNum)){ toast('El monto no es un número.','red'); return; }
+
+      const cambiaMonto = montoNum !== null && Number(montoNum) !== Number(fila.monto||0);
+      const cambiaNotas = notas !== String(fila.notas||'');
+      if(!cambiaMonto && !cambiaNotas){ toast('No cambiaste nada.','yellow'); return; }
+
+      cerrarModal();
+
+      // 1) Chunior primero. Si allá falla, no tocamos nada acá.
+      let aplicado = false, errChu = null;
+      if(movId && seg){
+        toast('Aplicando el cambio en Chunior…','blue');
+        _wdLock();
+        let r;
+        try{ r = await _editarMovimientoChunior(seg, movId, { monto: cambiaMonto ? montoNum : null, notas: cambiaNotas ? notas : null }); }
+        catch(e){ r = { ok:false, error:e.message||'error' }; }
+        finally{ _wdUnlock(); }
+        aplicado = !!(r && r.ok);
+        errChu = aplicado ? null : ((r && r.error) || 'sin detalle');
+        if(!aplicado){
+          toast('Chunior no aceptó el cambio: '+errChu+'. No se modificó nada.','red');
+          return;
+        }
+      }
+
+      // 2) Recién ahora se guarda de este lado, con el log.
+      let res;
+      try{
+        const { data, error } = await supabaseClient.rpc('panel_mov_editar', {
+          p_historial_id: Number(historialId),
+          p_operador: opActual || opFila,
+          p_monto: cambiaMonto ? montoNum : null,
+          p_notas: cambiaNotas ? notas : null,
+          p_pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : null),
+          p_aplicado_chunior: aplicado,
+          p_error: errChu
+        });
+        if(error) throw error;
+        res = data;
+      }catch(e){
+        toast('El cambio se aplicó en Chunior pero no se pudo guardar acá: '+(e.message||e),'red');
+        return;
+      }
+
+      if(!res || res.ok !== true){
+        const motivo = res && res.motivo;
+        if(motivo === 'otro_operador'){
+          toast('Lo hizo '+(res.operador_original||'otro operador')+'. Sólo esa cuenta puede editarlo.','orange');
+        } else {
+          toast('No se pudo guardar el cambio ('+(motivo||'sin detalle')+').','red');
+        }
+        return;
+      }
+
+      toast('✓ Movimiento actualizado'+(aplicado ? ' acá y en Chunior' : ' (sólo acá)')+'.','green');
+      try{ await cargarHistorial(); }catch(_e){}
+      try{ renderHistorialUnificado(); }catch(_e){}
+    }, 'Guardar cambio');
+
+  // Cargar el historial de cambios cuando el modal ya existe en pantalla.
+  setTimeout(function(){ window.expedienteVerEdiciones(historialId); }, 60);
+};
+
 async function _anularMovimientoChunior(tipoUrl, movId){
   if(!window.chunior) return { ok:false, error:'Ventana de Chunior no disponible' };
   if(!movId) return { ok:false, error:'Falta el N° de movimiento de Chunior' };

@@ -192,3 +192,11 @@ test('una operación todavía abierta no ofrece buscar un N° que aún no existe
   assert.match(html, /Todavía no se ejecutó/);
   assert.match(html, /Se leen al ejecutar/, 'los saldos no faltan, todavía no se leyeron');
 });
+
+test('un movimiento con N° ofrece editarlo, apuntando a su fila de historial', () => {
+  const html = construirApi().construirDossierCompletoHtml(DEPOSITO_SR);
+
+  assert.match(html, /✏️ Editar/, 'monto y nota se tienen que poder corregir desde acá');
+  assert.match(html, /expedienteEditarMovimiento\('991'\)/, 'tiene que apuntar a la fila correcta');
+  assert.match(html, /operador que lo anotó/, 'el botón avisa la regla antes de apretarlo');
+});

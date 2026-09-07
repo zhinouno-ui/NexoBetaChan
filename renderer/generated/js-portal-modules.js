@@ -2801,7 +2801,10 @@ ${stepperHtml}
               <div class="sol-cotejo-val">
                 ${movId
                   ? `<b class="mono" style="color:#86efac;font-size:13px">N° ${esc(movId)}</b>
-                     <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(movId)}')">Copiar</button>`
+                     <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(movId)}')">Copiar</button>
+                     ${histIdParaMov ? `<button type="button" class="mini-btn yellow" style="font-size:10.5px"
+                       onclick="expedienteEditarMovimiento('${esc(histIdParaMov)}')"
+                       title="Corregir monto o nota. Sólo puede hacerlo el operador que lo anotó, y queda registrado.">✏️ Editar</button>` : ''}`
                   : (abierta
                       ? `<span style="color:#64748b">Todavía no se ejecutó</span>`
                       : `<span style="color:#f59e0b">Sin N° anotado</span>
