@@ -1155,7 +1155,7 @@ function cambiarUsuario(){
 
 function _confirmarCambioUsuario(){
   try{ document.getElementById("cambioConfirm")?.remove(); }catch(_e){}
-  stopChatPoll();stopEstadoPoll();stopPortalThreadPoll();
+  stopChatPoll();stopEstadoPoll();stopPortalThreadPoll();stopHistPoll();
   ["bet300_usuario","bet300_telefono","bet300_vinculo_estado","bet300_nivel_acceso","bet300_motivo_soporte","bet300_chat_id","bet300_solicitud_id","bet300_pending_tipo","bet300_chat_token","bet300_portal_thread_seen","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
   Object.assign(state,{usuario:"",telefono:"",nivelAcceso:"",motivoSoporte:"",solicitudId:"",pendingTipo:"",chatId:"",chatToken:"",chatLibre:false,seenMsgIds:new Set(),portalThreadSeen:new Set(),shownTexts:new Set(),_threadRendered:new Set(),_ingresarUserShown:null,_altaSoporteEnviado:false,composerImage:null,unread:0,chatGreeted:false});
   clearComposerImage();
@@ -1253,6 +1253,21 @@ function startEstadoPoll(){
   estadoPollTimer=setInterval(()=>consultarEstadoSolicitud(false),6000);
   setTimeout(()=>consultarEstadoSolicitud(false),800);
 }
+
+// El historial se pintaba una sola vez, al entrar. Una carga hecha en el mostrador aparecía
+// recién cuando la persona salía y volvía a entrar a la pantalla — o sea, nunca, porque no
+// tiene motivo para hacerlo. Mientras esté mirando el Estado se relee cada 15 s.
+let histPollTimer=null;
+function stopHistPoll(){ if(histPollTimer){ clearInterval(histPollTimer); histPollTimer=null; } }
+function startHistPoll(){
+  stopHistPoll();
+  if(!state.usuario || !state.telefono) return;
+  histPollTimer=setInterval(function(){
+    // Si la pestaña está en segundo plano no se consulta: no sirve de nada y gasta datos.
+    try{ if(document.hidden) return; }catch(_e){}
+    try{ pintarHistorialUsuario(); }catch(_e){}
+  }, 15000);
+}
 function setEstadoLive(txt){const e=$("estadoLive");if(e)e.innerHTML='<span class="live-dot"></span>'+esc(txt);}
 
 // ── Estado (pantalla) ──────────────────────────────────────────────────────
@@ -1339,9 +1354,14 @@ async function pintarHistorialUsuario(){
     // A qué billetera transfirió y con qué titular. Estaba en la base desde siempre y el
     // historial no lo mostraba: sin eso, cinco cargas de $5.000 son cinco filas idénticas.
     const bil=String(r.billetera||"").trim(), tit=String(r.titular||"").trim();
+    // Una carga hecha en el mostrador no la pidió la persona por acá: si aparece sin aclarar
+    // nada, parece una solicitud suya que no recuerda haber mandado.
+    const enMostrador = String(r.origen||"").toUpperCase()==="MOSTRADOR";
     const detalle = (bil||tit)
       ? '<div style="width:100%;font-size:11px;color:#8b95a5;margin-top:2px;line-height:1.5">'
-        + (bil ? (esRetiro?"A tu cuenta: ":"Transferiste a: ")+"<b style=\"color:#c9d3e0\">"+esc(bil)+"</b>" : "")
+        + (enMostrador ? (esRetiro?"Te lo pagamos en el mostrador":"Te la cargamos nosotros") : "")
+        + (enMostrador && bil ? "<br>" : "")
+        + (bil ? (enMostrador ? "Billetera: " : (esRetiro?"A tu cuenta: ":"Transferiste a: "))+"<b style=\"color:#c9d3e0\">"+esc(bil)+"</b>" : "")
         + (bil&&tit ? "<br>" : "")
         + (tit ? "Titular: "+esc(tit) : "")
         + '</div>'
@@ -1425,6 +1445,7 @@ function renderEstado(){
       <div id="histUsuario"></div>`;
   }
   pintarHistorialUsuario();
+  startHistPoll();
 }
 
 function limpiarPendienteAprobado(obs){

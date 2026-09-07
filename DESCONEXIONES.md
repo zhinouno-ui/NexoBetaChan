@@ -1582,3 +1582,52 @@ login si hace falta: detecta menos casos —no prueba una operación real— per
 Conviene cargar uno por oficina.
 
 Los umbrales están en `SONDA_MINUTOS` (6) y `SONDA_CADA_MS` (60 s).
+
+---
+
+## D-51 · La carga manual no le llegaba nunca al jugador
+
+Juan: *«si el usuario cancela la operación para nosotros es instantáneo, ¿por qué no se sube la
+carga manual de manera instantánea al usuario?»*.
+
+**Porque la carga manual no genera solicitud.** El operador la hace desde «Operación manual
+automatizada» y eso escribe **sólo** en `historial_ops`. El historial del portal leía **sólo**
+`landing_solicitudes`. Nunca se cruzaban: la plata le entraba al jugador y en su portal no
+aparecía nada.
+
+Medido en 7 días:
+
+| | Filas | Sin solicitud | Invisibles | Jugadores |
+|---|---:|---:|---:|---:|
+| CARGA | 19.986 | 959 | **4,8 %** | 377 |
+| RETIRO | 1.362 | 115 | **8,4 %** | 85 |
+
+**1.074 operaciones y 462 jugadores** que movieron plata y no vieron nada.
+
+### Qué se hizo
+
+`landing_historial_usuario` ahora une las dos fuentes. Tres cuidados:
+
+**Quién puede verlas.** Una fila de `historial_ops` no tiene teléfono, así que no se puede
+comparar como con las del portal. La pertenencia se verifica contra `usuarios_portal_vinculos`:
+ese usuario tiene que estar vinculado a **ese** teléfono en **esa** oficina. Sin eso, cualquiera
+que adivine un nombre de usuario vería sus operaciones. Verificado: con el teléfono correcto ve
+1 manual + 9 del portal; con un teléfono ajeno o desde otra oficina, **cero**.
+
+**Sin duplicados.** Las que sí nacieron de una solicitud ya vienen por el otro lado, así que se
+excluyen por `solicitud_id`.
+
+**Sólo las que movieron plata.** La primera versión mostraba también los intentos en `ERROR` — en
+la prueba salían tres CARGA de $20.000 fallidas al lado de la que sí entró, o sea que parecía que
+le habían cargado 80.000. Ahora sólo entran `OK`/`ACREDITADA`/`PAGADA`/`COMPLETADA`/`APROBADA`.
+
+### Y que aparezca sola
+
+El historial se pintaba **una sola vez**, al entrar a la pantalla. Una carga de mostrador iba a
+aparecer recién cuando la persona saliera y volviera a entrar — o sea nunca, porque no tiene
+motivo para hacerlo. Ahora, mientras esté mirando el Estado, se relee cada 15 s (y no consulta si
+la pestaña está en segundo plano).
+
+Cada fila dice de dónde salió: **«Te la cargamos nosotros»** para las de mostrador. Sin eso, una
+carga que la persona no pidió por el portal parece una solicitud suya que no recuerda haber
+mandado.
