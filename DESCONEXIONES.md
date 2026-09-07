@@ -1341,3 +1341,81 @@ vez y aceptar que la clave deje de poder pasarse.
 `panel_datos_ingreso(p_usuario, p_pc_codigos, p_secret)` — toma la clave **más reciente entre las
 dos fuentes** (`RESET_CLAVE` del panel y `CAMBIO_CLAVE` del portal), y devuelve además el teléfono
 vinculado, el titular y el host de la oficina.
+
+---
+
+## D-45 · «Cancelar solicitud» no cancelaba nada · RESUELTO
+
+Juan: *«venía diciendo desde el principio: cancelé la carga y NODO jamás se enteró, es más,
+volvió a recibir otra»*. Estaba anotado en PENDIENTES desde hace días y no lo había arreglado.
+
+**Lo que pasaba** — el botón hacía sólo esto:
+
+```js
+Object.assign(state,{pendingTipo:"",solicitudId:"",chatId:"",...});
+["bet300_pending_tipo","bet300_solicitud_id",...].forEach(k=>localStorage.removeItem(k));
+```
+
+Limpiaba **el teléfono**. La solicitud seguía viva en `landing_solicitudes`, el operador la veía
+igual en la bandeja, y como el portal quedaba libre la persona mandaba otra. En la captura:
+**dos CARGA de $5.000 del mismo usuario con dos minutos de diferencia** (#191590 11:57 y
+#191592 11:59), las dos «Sin tomar», las dos para procesar.
+
+### Qué se hizo
+
+`landing_cancelar_solicitud(p_solicitud_id, p_usuario, p_public_code, p_chat_token)`, con tres
+defensas, las tres probadas contra una solicitud real:
+
+| Intento | Respuesta |
+|---|---|
+| otro usuario | `{ok:false, motivo:"no_es_tuya"}` |
+| id inexistente | `{ok:false, motivo:"no_existe"}` |
+| oficina equivocada | `{ok:false, motivo:"otra_oficina"}` |
+
+Y **sólo cancela lo que todavía no tocó nadie**: estado `PENDIENTE` y sin operador asignado. Si
+está `EN_REVISION` hay alguien trabajándola —cancelarla desde el teléfono podría dejar plata
+cargada sin solicitud—, así que responde `tomada` y el portal manda al chat. Medido en 7 días:
+21 `PENDIENTE` sin tomar, 573 `EN_REVISION` todas con operador.
+
+La cancelación queda registrada en el metadata (`cancelada_por: JUGADOR`, cuándo, y el estado
+previo), para que no parezca que la solicitud se evaporó.
+
+**El orden importa**: el portal cancela primero en el servidor y **sólo si eso sale bien** limpia
+el teléfono. Si falla, el pendiente queda como estaba — dejar el teléfono libre con la solicitud
+viva es exactamente lo que generaba las duplicadas.
+
+---
+
+## D-46 · La billetera de la solicitud, del lado del jugador
+
+Complemento de D-39, que resolvió sólo la mitad. Ahí el **operador** pasó a ver cuándo la persona
+usó la billetera anterior. Faltaba que lo viera **la persona**, que es la única que sabe adónde
+transfirió de verdad.
+
+Ahora la solicitud guarda en el teléfono la billetera que el portal mostraba al enviarla
+(`bet300_pending_billetera`), y la pantalla de Estado muestra **«Transferiste a: X»**. Si la
+billetera activa ahora es otra, se pinta en ámbar:
+
+> ⚠ En el portal ahora figura **CASTRO**. Tu solicitud queda igual con la de arriba. Si
+> transferiste a esta otra, avisanos por el chat.
+
+Probado en los tres casos: misma billetera → lo muestra sin alarma; cambiada → avisa; sin
+solicitud previa → no dibuja nada.
+
+---
+
+## D-47 · Los campos de monto aceptaban texto
+
+Eran `type="number"`. **Chrome deja tipear letras igual**: se ven en pantalla pero `value` queda
+vacío. La persona veía `prueba` escrito en «MONTO TRANSFERIDO» y el portal leía nada.
+
+Ahora son `type="text" inputmode="numeric"` con filtro de dígitos en cada tecla. De paso se van
+las flechitas del spinner, que se montaban encima del texto. Probado:
+
+| Se tipea | Queda |
+|---|---|
+| `prueba` | *(vacío)* |
+| `5.000` | `5000` |
+| `12a34` | `1234` |
+| `-500` | `500` |
+| `1e5` | `15` |

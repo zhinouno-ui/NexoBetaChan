@@ -286,6 +286,11 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .estado-ico{font-size:44px;margin-bottom:12px}
 .estado-h{font-weight:900;font-size:19px;margin-bottom:6px}
 .estado-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+.bil-sol{margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);text-align:left}
+.bil-sol.cambio{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.45)}
+.bil-sol-k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.bil-sol-v{font-size:14.5px;font-weight:800;word-break:break-word}
+.bil-sol-aviso{margin-top:8px;font-size:12px;line-height:1.5;color:var(--gold-2)}
 .estado-tx{font-size:13.5px;color:#c9c9d2;line-height:1.55;margin-bottom:16px}
 .estado-live{font-size:12.5px;font-weight:800;color:var(--gold-2);background:rgba(233,194,92,.1);border:1px solid rgba(233,194,92,.28);border-radius:999px;padding:8px 14px;display:inline-flex;align-items:center;gap:8px;margin-bottom:18px}
 .estado-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
@@ -431,6 +436,10 @@ const state={
   chatToken:localStorage.getItem("bet300_chat_token")||"",
   selectedFile:null, billetera:null, chatLibre:false, composerImage:null,
   pendingTipo:localStorage.getItem("bet300_pending_tipo")||"",
+  // Billetera que el portal mostraba cuando la persona mandó la solicitud. Es a la que
+  // transfirió. Si después el operador cambia la activa, sin esto la persona entra al estado,
+  // ve otra billetera y no entiende nada — o peor, cree que transfirió mal.
+  pendingBilletera:localStorage.getItem("bet300_pending_billetera")||"",
   seenMsgIds:new Set(),
   portalThreadSeen:new Set(JSON.parse(localStorage.getItem("bet300_portal_thread_seen")||"[]")),
   shownTexts:new Set(),
@@ -446,6 +455,15 @@ function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
 function esc(t){return String(t??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 function escMsg(t){return esc(t).replace(/\n/g,"<br>")}
 function now(){return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}
+// Los campos de monto eran type=number. Chrome deja tipear letras igual: se ven en pantalla
+// pero value queda vacio, asi que la persona ve "prueba" escrito y el portal no lee nada.
+// Con esto no entra otra cosa que digitos.
+function _soloNumero(el){
+  if(!el) return;
+  const limpio = String(el.value||"").replace(/[^0-9]/g, "");
+  if(el.value !== limpio) el.value = limpio;
+}
+
 function tipoLabel(){const t=state.pendingTipo||"Solicitud";return t.charAt(0)+t.slice(1).toLowerCase()}
 function tiempoEspera(){
   const started=Number(state.solicitudStartedAt||localStorage.getItem("bet300_solicitud_started_at")||0);
@@ -1152,8 +1170,12 @@ function bloquearNuevaSolicitud(tipo){
   goEstado();
   return true;
 }
-function setPendiente(tipo,solicitudId){
+function setPendiente(tipo,solicitudId,billetera){
   state.pendingTipo=tipo||state.pendingTipo||"SOLICITUD";
+  if(billetera){
+    state.pendingBilletera=String(billetera);
+    try{ localStorage.setItem("bet300_pending_billetera", state.pendingBilletera); }catch(_e){}
+  }
   if(solicitudId)state.solicitudId=String(solicitudId);
   state.solicitudStartedAt=Date.now();
   estadoFinalNotificado=false;
@@ -1166,11 +1188,39 @@ function setPendiente(tipo,solicitudId){
 // está mirando la pantalla de estado. Y el botón que hoy dice "Cancelar solicitud" hace lo que
 // dice: no hay nada que confirmar dos veces.
 function limpiarPendienteManual(){ _confirmarLimpiarPendiente(); }
-function _confirmarLimpiarPendiente(){
+async function _confirmarLimpiarPendiente(){
   const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
+
+  // 1) Cancelarla de verdad, del lado del servidor. Si no se puede, NO se limpia acá:
+  //    dejar el teléfono libre con la solicitud viva es lo que generaba las duplicadas.
+  const sid = solicitudIdValido();
+  if(sid){
+    let r = null;
+    try{
+      r = await rpc("landing_cancelar_solicitud", {
+        p_solicitud_id: sid, p_usuario: state.usuario||"",
+        p_public_code: state.publicCode||"", p_chat_token: state.chatToken||""
+      });
+    }catch(_e){ r = { error:{ message:"sin conexión" } }; }
+
+    const d = (r && !r.error) ? (normalize(r.data)||r.data||{}) : null;
+    if(!d || d.ok !== true){
+      const motivo = d ? String(d.motivo||"") : "";
+      if(motivo === "tomada" || motivo === "ya_no_pendiente"){
+        toast("Un operador ya está trabajando tu solicitud. Escribinos por el chat para cancelarla.");
+        goChat();
+      }else{
+        toast("No pudimos cancelarla. Probá de nuevo o escribinos por el chat.");
+      }
+      return;                       // el pendiente queda como está: no se puede mandar otra
+    }
+  }
+
+  // 2) Recién ahora se limpia del teléfono.
   stopChatPoll();stopEstadoPoll();
   Object.assign(state,{pendingTipo:"",solicitudId:"",chatId:"",chatToken:"",seenMsgIds:new Set()});
-  ["bet300_pending_tipo","bet300_solicitud_id","bet300_chat_id","bet300_chat_token","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
+  state.pendingBilletera="";
+  ["bet300_pending_tipo","bet300_pending_billetera","bet300_solicitud_id","bet300_chat_id","bet300_chat_token","bet300_solicitud_started_at"].forEach(k=>localStorage.removeItem(k));
   // El retiro se canceló SIN efectuarse (este botón solo aparece mientras está pendiente/sin pagar)
   // → liberamos el cooldown de 24h para que pueda enviar uno nuevo (dato/monto corregido).
   if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
@@ -1288,7 +1338,33 @@ async function pintarHistorialUsuario(){
   box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días</div>'+filas;
 }
 
+// La billetera de la solicitud, y el aviso cuando la que figura ahora en el portal es otra.
+// El caso real: la persona deja el portal abierto, nosotros cambiamos la billetera activa, y
+// ella manda la solicitud con la anterior. Del lado del panel eso ya se avisa; acá lo tiene
+// que ver ella, que es la que sabe adónde transfirió de verdad.
+function _avisoBilleteraSolicitud(){
+  const dela = String(state.pendingBilletera||"").trim();
+  if(!dela) return "";
+  const b = state.billetera||{};
+  const activa = String(b.nombre_visible||b.nombre||"").trim();
+  const alias  = String(b.alias||"").trim();
+  const activaTxt = activa ? (activa + (alias ? " · " + alias : "")) : "";
+  // Comparación floja: alcanza con que el nombre esté adentro, porque una guarda el alias y la
+  // otra puede no traerlo.
+  const norm = (v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const nd = norm(dela), na = norm(activaTxt);
+  const cambio = !!(nd && na && nd.indexOf(na)===-1 && na.indexOf(nd)===-1);
+  return `
+    <div class="bil-sol${cambio ? " cambio" : ""}">
+      <div class="bil-sol-k">Transferiste a</div>
+      <div class="bil-sol-v">${esc(dela)}</div>
+      ${cambio ? `<div class="bil-sol-aviso">⚠ En el portal ahora figura <b>${esc(activaTxt)}</b>.
+        Tu solicitud queda igual con la de arriba. Si transferiste a esta otra, avisanos por el chat.</div>` : ""}
+    </div>`;
+}
+
 function renderEstado(){
+
   const s=$("screenEstado");
   if(!s)return;
   if(tieneSolicitudPendiente()){
@@ -1303,6 +1379,7 @@ function renderEstado(){
           <div class="step"><span class="dot"></span></div>
         </div>
         <div id="retiroProgreso"></div>
+        ${_avisoBilleteraSolicitud()}
         <div class="estado-tx">Un operador la está revisando. Te avisamos acá y por el chat cuando se confirme.</div>
         <div id="estadoLive" class="estado-live"><span class="live-dot"></span>Consultando estado…</div>
         <div class="estado-actions">
@@ -2082,7 +2159,7 @@ function renderCarga(){
     </div>
     <div class="form-card">
       <label>Monto transferido (mínimo ${_money(MONTO_MIN_CARGA)})</label>
-      <input id="cargaMonto" type="number" min="${MONTO_MIN_CARGA}" inputmode="numeric" placeholder="Ej: 5000" oninput="syncChips()">
+      <input id="cargaMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 5000" oninput="_soloNumero(this);syncChips()">
       <div class="chips">${MONTOS_RAPIDOS.map(v=>`<button type="button" class="chip" data-v="${v}" onclick="setMonto(${v})">$${v.toLocaleString("es-AR")}</button>`).join("")}</div>
       <label>¿A nombre de quién está la cuenta que usaste para transferir?</label>
       <div class="titular-wrap">
@@ -2285,7 +2362,7 @@ async function enviarSolicitudCarga(usuario,monto,titular){
     setTimeout(()=>subscribePush(),1200);
     return;
   }
-  setPendiente("CARGA",String(solicitudId));
+  setPendiente("CARGA",String(solicitudId),destino||"");
   _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
   toast("Solicitud enviada ✅");haptic([20,30,20]);
   renderHome();
@@ -2304,7 +2381,7 @@ function renderRetiro(){
     <div id="rechazoPrevioRetiro"></div>
     <div class="form-card">
       <label>Monto (mínimo ${_money(MONTO_MIN_RETIRO)})</label>
-      <input id="retiroMonto" type="number" min="${MONTO_MIN_RETIRO}" inputmode="numeric" placeholder="Ej: 10000">
+      <input id="retiroMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 10000" oninput="_soloNumero(this)">
       <label>Alias / CBU destino</label>
       <input id="retiroDestino" placeholder="Alias o CBU/CVU donde cobrás">
       <label>Titular destino</label>
