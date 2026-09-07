@@ -286,6 +286,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .estado-ico{font-size:44px;margin-bottom:12px}
 .estado-h{font-weight:900;font-size:19px;margin-bottom:6px}
 .estado-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+.retiro-previos{margin:2px 0 10px;padding:8px 11px;border-radius:10px;background:rgba(233,194,92,.08);border:1px solid rgba(233,194,92,.28);font-size:12px;line-height:1.5;color:var(--gold-2)}
 .bil-sol{margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);text-align:left}
 .bil-sol.cambio{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.45)}
 .bil-sol-k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
@@ -1270,10 +1271,17 @@ function _fechaCorta(iso){
     return p(d.getDate())+"/"+p(d.getMonth()+1)+" "+p(d.getHours())+":"+p(d.getMinutes());
   }catch(_e){ return ""; }
 }
-function _estadoBadge(e){
+function _estadoBadge(e, canceladaPor){
   const u=String(e||"").toUpperCase();
+  // Una que cancelaste vos NO es un rechazo nuestro. Iban las dos en rojo y como "Rechazada",
+  // así que cancelar tu propia carga se leía como si te la hubiéramos rechazado.
+  if(u==="CANCELADA"){
+    const propia = String(canceladaPor||"").toUpperCase()==="JUGADOR";
+    return '<span style="font-size:11px;font-weight:800;color:#8b95a5">'
+      + (propia ? "Cancelada por vos" : "Cancelada") + '</span>';
+  }
   const ok=["OK","APROBADA","ACREDITADA","PAGADA","COMPLETADA"].includes(u);
-  const rech=["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(u);
+  const rech=["RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(u);
   const col=ok?"#22c55e":rech?"#ef4444":"#f5c518", txt=ok?"Confirmada":rech?"Rechazada":"En revisión";
   return '<span style="font-size:11px;font-weight:800;color:'+col+'">'+txt+'</span>';
 }
@@ -1326,12 +1334,23 @@ async function pintarHistorialUsuario(){
   if(!rows.length){ box.innerHTML='<div style="text-align:center;color:#8b95a5;font-size:12px;padding:12px">Sin operaciones en los últimos 7 días.</div>'; return; }
   const filas=rows.map(function(r){
     const esRetiro=String(r.tipo||"").toUpperCase()==="RETIRO";
-    const rech=["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(String(r.estado||"").toUpperCase());
+    const est=String(r.estado||"").toUpperCase();
+    const rech=["RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(est);
+    // A qué billetera transfirió y con qué titular. Estaba en la base desde siempre y el
+    // historial no lo mostraba: sin eso, cinco cargas de $5.000 son cinco filas idénticas.
+    const bil=String(r.billetera||"").trim(), tit=String(r.titular||"").trim();
+    const detalle = (bil||tit)
+      ? '<div style="width:100%;font-size:11px;color:#8b95a5;margin-top:2px;line-height:1.5">'
+        + (bil ? (esRetiro?"A tu cuenta: ":"Transferiste a: ")+"<b style=\"color:#c9d3e0\">"+esc(bil)+"</b>" : "")
+        + (bil&&tit ? "<br>" : "")
+        + (tit ? "Titular: "+esc(tit) : "")
+        + '</div>'
+      : "";
     return '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px;background:#12141b;border:1px solid #23262f;border-radius:12px;padding:10px 12px;margin-top:8px">'
       + '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">'+(esRetiro?"🏧":"💳")+'</span>'
       +   '<div><div style="font-weight:800;font-size:14px;color:#e8edf4">'+(esRetiro?"Retiro":"Carga")+'</div>'
       +   '<div style="font-size:11px;color:#8b95a5">'+esc(_fechaCorta(r.fecha))+'</div></div></div>'
-      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado)+'</div>'
+      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado, r.cancelada_por)+'</div>'+detalle
       + (rech && r.motivo ? '<div style="width:100%;font-size:11.5px;color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:6px 8px;margin-top:2px">🚫 '+esc(r.motivo)+'</div>' : '')
       + '</div>';
   }).join("");
@@ -2382,6 +2401,7 @@ function renderRetiro(){
     <div class="form-card">
       <label>Monto (mínimo ${_money(MONTO_MIN_RETIRO)})</label>
       <input id="retiroMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 10000" oninput="_soloNumero(this)">
+      <div id="retiroDatosPrevios"></div>
       <label>Alias / CBU destino</label>
       <input id="retiroDestino" placeholder="Alias o CBU/CVU donde cobrás">
       <label>Titular destino</label>
@@ -2391,9 +2411,41 @@ function renderRetiro(){
       <button class="action-btn secondary-btn" style="margin-top:9px" onclick="goChat()">Necesito ayuda</button>
     </div>`;
   pintarRechazoPrevio("rechazoPrevioRetiro","RETIRO");
+  _rellenarDatosRetiro();
+
+}
+
+// Traer el CBU y el titular del último retiro y dejarlos puestos. Antes había que tipear los
+// dos de memoria cada vez, o irlos a buscar a otra app con el portal abierto. Los campos
+// quedan EDITABLES y se avisa de dónde salieron: si cobra en otra cuenta, los cambia y listo.
+async function _rellenarDatosRetiro(){
+  const cajaAviso = $("retiroDatosPrevios");
+  const elD = $("retiroDestino"), elT = $("retiroTitular");
+  if(!elD || !elT) return;
+  // Si la persona ya empezó a escribir, no se le pisa nada.
+  if(String(elD.value||"").trim() || String(elT.value||"").trim()) return;
+  let d = null;
+  try{
+    const r = await rpc("landing_datos_retiro", {
+      p_usuario: state.usuario||"", p_telefono: state.telefono||"",
+      p_public_code: state.publicCode||""
+    });
+    if(!r.error) d = normalize(r.data) || (Array.isArray(r.data)?r.data[0]:r.data) || null;
+  }catch(_e){}
+  if(!d || !String(d.destino||"").trim()) return;
+
+  elD.value = String(d.destino||"").trim();
+  elT.value = String(d.titular||"").trim();
+  try{ onTitularInput(elT); }catch(_e){}
+  if(cajaAviso){
+    cajaAviso.innerHTML = '<div class="retiro-previos">'
+      + 'Pusimos los datos de tu último retiro. <b>Si cobrás en otra cuenta, cambialos.</b>'
+      + '</div>';
+  }
 }
 
 async function enviarSolicitudRetiro(){
+
   if(!_puedeOperar())return;
   const restRet=retiroCooldownRestanteMs();
   if(restRet>0)return toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(restRet)+".");

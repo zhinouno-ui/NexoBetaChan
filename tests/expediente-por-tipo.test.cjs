@@ -325,3 +325,33 @@ test('el flujo muestra una hora, no un pedazo de fecha', () => {
   assert.ok(!/p\.\s*m\./.test(paso1), 'no puede quedar el "p. m." colgado de un corte');
   assert.match(paso1, /\d{2}:\d{2}/, 'tiene que verse una hora entera');
 });
+
+test('una cancelada por el jugador no se pinta como rechazo nuestro', () => {
+  // Antes caía en el caso genérico: rojo, "Rechazada", sin explicar nada. O directamente
+  // desaparecía de la bandeja y no quedaba registro de por qué.
+  const rejections = require('../renderer/portal/rejections');
+  const api = rejections.create ? rejections.create({ window: {}, document: {}, esc: (v) => String(v ?? '') }) : rejections;
+  const clasificar = api.clasificarRechazo || (api.globals && api.globals.clasificarRechazo);
+
+  const r = clasificar({
+    ESTADO: 'CANCELADA',
+    METADATA: { cancelada_por: 'JUGADOR', cancelada_at: '2026-09-07T15:08:46Z' }
+  });
+
+  assert.ok(r, 'tiene que clasificarla');
+  assert.equal(r.codigo, 'CANCELADA_JUGADOR');
+  assert.match(r.badge, /La canceló el jugador/);
+  assert.match(r.mensajeCliente, /La cancelaste vos/);
+  assert.match(r.accionSugerida, /No hay nada que hacer/, 'el operador no tiene que salir a buscarla');
+  assert.ok(!/#ef4444/.test(r.color), 'no va en rojo de rechazo');
+});
+
+test('una rechazada de verdad sigue siendo un rechazo', () => {
+  const rejections = require('../renderer/portal/rejections');
+  const api = rejections.create ? rejections.create({ window: {}, document: {}, esc: (v) => String(v ?? '') }) : rejections;
+  const clasificar = api.clasificarRechazo || (api.globals && api.globals.clasificarRechazo);
+
+  const r = clasificar({ ESTADO: 'RECHAZADA', METADATA: { motivo: 'No llegó la transferencia' } });
+  assert.ok(r && r.esRechazo);
+  assert.ok(r.codigo !== 'CANCELADA_JUGADOR');
+});

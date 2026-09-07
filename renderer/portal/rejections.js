@@ -148,6 +148,23 @@ const api = {};
     const etapa = String(meta.etapa || '').toUpperCase();
     const mot = String(meta.motivo_rechazo || meta.motivo || '').toUpperCase();
 
+    // 0) La canceló EL JUGADOR desde el portal. No es un rechazo nuestro y no hay nada que
+    //    revisar: hasta ahora caía en el caso genérico y se pintaba en rojo como 'Rechazada',
+    //    o directamente desaparecía de la bandeja sin dejar ninguna explicación de por qué.
+    if(String(meta.cancelada_por || '').toUpperCase() === 'JUGADOR'){
+      let cuando = '';
+      try{ if(meta.cancelada_at) cuando = new Date(meta.cancelada_at).toLocaleString('es-AR'); }catch(_e){}
+      return {
+        esRechazo: true, esAuto: false, categoria: 'CANCELADA_JUGADOR', codigo: 'CANCELADA_JUGADOR',
+        badge: 'La canceló el jugador',
+        titulo: 'Cancelada por el jugador desde el portal',
+        icono: '🚫', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)',
+        mensajeCliente: 'La cancelaste vos desde el portal' + (cuando ? (' el ' + cuando) : '') + '.',
+        etapa: etapa || 'CANCELADA_PORTAL',
+        accionSugerida: 'No hay nada que hacer: la dio de baja la persona antes de que nadie la tomara. Si vuelve a mandarla, va a entrar como una solicitud nueva.'
+      };
+    }
+
     // 1) Auto-rechazos de titular duro
     if(/AUTO_RECHAZO/.test(etapa) || /AUTO-RECHAZO/.test(notas) || /DATO_PROPIO|SOLO_NUMEROS|USUARIO_COMO_TITULAR|REINCIDENTE/.test(mot)){
       if(/DATO_PROPIO/.test(mot) || /DATO_PROPIO/.test(notas)){
