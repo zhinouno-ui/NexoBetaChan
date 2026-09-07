@@ -25,6 +25,20 @@ function _tipoEtiqueta(t){
   return _ETIQUETA_TIPO[k] || escapeHtml(k || "—");
 }
 function _esTipoChunior(t){ return TIPOS_CHUNIOR.includes(String(t||"").toUpperCase()); }
+function _esTipoClave(t){ const k=String(t||"").toUpperCase(); return k==="CAMBIO_CLAVE" || k==="RESET_CLAVE"; }
+// La clave nueva viaja en el metadata del portal o, en las manuales, dentro de notas como
+// "clave → xxxx". En la lista es EL dato de la operación: sin eso la tarjeta mostraba un "—".
+function _claveDeItem(it){
+  try{
+    const r = (it && it._raw) || {};
+    let meta = r.METADATA !== undefined ? r.METADATA : (r.metadata || {});
+    if(typeof meta === "string"){ try{ meta = JSON.parse(meta); }catch(_e){ meta = {}; } }
+    const directa = String(r.PASSWORD_NUEVO || (meta && meta.password_nuevo) || "").trim();
+    if(directa) return directa;
+    const m = String(r.notas || r.NOTAS || "").match(/clave\s*(?:→|->|:)\s*(\S+)/i);
+    return m ? m[1] : "";
+  }catch(_e){ return ""; }
+}
 
 // Filas traídas por la búsqueda contra el servidor (fuera de la ventana cargada).
 window._histBusquedaServidor = window._histBusquedaServidor || [];
@@ -376,6 +390,12 @@ function renderSolicitudesStream(lista){
 
     let timeHtml = formatFecha(it.fecha);
     let montoHtml = it.monto ? money(it.monto) : '—';
+    if(_esTipoClave(it.tipo)){
+      const _cl = _claveDeItem(it);
+      montoHtml = _cl
+        ? '<span style="font-family:ui-monospace,monospace;color:#facc15;font-size:15px">🔑 ' + escapeHtml(_cl) + '</span>'
+        : '<span style="color:#f87171;font-size:13px">sin clave</span>';
+    }
     let parcialMini = '';
     if(esRetiro){
       const pp = (typeof window._retiroParcialInfo === 'function') ? window._retiroParcialInfo(it._raw || it) : null;
@@ -577,6 +597,11 @@ function renderHistorialUnificado(){
   }catch(_e){}
 
   _histUnificadoCache = lista;
+  // El expediente (operation-modal) busca la fila en window._histUnificadoCache. Como esto
+  // es un `let` de script clasico, NUNCA estuvo en window: por eso las tarjetas que no son
+  // del portal (manuales y las de Chunior) abrian "Solicitud no seleccionada" y quedaban
+  // como filas muertas.
+  try{ window._histUnificadoCache = lista; }catch(_e){}
   _guardarHistorialLocal();
   renderSolicitudesStream(lista);
   setBox("tablaSolicitudesCompleta", tablaHistorialUnificadoHTML(lista));

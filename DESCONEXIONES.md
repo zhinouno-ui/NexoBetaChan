@@ -609,7 +609,7 @@ Lo que quedó sin hacer, con lo que hace falta para cerrarlo.
 | **«¿Transferiste a otra billetera?»** | Mostramos un solo CBU activo; el que transfirió a otro no tiene cómo avisar salvo escribiendo. Criterio acordado: lista cerrada de NUESTRAS billeteras (no texto libre), aparece en **Estado** después de enviar (no en Cargar), se cuenta por usuario, y la solicitud llega marcada `⚠ OTRA BILLETERA · verificar`. | RPC nueva `landing_listar_billeteras_oficina(p_public_code)` → devuelve nombre + alias, **sin CBU**. |
 | **Sistema de validación** | Varios caminos distintos haciendo a medias el trabajo de uno. Ver el artefacto de revisión. Juan lo dejó explícitamente para más adelante. | Decisión de diseño: cuál manda. |
 | **Campaña real (reemplazo de la push eliminada)** | Se sacó el disparo masivo a ciegas (D-36). Una campaña de verdad tiene que mostrar **a quién** (lista con nombres, editable), **a cuántos** (con push activo, dato del servidor) y **por qué** (motivo guardado con el envío) antes de mandar. Hoy no queda registro de ningún envío. | Segmentación desde **Nexo**, no desde `buildCRM()`. Tabla de envíos para el registro. |
-| **N° de movimiento de Chunior incompleto** | `RESET_CLAVE` y `CONSULTA` no guardan ninguno (0 de 1.283 en 30 días) y ~1,4 % de cargas/retiros tampoco. Sin ese número no hay cotejo posible contra Chunior. Ver D-37. | Revisar si cambió el HTML del mensaje de éxito de Chunior; agregar el scrapeo en el flujo de cambio de clave. |
+| **N° de movimiento de Chunior incompleto** | ~1,4 % de cargas/retiros no guardan ninguno. (`RESET_CLAVE` y `CONSULTA` ya NO cuentan acá: no pasan por Chunior, ver D-38.) Sin ese número no hay cotejo posible. | Revisar si cambió el HTML del mensaje de éxito de Chunior. |
 | **Editar un movimiento ya anotado en Chunior** | Hoy sólo se puede *anular* propinas y depósitos sin reclamar (se les pone monto 0,10). No hay forma de corregir monto, billetera ni notas desde NODO. Pedido explícito de Juan: «acceso fácil y rápido a editar todo». | Definir qué se puede editar sin romper el cotejo: Chunior no versiona los cambios. |
 | **Cambio de billetera ambiguo en el historial** | Se muestra el valor final donde hubo una transición. Propuesta: `MASSA PP → CASTRO` con quién y cuándo, ícono 🔀 y filtro «cambiadas». | Pospuesto por Juan. |
 
@@ -918,3 +918,84 @@ número que el operador tiene delante cuando cotea contra Chunior.
 - **«Acceso fácil y rápido a editar todo»** — sin hacer. Hoy sólo se puede *anular* propinas y
   depósitos sin reclamar (`_anularMovimientoChunior`, que pone el monto en 0,10). No hay
   edición de monto, billetera ni notas de un movimiento ya anotado.
+
+---
+
+## D-38 · La ficha del expediente mentía y las filas de Chunior estaban muertas · RESUELTO
+
+Juan, mirando el resultado de D-37: *«no hiciste una verga bld, armá un historial con datos
+utilizables con eso, de qué me sirve saber el lead de cambio de clave y que aparezca registrado
+en el Chunior si no lo hace, vos mismo lo decís, fijate»*. Tenía razón en las dos.
+
+### 1 · Las tarjetas de Chunior no abrían nada
+
+Se agregó la pestaña 🔧 Chunior en D-37, pero al hacer clic el panel derecho decía **«Solicitud
+no seleccionada»**. La causa no era de la pestaña: `operation-modal.js` busca la fila en
+`window._histUnificadoCache` y en `window._historialData`, y **ninguna de las dos existía**.
+
+```js
+let _histUnificadoCache = [];   // historial-unificado.js
+let _historialData = [];        // historial-movimientos.js
+```
+
+Son `let` de script clásico: **no son propiedades de `window`**. Así que
+`deps.window._histUnificadoCache` era `undefined` y el expediente sólo resolvía las solicitudes
+del portal, que vienen por otro camino (`V154P.solicitudes`).
+
+Esto no lo rompió la pestaña: **toda fila manual venía siendo una fila muerta desde antes**. La
+pestaña sólo lo hizo evidente. De regalo, `jugadores-crm.js` también lee `window._historialData`
+y siempre recibía `undefined`.
+
+**Resuelto** — se publican las dos: `window._histUnificadoCache = lista` y
+`window._historialData = _historialData`.
+
+### 2 · La ficha decía que el cambio de clave pasa por Chunior. No pasa.
+
+El expediente pintaba **la misma ficha de carga/retiro para todo**. Un `CAMBIO_CLAVE` mostraba:
+
+| Campo | Lo que decía | La verdad |
+|---|---|---|
+| Monto de la operación | `$ 0` | un cambio de clave no tiene monto |
+| Billetera asignada | `Sin billetera` | no interviene ninguna billetera |
+| N° Movimiento Chunior | `Sin movimiento` | **nunca va a haber uno** |
+| Saldos en casino | `Prev — Post —` | no se leen saldos |
+| Flujo, paso 2 | `Chunior · Pendiente` | **no se completa nunca** |
+
+El cambio de clave se ejecuta con `callDrex("cambiarClave", ...)` —el backoffice del **Agente /
+Drex**, no Chunior. Es coherente con lo medido en D-37: 744 `RESET_CLAVE` en 30 días, **0 con
+número de movimiento**. No es que falte scrapearlo: no existe.
+
+Un operador mirando esa ficha concluye que la operación quedó a medias y sale a buscar un
+número que no va a encontrar.
+
+**Resuelto** — el expediente ahora se arma según el tipo:
+
+- **CAMBIO_CLAVE / RESET_CLAVE** → Usuario · **Clave nueva** (copiable) · Teléfono · Mensaje.
+  Columna derecha: *Se ejecuta en: **Agente / Drex*** y *Movimiento en Chunior: **No corresponde
+  · un cambio de clave no mueve plata***. Flujo: `1. Pedido → 2. Agente → 3. Clave nueva → 4. estado`.
+  Si no llegó clave, lo dice: *«No llegó ninguna clave — se aplica la del sistema»*.
+- **Movimientos de Chunior** (transferencia, cambio de billetera, depósito s/reclamar, propina,
+  recarga) → título **🧾 Detalle del movimiento** en vez de «Datos del Jugador» (el campo
+  `usuario` en estos trae un concepto, no un jugador), con N° de movimiento, monto, billetera,
+  notas y operador. Sin titular ni CBU, que no existen acá.
+- **CONSULTA** → sin monto ni Chunior.
+- **CARGA / RETIRO** → igual que siempre, sin cambios.
+
+Además, donde falta el N° ya no dice un neutro «Sin movimiento»: dice **«Sin N° anotado —
+todavía no se ejecutó»** o **«— quedó sin registrar»** según el estado, que es información
+distinta y accionable.
+
+### 3 · En la lista, el cambio de clave mostraba `—`
+
+La tarjeta pone el monto en grande. En un cambio de clave eso era un guión. Ahora muestra
+**🔑 la clave nueva**, que es el dato de esa operación, o «sin clave» en rojo.
+
+### 4 · Dos desplegables idénticos
+
+D-37 dejó *«🕒 Turno actual»* y *«📥 Turno actual»* uno arriba del otro, indistinguibles. Ahora
+son **«📥 Traer: …»** (cuánto se pide al servidor) y **«🕒 Ver: …»** (qué se muestra de lo traído).
+
+### Prueba
+
+`tests/expediente-por-tipo.test.cjs` — 5 casos que arman la ficha de verdad y verifican que cada
+tipo muestre lo suyo y **no** lo que no le corresponde. Suite: 55/55.

@@ -2429,6 +2429,25 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const esCarga = tipo === 'CARGA';
     const esRechazo = ['RECHAZADA', 'CANCELADA'].includes(estado);
 
+    // Cada tipo de operacion tiene datos DISTINTOS. Antes se pintaba la misma ficha de
+    // carga/retiro para todo, asi que un CAMBIO_CLAVE mostraba monto $0, billetera "Sin
+    // billetera", saldos vacios y un paso "2. Chunior · Pendiente" que no se completa nunca:
+    // el cambio de clave se ejecuta con callDrex("cambiarClave"), NO genera movimiento en
+    // Chunior. Medido: 744 RESET_CLAVE en 30 dias, 0 con numero de movimiento.
+    const TIPOS_MOV_CHUNIOR = ['MOV_BILLETERA','CAMBIO_BILLETERA','DEPOSITO_SR','PROPINA','RECARGA_FICHAS'];
+    const esClave      = tipo === 'CAMBIO_CLAVE' || tipo === 'RESET_CLAVE';
+    const esConsulta   = tipo === 'CONSULTA';
+    const esMovChunior = TIPOS_MOV_CHUNIOR.includes(tipo);
+    const tieneMonto   = !esClave && !esConsulta;
+    const usaChunior   = esCarga || esRetiro || esMovChunior;
+    const esJugador    = esCarga || esRetiro || esClave || esConsulta;
+
+    const notas = String(s.notas || s.NOTAS || (meta && meta.notas) || '').trim();
+    // La clave nueva viaja en el metadata del portal o, en las manuales, dentro de notas
+    // como "clave → xxxx" (asi la escribe registrarEnHistorial).
+    const claveNueva = String(s.PASSWORD_NUEVO || (meta && meta.password_nuevo) || '').trim()
+      || ((notas.match(/clave\s*(?:→|->|:)\s*(\S+)/i) || [])[1] || '');
+
     let rechazo = (typeof deps.window?.clasificarRechazo === 'function')
       ? deps.window.clasificarRechazo(s)
       : null;
@@ -2455,8 +2474,18 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       saldoPre, saldoPost, movId, chatId, metadata: meta, rechazo, raw: s
     };
 
-    const tipoIco = esCarga ? '⬆️' : (esRetiro ? '⬇️' : '📋');
-    const tipoColor = esRetiro ? '#fb923c' : (esCarga ? '#34d399' : '#38bdf8');
+    const tipoIco = esCarga ? '⬆️' : (esRetiro ? '⬇️'
+      : (esClave ? '🔑' : (esConsulta ? '🔍'
+      : (tipo === 'MOV_BILLETERA' ? '🔀' : (tipo === 'CAMBIO_BILLETERA' ? '💳'
+      : (tipo === 'DEPOSITO_SR' ? '💜' : (tipo === 'PROPINA' ? '🎁'
+      : (tipo === 'RECARGA_FICHAS' ? '🎰' : '📋'))))))));
+    const tipoNombre = esClave ? 'CAMBIO DE CLAVE'
+      : (tipo === 'MOV_BILLETERA' ? 'TRANSFERENCIA ENTRE BILLETERAS'
+      : (tipo === 'CAMBIO_BILLETERA' ? 'CAMBIO DE BILLETERA'
+      : (tipo === 'DEPOSITO_SR' ? 'DEPÓSITO SIN RECLAMAR'
+      : (tipo === 'RECARGA_FICHAS' ? 'RECARGA DE FICHAS' : tipo))));
+    const tipoColor = esRetiro ? '#fb923c' : (esCarga ? '#34d399'
+      : (esClave ? '#facc15' : (esMovChunior ? '#c084fc' : '#38bdf8')));
 
     const estadoCls = ['OK','ACREDITADA','PAGADA','APROBADA'].includes(estado) ? 'green'
       : (esRechazo ? 'red'
@@ -2495,6 +2524,61 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const telClean = telefono ? telefono.replace(/\D/g, '') : '';
     const waLink = telClean ? `https://wa.me/${telClean}` : '';
 
+    // Flujo REAL segun el tipo. Un cambio de clave no pasa por Chunior ni por una billetera;
+    // decir "2. Chunior Pendiente" en esa ficha es informar un paso que no existe.
+    let stepperHtml;
+    if(esClave){
+      stepperHtml = `
+          <div class="sol-step-item done">
+            ✓ 1. Pedido
+            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+          </div>
+          <div class="sol-step-item ${abierta ? 'idle' : 'done'}">
+            ${abierta ? '·' : '✓'} 2. Agente
+            <div style="font-size:9.5px;opacity:.8">${abierta ? 'Sin aplicar' : 'Clave cambiada'}</div>
+          </div>
+          <div class="sol-step-item ${claveNueva ? 'done' : 'idle'}">
+            ${claveNueva ? '✓' : '·'} 3. Clave nueva
+            <div style="font-size:9.5px;opacity:.8">${claveNueva ? esc(claveNueva) : 'Sin definir'}</div>
+          </div>
+          <div class="sol-step-item ${esRechazo ? 'error' : (abierta ? 'idle' : 'done')}">
+            ${esRechazo ? '✕ Rechazada' : (abierta ? '4. En proceso' : '✓ Finalizada')}
+            <div style="font-size:9.5px;opacity:.8">${esc(estado)}</div>
+          </div>`;
+    } else if(esConsulta){
+      stepperHtml = `
+          <div class="sol-step-item done">
+            ✓ 1. Pedido
+            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+          </div>
+          <div class="sol-step-item ${abierta ? 'idle' : 'done'}">
+            ${abierta ? '·' : '✓'} 2. Consultado
+            <div style="font-size:9.5px;opacity:.8">${abierta ? 'Pendiente' : 'Respondida'}</div>
+          </div>
+          <div class="sol-step-item ${esRechazo ? 'error' : (abierta ? 'idle' : 'done')}">
+            ${esRechazo ? '✕ Rechazada' : (abierta ? '3. En proceso' : '✓ Finalizada')}
+            <div style="font-size:9.5px;opacity:.8">${esc(estado)}</div>
+          </div>`;
+    } else {
+      stepperHtml = `
+          <div class="sol-step-item done">
+            ✓ 1. Registro
+            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
+          </div>
+          <div class="sol-step-item ${movId ? 'done' : (saldoPre != null ? 'done' : 'idle')}">
+            ${movId ? '✓' : '·'} 2. Chunior
+            <div style="font-size:9.5px;opacity:.8">${movId ? `N° ${esc(movId)}` : (saldoPre != null ? fmtMoney(saldoPre) : 'Sin N° anotado')}</div>
+          </div>
+          <div class="sol-step-item ${bilNombre ? 'done' : 'idle'}">
+            ${bilNombre ? '✓' : '·'} 3. Billetera
+            <div style="font-size:9.5px;opacity:.8">${esc(bilNombre || 'Sin asignar')}</div>
+          </div>
+          <div class="sol-step-item ${esRechazo ? 'error' : (abierta ? 'idle' : 'done')}">
+            ${esRechazo ? '✕ Rechazada' : (abierta ? '4. En proceso' : '✓ Finalizada')}
+            <div style="font-size:9.5px;opacity:.8">${esc(estado)}</div>
+          </div>`;
+    }
+
     let html = `
       <div class="sol-dossier-head">
         <div class="sol-dossier-top-meta">
@@ -2506,7 +2590,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
         </div>
 
         <div class="sol-dossier-title">
-          <span>${tipoIco} ${esc(tipo)} de <span style="color:${tipoColor}">${fmtMoney(montoDecl)}</span></span>
+          <span>${tipoIco} ${esc(tipoNombre)}${tieneMonto ? ` de <span style="color:${tipoColor}">${fmtMoney(montoDecl)}</span>` : ''}</span>
           <span style="font-size:16px;color:#94a3b8;font-weight:600">· ${esc(usuario || '—')}</span>
         </div>
 
@@ -2536,22 +2620,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       <div class="sol-stepper">
         <div class="sol-stepper-label">Flujo de la Operación</div>
         <div class="sol-stepper-grid">
-          <div class="sol-step-item done">
-            ✓ 1. Registro
-            <div style="font-size:9.5px;opacity:.8">${fmtFecha(fechaCreacion).slice(-8)}</div>
-          </div>
-          <div class="sol-step-item ${movId ? 'done' : (saldoPre != null ? 'done' : 'idle')}">
-            ${movId ? '✓' : '·'} 2. Chunior
-            <div style="font-size:9.5px;opacity:.8">${movId ? `N° ${esc(movId)}` : (saldoPre != null ? fmtMoney(saldoPre) : 'Pendiente')}</div>
-          </div>
-          <div class="sol-step-item ${bilNombre ? 'done' : 'idle'}">
-            ${bilNombre ? '✓' : '·'} 3. Billetera
-            <div style="font-size:9.5px;opacity:.8">${esc(bilNombre || 'Asignada')}</div>
-          </div>
-          <div class="sol-step-item ${esRechazo ? 'error' : (abierta ? 'idle' : 'done')}">
-            ${esRechazo ? '✕ Rechazada' : (abierta ? '4. En proceso' : '✓ Finalizada')}
-            <div style="font-size:9.5px;opacity:.8">${esc(estado)}</div>
-          </div>
+${stepperHtml}
         </div>
       </div>
     `;
@@ -2608,42 +2677,57 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     // Grid de Datos en 2 Columnas
     html += `
       <div class="sol-cotejo-grid">
-        <!-- Columna 1: Datos del Jugador -->
+        <!-- Columna 1: quien / que -->
         <div class="sol-cotejo-card">
           <div class="sol-cotejo-card-title">
-            <span>👤 Datos del Jugador</span>
+            <span>${esMovChunior ? '🧾 Detalle del movimiento' : '👤 Datos del Jugador'}</span>
             <span class="sol-origin-badge ${esManual ? 'manual' : 'portal'}">${esManual ? 'Manual' : 'Portal'}</span>
           </div>
 
           <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">Usuario Casino:</span>
+            <span class="sol-cotejo-lbl">${esMovChunior ? 'Concepto:' : 'Usuario Casino:'}</span>
             <div class="sol-cotejo-val">
               <b style="color:#fff">${esc(usuario || '—')}</b>
+              ${usuario && !esMovChunior ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(usuario)}')">Copiar</button>` : ''}
             </div>
           </div>
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">Titular de cuenta:</span>
-            <div class="sol-cotejo-val">
-              <span>${esc(titular || '—')}</span>
-              ${titular ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(titular)}')">Copiar</button>` : ''}
-            </div>
-          </div>
+          ${esClave ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Clave nueva:</span>
+              <div class="sol-cotejo-val">
+                ${claveNueva
+                  ? `<b class="mono" style="color:#facc15;font-size:15px">${esc(claveNueva)}</b>
+                     <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(claveNueva)}')">Copiar</button>`
+                  : `<span style="color:#f87171">No llegó ninguna clave — se aplica la del sistema</span>`}
+              </div>
+            </div>` : ''}
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">${esRetiro ? 'CBU / CVU / Alias de cobro:' : 'Cuenta de transferencia:'}</span>
-            <div class="sol-cotejo-val" style="color:#6ee7b7">
-              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino || 'No especificado')}</span>
-              ${destino ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">📋 Copiar CBU</button>` : ''}
-            </div>
-          </div>
+          ${esJugador && !esClave ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Titular de cuenta:</span>
+              <div class="sol-cotejo-val">
+                <span>${esc(titular || '—')}</span>
+                ${titular ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(titular)}')">Copiar</button>` : ''}
+              </div>
+            </div>` : ''}
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">Monto de la operación:</span>
-            <div class="sol-cotejo-val" style="color:${tipoColor};font-size:13px;font-weight:900">
-              ${fmtMoney(montoDecl)}
-            </div>
-          </div>
+          ${(esCarga || esRetiro) ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">${esRetiro ? 'CBU / CVU / Alias de cobro:' : 'Cuenta de transferencia:'}</span>
+              <div class="sol-cotejo-val" style="color:#6ee7b7">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino || 'No especificado')}</span>
+                ${destino ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">📋 Copiar CBU</button>` : ''}
+              </div>
+            </div>` : ''}
+
+          ${tieneMonto ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Monto de la operación:</span>
+              <div class="sol-cotejo-val" style="color:${tipoColor};font-size:13px;font-weight:900">
+                ${fmtMoney(montoDecl)}
+              </div>
+            </div>` : ''}
 
           ${telefono ? `
             <div class="sol-cotejo-row">
@@ -2651,6 +2735,14 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
               <div class="sol-cotejo-val">
                 <span>${esc(telefono)}</span>
                 ${waLink ? `<a href="${waLink}" target="_blank" style="color:#22c55e;font-size:11px;text-decoration:none;font-weight:700">📱 WhatsApp</a>` : ''}
+              </div>
+            </div>` : ''}
+
+          ${notas ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Notas de la operación:</span>
+              <div style="background:#0b0f19;border:1px solid #1e293b;border-radius:6px;padding:6px 8px;font-size:11px;color:#f1f5f9">
+                ${esc(notas)}
               </div>
             </div>` : ''}
 
@@ -2671,35 +2763,56 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
             </div>` : ''}
         </div>
 
-        <!-- Columna 2: Billetera y Chunior -->
+        <!-- Columna 2: donde se ejecuto de verdad -->
         <div class="sol-cotejo-card">
           <div class="sol-cotejo-card-title">
-            <span>🏢 Billetera & Chunior</span>
+            <span>${usaChunior ? '🏢 Billetera & Chunior' : '⚙️ Ejecución'}</span>
             <span style="color:#86efac;font-size:9.5px">Auditoría Operativa</span>
           </div>
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">Billetera asignada:</span>
-            <div class="sol-cotejo-val">
-              <b>${esc(bilNombre || 'Sin billetera')}</b>
-              ${bilAlias ? `<span style="color:#94a3b8;font-size:10.5px">(${esc(bilAlias)})</span>` : ''}
+          ${usaChunior ? `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Billetera asignada:</span>
+              <div class="sol-cotejo-val">
+                <b>${esc(bilNombre || 'Sin billetera')}</b>
+                ${bilAlias ? `<span style="color:#94a3b8;font-size:10.5px">(${esc(bilAlias)})</span>` : ''}
+              </div>
             </div>
-          </div>
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">N° Movimiento Chunior:</span>
-            <div class="sol-cotejo-val">
-              ${movId ? `<b class="mono" style="color:#86efac;font-size:13px">N° ${esc(movId)}</b> <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(movId)}')">Copiar</button>` : '<span style="color:#64748b">Sin movimiento</span>'}
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">N° Movimiento Chunior:</span>
+              <div class="sol-cotejo-val">
+                ${movId
+                  ? `<b class="mono" style="color:#86efac;font-size:13px">N° ${esc(movId)}</b>
+                     <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(movId)}')">Copiar</button>`
+                  : `<span style="color:#f59e0b">Sin N° anotado${abierta ? ' — todavía no se ejecutó' : ' — quedó sin registrar'}</span>`}
+              </div>
             </div>
-          </div>
 
-          <div class="sol-cotejo-row">
-            <span class="sol-cotejo-lbl">Saldos en casino:</span>
-            <div class="sol-cotejo-val">
-              <span>Prev: ${saldoPre != null ? fmtMoney(saldoPre) : '—'}</span>
-              <span style="color:#34d399">Post: ${saldoPost != null ? fmtMoney(saldoPost) : '—'}</span>
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Saldos en casino:</span>
+              <div class="sol-cotejo-val">
+                ${(saldoPre != null || saldoPost != null)
+                  ? `<span>Prev: ${saldoPre != null ? fmtMoney(saldoPre) : '—'}</span>
+                     <span style="color:#34d399">Post: ${saldoPost != null ? fmtMoney(saldoPost) : '—'}</span>`
+                  : `<span style="color:#64748b">No se leyeron</span>`}
+              </div>
             </div>
-          </div>
+          ` : `
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Se ejecuta en:</span>
+              <div class="sol-cotejo-val">
+                <b style="color:#facc15">${esClave ? 'Agente / Drex' : 'Panel'}</b>
+              </div>
+            </div>
+
+            <div class="sol-cotejo-row">
+              <span class="sol-cotejo-lbl">Movimiento en Chunior:</span>
+              <div class="sol-cotejo-val">
+                <span style="color:#64748b">No corresponde · ${esClave ? 'un cambio de clave no mueve plata' : 'una consulta no mueve plata'}</span>
+              </div>
+            </div>
+          `}
 
           <div class="sol-cotejo-row">
             <span class="sol-cotejo-lbl">Operador responsable:</span>
@@ -2711,7 +2824,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
           <div class="sol-cotejo-row">
             <span class="sol-cotejo-lbl">Tipo de origen:</span>
             <div class="sol-cotejo-val">
-              <span class="sol-origin-badge ${esManual ? 'manual' : 'portal'}">${esManual ? 'Operación Manual' : 'Portal Clientes'}</span>
+              <span class="sol-origin-badge ${esManual ? 'manual' : 'portal'}">${esManual ? (esMovChunior ? 'Movimiento Chunior' : 'Operación Manual') : 'Portal Clientes'}</span>
             </div>
           </div>
         </div>

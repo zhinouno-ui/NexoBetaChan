@@ -74,6 +74,8 @@ async function cargarHistorial(){
     return;
   }
   _historialData = data || [];
+  // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
+  try{ window._historialData = _historialData; }catch(_e){}
 
   // CRM · Sembrar la base LOCAL de JUGADORES desde historial_ops (FUENTE PRINCIPAL).
   // Muchos usuarios cargaron desde OTRA máquina/turno, o su solicitud del portal ya salió de la

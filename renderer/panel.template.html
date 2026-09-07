@@ -321,18 +321,18 @@
               <!-- Filtros secundarios colapsables / dropdowns -->
               <div class="sol-filter-subbar">
                 <select id="filtroPeriodoSelect" onchange="setHistorialPeriodo(this.value)" class="sol-select" title="Cuánto historial se trae del servidor. Ampliarlo reconsulta la base.">
-                  <option value="TURNO">📥 Turno actual</option>
-                  <option value="HOY">📥 Últimas 24 h</option>
-                  <option value="D7">📥 7 días</option>
-                  <option value="D30">📥 30 días</option>
+                  <option value="TURNO">📥 Traer: turno actual</option>
+                  <option value="HOY">📥 Traer: últimas 24 h</option>
+                  <option value="D7">📥 Traer: 7 días</option>
+                  <option value="D30">📥 Traer: 30 días</option>
                 </select>
                 <span id="histVentanaInfo" class="small" style="align-self:center;color:var(--muted);white-space:nowrap"></span>
                 <select id="filtroTurnoSelect" onchange="setSolicitudesTurno(this.value)" class="sol-select" title="Filtrar por turno operativo">
-                  <option value="ACTUAL">🕒 Turno actual</option>
+                  <option value="ACTUAL">🕒 Ver: turno actual</option>
                   <option value="TM">TM · Mañana (06:00 - 14:00)</option>
                   <option value="TT">TT · Tarde (14:00 - 22:00)</option>
                   <option value="TN">TN · Noche (22:00 - 06:00)</option>
-                  <option value="TODOS">📅 Todo el día</option>
+                  <option value="TODOS">🕒 Ver: todos los turnos</option>
                 </select>
                 <select id="filtroTipo" onchange="renderSolicitudes()" class="sol-select">
                   <option value="">Todos los tipos</option>
