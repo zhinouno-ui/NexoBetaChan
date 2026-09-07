@@ -5,7 +5,10 @@ let _seleccionLote = new Set();
 // Movimientos que se hacen EN Chunior y no nacen de una solicitud del portal. Hasta ahora sólo
 // se veían en el Historial de Inicio y con el tipo crudo en mayúsculas ("DEPOSITO_SR").
 // Medido en 30 días: 666 movimientos de estos, de los cuales el panel mostraba 21.
-const TIPOS_CHUNIOR = ["MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR","PROPINA","RECARGA_FICHAS","RESET_CLAVE","CONSULTA"];
+// Los movimientos que se anotan EN Chunior. CONSULTA y RESET_CLAVE quedan afuera a proposito:
+// no pasan por Chunior (D-38) y las consultas no hace falta ni guardarlas ni filtrarlas —
+// siguen viendose en "Todas" y en el historial de Inicio, que es donde sirven.
+const TIPOS_CHUNIOR = ["MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR","PROPINA","RECARGA_FICHAS"];
 const _ETIQUETA_TIPO = {
   MOV_BILLETERA:    "🔀 TRANSFERENCIA",
   CAMBIO_BILLETERA: "💳 CAMBIO BILLETERA",
@@ -54,8 +57,10 @@ function construirHistorialUnificado(){
     : ((typeof window !== 'undefined' && (window.solicitudes || (window.V154P && window.V154P.solicitudes))) || []);
 
   // Mapas desde historial_ops para relacionar solicitud portal ↔ operación real.
+  const _saldoPrePorSolicitud = {};
   const _saldoPostPorSolicitud = {};
   const _operadorPorSolicitud = {};
+  const _movPorSolicitud = {};
   const _historialIdPorSolicitud = {};
   const _historialIdSet = new Set();
 
@@ -63,8 +68,10 @@ function construirHistorialUnificado(){
     if(h && h.id!=null) _historialIdSet.add(String(h.id));
     if(h.solicitud_id==null) return;
     const k = String(h.solicitud_id);
+    if(h.saldo_pre!=null)  _saldoPrePorSolicitud[k]  = h.saldo_pre;
     if(h.saldo_post!=null) _saldoPostPorSolicitud[k] = h.saldo_post;
     if(h.operador) _operadorPorSolicitud[k] = h.operador;
+    if(h.chunior_movimiento_id) _movPorSolicitud[k] = h.chunior_movimiento_id;
     if(h.id!=null) _historialIdPorSolicitud[k] = h.id;
   });
 
@@ -89,13 +96,17 @@ function construirHistorialUnificado(){
       nombre: s.NOMBRE_COMPLETO||'',
       billetera_nombre: s.BILLETERA_NOMBRE||s.NOMBRE_BILLETERA||'',
       monto: s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO||0,
-      estado: s.ESTADO||'', chunior_movimiento_id: null,
+      estado: s.ESTADO||'', chunior_movimiento_id: _movPorSolicitud[sid] || null,
       billetera_id: s.ID_BILLETERA||null,
       historial_id: histId || null,
       solicitud_id: sid || null,
-      saldo_post: s.SALDO_POST!=null ? s.SALDO_POST : null,
-      saldo_pre: s.SALDO_PRE!=null ? s.SALDO_PRE : null,
-      operador: (s.OPERADOR && s.OPERADOR !== 'panel' ? s.OPERADOR : ''),
+      // Estos tres mapas se armaban arriba y NUNCA se leian: la fila del portal salia
+      // siempre sin saldos y sin operador aunque la operacion real ya estuviera anotada
+      // en historial_ops. Por eso la ficha decia "No se leyeron" en cargas que si los tienen
+      // (84.348 de 85.376 cargas de 30 dias tienen saldo_pre en la base).
+      saldo_post: s.SALDO_POST!=null ? s.SALDO_POST : (_saldoPostPorSolicitud[sid]!=null ? _saldoPostPorSolicitud[sid] : null),
+      saldo_pre: s.SALDO_PRE!=null ? s.SALDO_PRE : (_saldoPrePorSolicitud[sid]!=null ? _saldoPrePorSolicitud[sid] : null),
+      operador: (s.OPERADOR && s.OPERADOR !== 'panel' ? s.OPERADOR : (_operadorPorSolicitud[sid] || '')),
       pendiente: esPendiente(s)
     });
   });
@@ -178,7 +189,19 @@ function _turnoActual(){
   return 'TN';
 }
 
-let _filtroTurno = 'ACTUAL';
+// El turno en curso ES uno de TM/TT/TN: tener ademas una opcion "turno actual" era elegir
+// dos veces lo mismo. Ahora arranca en el turno que corre, marcado "· ahora" en la lista.
+let _filtroTurno = _turnoActual();
+function _pintarOpcionesTurno(){
+  const sel = document.getElementById("filtroTurnoSelect");
+  if(!sel) return;
+  const hoy = _turnoActual();
+  Array.prototype.forEach.call(sel.options, function(op){
+    const base = op.textContent.replace(/\s*·\s*ahora$/, "");
+    op.textContent = (op.value === hoy) ? (base + " · ahora") : base;
+  });
+  if(sel.value !== _filtroTurno) sel.value = _filtroTurno;
+}
 
 window.setSolicitudesTurno = function(turnoKey){
   _filtroTurno = turnoKey || 'ACTUAL';
@@ -322,9 +345,9 @@ window.limpiarFiltrosSolicitudes = function(){
     const el = document.getElementById(id);
     if(el) el.value = "";
   });
+  _filtroTurno = _turnoActual();
   const selTurno = document.getElementById("filtroTurnoSelect");
-  if(selTurno) selTurno.value = "ACTUAL";
-  _filtroTurno = "ACTUAL";
+  if(selTurno) selTurno.value = _filtroTurno;
   window._histBusquedaServidor = [];
   const tabTodas = document.getElementById("tabFiltroTodas");
   if(tabTodas) tabTodas.click();
@@ -549,6 +572,7 @@ function renderHistorialUnificado(){
   renderSolicitudesKpis(listaCompleta);
 
   const turnoEfectivo = _filtroTurno === 'ACTUAL' ? _turnoActual() : _filtroTurno;
+  _pintarOpcionesTurno();
   let lista = listaCompleta.slice();
 
   // Filtrar por turno. Con una busqueda del servidor activa NO se filtra: el operador pidio

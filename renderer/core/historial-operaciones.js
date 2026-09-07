@@ -8,6 +8,65 @@ function pcAliasesHist(){
   for(const k in grupos){ if(grupos[k].includes(v)) return grupos[k]; }
   return v ? [v] : ["P1"];
 }
+// ── Recuperar el N° de movimiento de una operación que quedó sin él ──────────
+// Medido: 1.172 CARGAS y 199 RETIROS de 30 días sin chunior_movimiento_id. La operación se
+// hizo, lo que falló fue leer el número del mensaje de éxito de Chunior. El motor para
+// encontrarlo ya existía —verificarMovimientoEnChunior busca en la lista real por usuario,
+// cruza el monto y descarta los N° ya vinculados a otra fila— pero sólo se usaba dentro de
+// "Reintentar". Acá se puede pedir desde la ficha, sin reintentar nada ni tocar saldos.
+window.expedienteBuscarMovChunior = async function(historialId, usuario, monto, fechaIso){
+  historialId = String(historialId||'').trim();
+  usuario = String(usuario||'').trim();
+  if(!historialId || !/^\d+$/.test(historialId)){
+    toast('Esta fila no tiene operación registrada: no hay dónde guardar el N°.', 'yellow'); return;
+  }
+  if(!usuario){ toast('Sin usuario no se puede buscar el movimiento.', 'yellow'); return; }
+  if(typeof verificarMovimientoEnChunior !== 'function'){ toast('Falta el buscador de Chunior.', 'red'); return; }
+  if(!window.chunior){ toast('Ventana de Chunior no disponible.', 'red'); return; }
+
+  const tOpMs = fechaIso ? new Date(fechaIso).getTime() : null;
+  // El horario desambigua entre varias cargas iguales del mismo usuario. Para una operación
+  // del momento ±2 min alcanza; para una vieja se abre a ±10 min porque el desfase entre el
+  // created_at nuestro y la hora que registró Chunior pesa más cuanto más atrás se busca.
+  const reciente = tOpMs != null && (Date.now() - tOpMs) < 2*60*60*1000;
+  const ventana = reciente ? 2*60*1000 : 10*60*1000;
+
+  // No reclamar un N° que ya es de otra operación.
+  const otros = ((typeof _historialData !== 'undefined' && _historialData) || [])
+    .filter(function(x){ return String(x.id) !== historialId && x.chunior_movimiento_id; })
+    .map(function(x){ return String(x.chunior_movimiento_id); });
+
+  toast('Buscando el movimiento de '+usuario+' en Chunior...', 'blue');
+  let r;
+  try{
+    r = await verificarMovimientoEnChunior(usuario, Number(monto||0), tOpMs, ventana, otros);
+  }catch(e){
+    toast('Error buscando en Chunior: '+(e.message||e), 'red'); return;
+  }
+
+  if(r && r.vinculadoAOtro){
+    toast('Encontré el N° '+(r.idVinculado||'?')+' pero ya está usado por otra operación. Revisalo a mano.', 'orange');
+    return;
+  }
+  if(!r || !r.existe || !r.movimientoId){
+    toast('No apareció. Puede estar más atrás de las 40 filas que lee Chunior, o anotado con otro monto.', 'orange');
+    return;
+  }
+
+  try{
+    const { error } = await supabaseClient.from('historial_ops')
+      .update({ chunior_movimiento_id: String(r.movimientoId) })
+      .eq('id', Number(historialId));
+    if(error) throw error;
+  }catch(e){
+    toast('Lo encontré (N° '+r.movimientoId+') pero no pude guardarlo: '+(e.message||e), 'red'); return;
+  }
+
+  toast('✓ Movimiento N° '+r.movimientoId+' vinculado a la operación.', 'green');
+  try{ await cargarHistorial(); }catch(_e){}
+  try{ renderHistorialUnificado(); }catch(_e){}
+};
+
 // ── Ventana del historial ────────────────────────────────────────────────────
 // Antes esto era .limit(200) fijo. Medido contra la base, 200 filas son:
 //   P4 9,1 h · P2 9,3 h · P3 10,0 h · P7 11,8 h · P6 13,5 h · P5 30,9 h

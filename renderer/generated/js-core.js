@@ -4642,6 +4642,65 @@ function pcAliasesHist(){
   for(const k in grupos){ if(grupos[k].includes(v)) return grupos[k]; }
   return v ? [v] : ["P1"];
 }
+// ── Recuperar el N° de movimiento de una operación que quedó sin él ──────────
+// Medido: 1.172 CARGAS y 199 RETIROS de 30 días sin chunior_movimiento_id. La operación se
+// hizo, lo que falló fue leer el número del mensaje de éxito de Chunior. El motor para
+// encontrarlo ya existía —verificarMovimientoEnChunior busca en la lista real por usuario,
+// cruza el monto y descarta los N° ya vinculados a otra fila— pero sólo se usaba dentro de
+// "Reintentar". Acá se puede pedir desde la ficha, sin reintentar nada ni tocar saldos.
+window.expedienteBuscarMovChunior = async function(historialId, usuario, monto, fechaIso){
+  historialId = String(historialId||'').trim();
+  usuario = String(usuario||'').trim();
+  if(!historialId || !/^\d+$/.test(historialId)){
+    toast('Esta fila no tiene operación registrada: no hay dónde guardar el N°.', 'yellow'); return;
+  }
+  if(!usuario){ toast('Sin usuario no se puede buscar el movimiento.', 'yellow'); return; }
+  if(typeof verificarMovimientoEnChunior !== 'function'){ toast('Falta el buscador de Chunior.', 'red'); return; }
+  if(!window.chunior){ toast('Ventana de Chunior no disponible.', 'red'); return; }
+
+  const tOpMs = fechaIso ? new Date(fechaIso).getTime() : null;
+  // El horario desambigua entre varias cargas iguales del mismo usuario. Para una operación
+  // del momento ±2 min alcanza; para una vieja se abre a ±10 min porque el desfase entre el
+  // created_at nuestro y la hora que registró Chunior pesa más cuanto más atrás se busca.
+  const reciente = tOpMs != null && (Date.now() - tOpMs) < 2*60*60*1000;
+  const ventana = reciente ? 2*60*1000 : 10*60*1000;
+
+  // No reclamar un N° que ya es de otra operación.
+  const otros = ((typeof _historialData !== 'undefined' && _historialData) || [])
+    .filter(function(x){ return String(x.id) !== historialId && x.chunior_movimiento_id; })
+    .map(function(x){ return String(x.chunior_movimiento_id); });
+
+  toast('Buscando el movimiento de '+usuario+' en Chunior...', 'blue');
+  let r;
+  try{
+    r = await verificarMovimientoEnChunior(usuario, Number(monto||0), tOpMs, ventana, otros);
+  }catch(e){
+    toast('Error buscando en Chunior: '+(e.message||e), 'red'); return;
+  }
+
+  if(r && r.vinculadoAOtro){
+    toast('Encontré el N° '+(r.idVinculado||'?')+' pero ya está usado por otra operación. Revisalo a mano.', 'orange');
+    return;
+  }
+  if(!r || !r.existe || !r.movimientoId){
+    toast('No apareció. Puede estar más atrás de las 40 filas que lee Chunior, o anotado con otro monto.', 'orange');
+    return;
+  }
+
+  try{
+    const { error } = await supabaseClient.from('historial_ops')
+      .update({ chunior_movimiento_id: String(r.movimientoId) })
+      .eq('id', Number(historialId));
+    if(error) throw error;
+  }catch(e){
+    toast('Lo encontré (N° '+r.movimientoId+') pero no pude guardarlo: '+(e.message||e), 'red'); return;
+  }
+
+  toast('✓ Movimiento N° '+r.movimientoId+' vinculado a la operación.', 'green');
+  try{ await cargarHistorial(); }catch(_e){}
+  try{ renderHistorialUnificado(); }catch(_e){}
+};
+
 // ── Ventana del historial ────────────────────────────────────────────────────
 // Antes esto era .limit(200) fijo. Medido contra la base, 200 filas son:
 //   P4 9,1 h · P2 9,3 h · P3 10,0 h · P7 11,8 h · P6 13,5 h · P5 30,9 h
@@ -5181,7 +5240,10 @@ let _seleccionLote = new Set();
 // Movimientos que se hacen EN Chunior y no nacen de una solicitud del portal. Hasta ahora sólo
 // se veían en el Historial de Inicio y con el tipo crudo en mayúsculas ("DEPOSITO_SR").
 // Medido en 30 días: 666 movimientos de estos, de los cuales el panel mostraba 21.
-const TIPOS_CHUNIOR = ["MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR","PROPINA","RECARGA_FICHAS","RESET_CLAVE","CONSULTA"];
+// Los movimientos que se anotan EN Chunior. CONSULTA y RESET_CLAVE quedan afuera a proposito:
+// no pasan por Chunior (D-38) y las consultas no hace falta ni guardarlas ni filtrarlas —
+// siguen viendose en "Todas" y en el historial de Inicio, que es donde sirven.
+const TIPOS_CHUNIOR = ["MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR","PROPINA","RECARGA_FICHAS"];
 const _ETIQUETA_TIPO = {
   MOV_BILLETERA:    "🔀 TRANSFERENCIA",
   CAMBIO_BILLETERA: "💳 CAMBIO BILLETERA",
@@ -5230,8 +5292,10 @@ function construirHistorialUnificado(){
     : ((typeof window !== 'undefined' && (window.solicitudes || (window.V154P && window.V154P.solicitudes))) || []);
 
   // Mapas desde historial_ops para relacionar solicitud portal ↔ operación real.
+  const _saldoPrePorSolicitud = {};
   const _saldoPostPorSolicitud = {};
   const _operadorPorSolicitud = {};
+  const _movPorSolicitud = {};
   const _historialIdPorSolicitud = {};
   const _historialIdSet = new Set();
 
@@ -5239,8 +5303,10 @@ function construirHistorialUnificado(){
     if(h && h.id!=null) _historialIdSet.add(String(h.id));
     if(h.solicitud_id==null) return;
     const k = String(h.solicitud_id);
+    if(h.saldo_pre!=null)  _saldoPrePorSolicitud[k]  = h.saldo_pre;
     if(h.saldo_post!=null) _saldoPostPorSolicitud[k] = h.saldo_post;
     if(h.operador) _operadorPorSolicitud[k] = h.operador;
+    if(h.chunior_movimiento_id) _movPorSolicitud[k] = h.chunior_movimiento_id;
     if(h.id!=null) _historialIdPorSolicitud[k] = h.id;
   });
 
@@ -5265,13 +5331,17 @@ function construirHistorialUnificado(){
       nombre: s.NOMBRE_COMPLETO||'',
       billetera_nombre: s.BILLETERA_NOMBRE||s.NOMBRE_BILLETERA||'',
       monto: s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO||0,
-      estado: s.ESTADO||'', chunior_movimiento_id: null,
+      estado: s.ESTADO||'', chunior_movimiento_id: _movPorSolicitud[sid] || null,
       billetera_id: s.ID_BILLETERA||null,
       historial_id: histId || null,
       solicitud_id: sid || null,
-      saldo_post: s.SALDO_POST!=null ? s.SALDO_POST : null,
-      saldo_pre: s.SALDO_PRE!=null ? s.SALDO_PRE : null,
-      operador: (s.OPERADOR && s.OPERADOR !== 'panel' ? s.OPERADOR : ''),
+      // Estos tres mapas se armaban arriba y NUNCA se leian: la fila del portal salia
+      // siempre sin saldos y sin operador aunque la operacion real ya estuviera anotada
+      // en historial_ops. Por eso la ficha decia "No se leyeron" en cargas que si los tienen
+      // (84.348 de 85.376 cargas de 30 dias tienen saldo_pre en la base).
+      saldo_post: s.SALDO_POST!=null ? s.SALDO_POST : (_saldoPostPorSolicitud[sid]!=null ? _saldoPostPorSolicitud[sid] : null),
+      saldo_pre: s.SALDO_PRE!=null ? s.SALDO_PRE : (_saldoPrePorSolicitud[sid]!=null ? _saldoPrePorSolicitud[sid] : null),
+      operador: (s.OPERADOR && s.OPERADOR !== 'panel' ? s.OPERADOR : (_operadorPorSolicitud[sid] || '')),
       pendiente: esPendiente(s)
     });
   });
@@ -5354,7 +5424,19 @@ function _turnoActual(){
   return 'TN';
 }
 
-let _filtroTurno = 'ACTUAL';
+// El turno en curso ES uno de TM/TT/TN: tener ademas una opcion "turno actual" era elegir
+// dos veces lo mismo. Ahora arranca en el turno que corre, marcado "· ahora" en la lista.
+let _filtroTurno = _turnoActual();
+function _pintarOpcionesTurno(){
+  const sel = document.getElementById("filtroTurnoSelect");
+  if(!sel) return;
+  const hoy = _turnoActual();
+  Array.prototype.forEach.call(sel.options, function(op){
+    const base = op.textContent.replace(/\s*·\s*ahora$/, "");
+    op.textContent = (op.value === hoy) ? (base + " · ahora") : base;
+  });
+  if(sel.value !== _filtroTurno) sel.value = _filtroTurno;
+}
 
 window.setSolicitudesTurno = function(turnoKey){
   _filtroTurno = turnoKey || 'ACTUAL';
@@ -5498,9 +5580,9 @@ window.limpiarFiltrosSolicitudes = function(){
     const el = document.getElementById(id);
     if(el) el.value = "";
   });
+  _filtroTurno = _turnoActual();
   const selTurno = document.getElementById("filtroTurnoSelect");
-  if(selTurno) selTurno.value = "ACTUAL";
-  _filtroTurno = "ACTUAL";
+  if(selTurno) selTurno.value = _filtroTurno;
   window._histBusquedaServidor = [];
   const tabTodas = document.getElementById("tabFiltroTodas");
   if(tabTodas) tabTodas.click();
@@ -5725,6 +5807,7 @@ function renderHistorialUnificado(){
   renderSolicitudesKpis(listaCompleta);
 
   const turnoEfectivo = _filtroTurno === 'ACTUAL' ? _turnoActual() : _filtroTurno;
+  _pintarOpcionesTurno();
   let lista = listaCompleta.slice();
 
   // Filtrar por turno. Con una busqueda del servidor activa NO se filtra: el operador pidio

@@ -104,7 +104,9 @@ test('la carga del portal sigue mostrando todo lo suyo', () => {
 
   assert.match(html, /N° Movimiento Chunior/);
   assert.match(html, /9614001/);
-  assert.match(html, /Cuenta de transferencia/);
+  // La cuenta declarada de esta carga (ali.as.mp) NO es la billetera asignada
+  // (SALVATIERRA X): eso es justo lo que hay que avisar.
+  assert.match(html, /Transfirió a otra billetera/);
   assert.match(html, /Monto de la operación/);
   assert.match(html, /Saldos en casino/);
   assert.ok(!html.includes('Clave nueva'));
@@ -131,4 +133,62 @@ test('la clave manual se lee de las notas del historial', () => {
   const html = construirApi().construirDossierCompletoHtml(manual);
 
   assert.match(html, /zorro77/, 'la clave está en las notas y hay que mostrarla');
+});
+
+test('si la cuenta declarada ES la billetera asignada, no se repite el dato', () => {
+  // Antes la ficha mostraba "Cuenta de transferencia: SALVATIERRA X · paola.111.olmo.mp" y
+  // justo al lado "Billetera asignada: SALVATIERRA X (paola.111.olmo.mp)": el mismo dato dos
+  // veces. En una carga el destino declarado ES nuestra billetera; sólo interesa si difiere.
+  const misma = JSON.parse(JSON.stringify(CARGA));
+  misma._raw.DESTINO = 'SALVATIERRA X · paola.111.olmo.mp';
+  misma._raw.METADATA = { billetera_alias: 'paola.111.olmo.mp' };
+  const html = construirApi().construirDossierCompletoHtml(misma);
+
+  assert.ok(!html.includes('Transfirió a otra billetera'), 'es la misma billetera, no hay nada que avisar');
+  assert.ok(!html.includes('Cuenta de transferencia'), 'no se repite el dato de la billetera');
+  assert.match(html, /Billetera asignada/, 'la billetera sí se muestra, una vez');
+});
+
+test('la metadata vacía no dibuja la caja de contexto técnico', () => {
+  const html = construirApi().construirDossierCompletoHtml(DEPOSITO_SR);
+  assert.ok(!html.includes('Contexto técnico'), 'un "{}" ocupa lugar y no dice nada');
+
+  const conMeta = JSON.parse(JSON.stringify(CARGA));
+  conMeta._raw.METADATA = { retiro_parcial: { total: 130000 } };
+  const html2 = construirApi().construirDossierCompletoHtml(conMeta);
+  assert.match(html2, /Contexto técnico/, 'con datos adentro sí se muestra');
+});
+
+test('una operación cerrada sin N° ofrece buscarlo en Chunior', () => {
+  const sinN = {
+    fuente: 'OPERACION', id: 4321, tipo: 'CARGA', usuario: 'pruebaxx', monto: 5000,
+    estado: 'OK', fecha: '2026-09-06T12:20:00Z', chunior_movimiento_id: null,
+    billetera_nombre: 'SALVATIERRA X', historial_id: 4321,
+    _raw: {
+      id: 4321, tipo: 'CARGA', usuario: 'pruebaxx', monto: 5000, estado: 'OK',
+      origen: 'PORTAL', created_at: '2026-09-06T12:20:00Z', billetera_nombre: 'SALVATIERRA X'
+    }
+  };
+  const html = construirApi().construirDossierCompletoHtml(sinN);
+
+  assert.match(html, /Buscar en Chunior/, 'la operación se hizo: falta el N°, hay que poder ir a buscarlo');
+  assert.match(html, /expedienteBuscarMovChunior\('4321'/, 'tiene que saber en qué fila guardar el N°');
+});
+
+test('una operación todavía abierta no ofrece buscar un N° que aún no existe', () => {
+  const abierta = {
+    fuente: 'SOLICITUD', id: '187988', tipo: 'CARGA', usuario: 'pruebaxx', monto: 5000,
+    estado: 'EN_REVISION', fecha: '2026-09-06T12:20:00Z', chunior_movimiento_id: null,
+    billetera_nombre: 'SALVATIERRA X',
+    _raw: {
+      ID: 187988, TIPO: 'CARGA', USUARIO: 'pruebaxx', ESTADO: 'EN_REVISION',
+      MONTO_DECLARADO: 5000, BILLETERA_NOMBRE: 'SALVATIERRA X',
+      FECHA_CREACION: '2026-09-06T12:20:00Z', METADATA: {}
+    }
+  };
+  const html = construirApi().construirDossierCompletoHtml(abierta);
+
+  assert.ok(!html.includes('Buscar en Chunior'), 'todavía no se ejecutó: no hay nada que buscar');
+  assert.match(html, /Todavía no se ejecutó/);
+  assert.match(html, /Se leen al ejecutar/, 'los saldos no faltan, todavía no se leyeron');
 });

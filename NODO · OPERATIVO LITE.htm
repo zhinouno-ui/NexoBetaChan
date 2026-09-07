@@ -328,7 +328,6 @@
                 </select>
                 <span id="histVentanaInfo" class="small" style="align-self:center;color:var(--muted);white-space:nowrap"></span>
                 <select id="filtroTurnoSelect" onchange="setSolicitudesTurno(this.value)" class="sol-select" title="Filtrar por turno operativo">
-                  <option value="ACTUAL">🕒 Ver: turno actual</option>
                   <option value="TM">TM · Mañana (06:00 - 14:00)</option>
                   <option value="TT">TT · Tarde (14:00 - 22:00)</option>
                   <option value="TN">TN · Noche (22:00 - 06:00)</option>
@@ -345,7 +344,6 @@
                   <option value="PROPINA">🎁 Propina</option>
                   <option value="RECARGA_FICHAS">🎰 Recarga de fichas</option>
                   <option value="RESET_CLAVE">🔑 Cambio de clave</option>
-                  <option value="CONSULTA">🔍 Consulta</option>
                 </select>
                 <select id="filtroEstado" onchange="renderSolicitudes()" class="sol-select">
                   <option value="">Todos los estados</option>

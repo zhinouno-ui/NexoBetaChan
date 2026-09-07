@@ -513,7 +513,19 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const usaChunior   = esCarga || esRetiro || esMovChunior;
     const esJugador    = esCarga || esRetiro || esClave || esConsulta;
 
+    // La ficha mostraba "Cuenta de transferencia" y "Billetera asignada" con el MISMO valor:
+    // en una carga el destino declarado es NUESTRA billetera, asi que se leia dos veces lo
+    // mismo. El dato que sirve es cuando NO coinciden: ahi el jugador transfirio a otra
+    // billetera nuestra y el operador, que solo ve la activa, no tiene como enterarse.
+    const _normCuenta = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const _huellasBilletera = [bilNombre, bilAlias, bilCbu].map(_normCuenta).filter(Boolean);
+    const _destinoNorm = _normCuenta(destino);
+    const destinoDifiere = !!_destinoNorm && _huellasBilletera.length > 0 &&
+      !_huellasBilletera.some(function(h){ return h === _destinoNorm || h.indexOf(_destinoNorm) !== -1 || _destinoNorm.indexOf(h) !== -1; });
+
     const notas = String(s.notas || s.NOTAS || (meta && meta.notas) || '').trim();
+    // Fila de historial_ops donde hay que escribir el N si lo encontramos en Chunior.
+    const histIdParaMov = String(s.historial_id || (itemUnified && itemUnified.historial_id) || (!itemUnified || itemUnified.fuente === 'OPERACION' ? (s.id || '') : '') || '');
     // La clave nueva viaja en el metadata del portal o, en las manuales, dentro de notas
     // como "clave → xxxx" (asi la escribe registrarEnHistorial).
     const claveNueva = String(s.PASSWORD_NUEVO || (meta && meta.password_nuevo) || '').trim()
@@ -563,7 +575,12 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
       : (['ERROR','ERROR_OPERATIVO'].includes(estado) ? 'yellow' : 'blue'));
 
     const tomada = ['EN_REVISION', 'EN_PROCESO'].includes(estado);
-    const abierta = !['ACREDITADA', 'PAGADA', 'APROBADA', 'RECHAZADA', 'CANCELADA'].includes(estado);
+    // OK y COMPLETADA faltaban en esta lista. Son los estados finales de historial_ops (los
+    // manuales y los automaticos cierran en OK, no en ACREDITADA), asi que toda operacion
+    // manual terminada figuraba "4. En proceso" y decia "todavia no se ejecuto" donde faltaba
+    // el N de Chunior. El badge verde ya las contaba como cerradas: quedaban las dos cosas
+    // contradiciendose en la misma ficha.
+    const abierta = !['ACREDITADA', 'PAGADA', 'APROBADA', 'RECHAZADA', 'CANCELADA', 'OK', 'COMPLETADA', 'REVERTIDA'].includes(estado);
 
     // 1. Cabecera y Botones de Acción
     let actionsHtml = '';
@@ -783,12 +800,12 @@ ${stepperHtml}
               </div>
             </div>` : ''}
 
-          ${(esCarga || esRetiro) ? `
+          ${(esCarga || esRetiro) && destinoDifiere ? `
             <div class="sol-cotejo-row">
-              <span class="sol-cotejo-lbl">${esRetiro ? 'CBU / CVU / Alias de cobro:' : 'Cuenta de transferencia:'}</span>
-              <div class="sol-cotejo-val" style="color:#6ee7b7">
-                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino || 'No especificado')}</span>
-                ${destino ? `<button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">📋 Copiar CBU</button>` : ''}
+              <span class="sol-cotejo-lbl" style="color:#f59e0b">${esRetiro ? '⚠ Cobra en otra cuenta:' : '⚠ Transfirió a otra billetera:'}</span>
+              <div class="sol-cotejo-val" style="color:#fbbf24;border-color:#f59e0b55">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(destino)}</span>
+                <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(destino)}')">Copiar</button>
               </div>
             </div>` : ''}
 
@@ -856,19 +873,26 @@ ${stepperHtml}
                 ${movId
                   ? `<b class="mono" style="color:#86efac;font-size:13px">N° ${esc(movId)}</b>
                      <button type="button" class="sol-copy-btn" onclick="expedienteCopiarTexto('${esc(movId)}')">Copiar</button>`
-                  : `<span style="color:#f59e0b">Sin N° anotado${abierta ? ' — todavía no se ejecutó' : ' — quedó sin registrar'}</span>`}
+                  : (abierta
+                      ? `<span style="color:#64748b">Todavía no se ejecutó</span>`
+                      : `<span style="color:#f59e0b">Sin N° anotado</span>
+                         <button type="button" class="mini-btn yellow" style="font-size:10.5px"
+                           onclick="expedienteBuscarMovChunior('${esc(histIdParaMov)}','${esc(usuario)}','${montoDecl}','${esc(fechaCreacion||'')}')"
+                           title="Busca el movimiento en Chunior por usuario, monto y horario (±2 min) y lo guarda">🔎 Buscar en Chunior</button>`)}
               </div>
             </div>
 
-            <div class="sol-cotejo-row">
-              <span class="sol-cotejo-lbl">Saldos en casino:</span>
-              <div class="sol-cotejo-val">
-                ${(saldoPre != null || saldoPost != null)
-                  ? `<span>Prev: ${saldoPre != null ? fmtMoney(saldoPre) : '—'}</span>
-                     <span style="color:#34d399">Post: ${saldoPost != null ? fmtMoney(saldoPost) : '—'}</span>`
-                  : `<span style="color:#64748b">No se leyeron</span>`}
-              </div>
-            </div>
+            ${(esCarga || esRetiro) ? `
+              <div class="sol-cotejo-row">
+                <span class="sol-cotejo-lbl">Saldos en casino:</span>
+                <div class="sol-cotejo-val">
+                  ${(saldoPre != null || saldoPost != null)
+                    ? `<span>Prev: ${saldoPre != null ? fmtMoney(saldoPre) : '—'}</span>
+                       <span style="color:#34d399">Post: ${saldoPost != null ? fmtMoney(saldoPost) : '—'}</span>`
+                    : (abierta ? `<span style="color:#64748b">Se leen al ejecutar</span>`
+                               : `<span style="color:#f59e0b">No quedaron registrados</span>`)}
+                </div>
+              </div>` : ''}
           ` : `
             <div class="sol-cotejo-row">
               <span class="sol-cotejo-lbl">Se ejecuta en:</span>
@@ -901,11 +925,12 @@ ${stepperHtml}
         </div>
       </div>
 
-      <!-- Metadatos Técnicos Colapsables -->
-      <details style="background:#0b0f19;border:1px solid #1e293b;border-radius:10px;padding:8px 12px;font-size:11px;color:#94a3b8">
-        <summary style="cursor:pointer;font-weight:700;color:#cbd5e1">🔧 Contexto técnico (Metadata)</summary>
-        <pre class="exp-code-box" style="margin-top:8px">${esc(JSON.stringify(meta, null, 2))}</pre>
-      </details>
+      <!-- Metadatos Técnicos: solo si hay algo adentro. Un "{}" ocupa lugar y no dice nada. -->
+      ${(meta && typeof meta === "object" && Object.keys(meta).length) ? `
+        <details style="background:#0b0f19;border:1px solid #1e293b;border-radius:10px;padding:8px 12px;font-size:11px;color:#94a3b8">
+          <summary style="cursor:pointer;font-weight:700;color:#cbd5e1">🔧 Contexto técnico (Metadata)</summary>
+          <pre class="exp-code-box" style="margin-top:8px">${esc(JSON.stringify(meta, null, 2))}</pre>
+        </details>` : ''}
     `;
 
     return html;
