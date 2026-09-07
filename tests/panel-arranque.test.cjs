@@ -185,3 +185,42 @@ test('una respuesta vieja no pisa a la nueva (era el "Cargando…" eterno)', asy
   assert.ok(!/viejo/.test(caja.innerHTML));
   assert.ok(!/Buscando/.test(caja.innerHTML), 'y no puede quedar en "Buscando…"');
 });
+
+test('cada fila de la lista dice por qué está ahí', async () => {
+  // Buscar un teléfono y ver un usuario que no se parece en nada obliga a adivinar si matcheó
+  // por teléfono, por titular, o si es basura. La fila tiene que decirlo.
+  const filas = [
+    { usuario: 'pruebaxx',    telefono: '1134970581', titular: null,  motivo: 'exacto',   total: 4 },
+    { usuario: 'vaporprueba', telefono: '1123568990', titular: null,  motivo: 'usuario',  total: 4 },
+    { usuario: 'noex90',      telefono: '1123569887', titular: null,  motivo: 'telefono', total: 4 },
+    { usuario: 'flowerr',     telefono: '1133826956', titular: 'Pepe', motivo: 'titular', total: 4 }
+  ];
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: filas, error: null }) });
+
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'crmResultados' ? caja : null);
+
+  sb._crmBusq.q = 'prueba';
+  await sb.crmBuscarServidor();
+
+  assert.match(caja.innerHTML, /🎯 exacto/);
+  assert.match(caja.innerHTML, /👤 usuario/);
+  assert.match(caja.innerHTML, /📱 teléfono/);
+  assert.match(caja.innerHTML, /🧾 titular/);
+  assert.match(caja.innerHTML, /Coinciden con/, 'y la lista dice qué está mostrando');
+});
+
+test('sin búsqueda la lista aclara que son las últimas altas, no "todos"', async () => {
+  const sb = arrancarPanel({
+    rpc: () => Promise.resolve({ data: [{ usuario: 'nuevo1', motivo: 'reciente', total: 6635 }], error: null })
+  });
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'crmResultados' ? caja : null);
+
+  sb._crmBusq.q = '';
+  await sb.crmBuscarServidor();
+
+  assert.match(caja.innerHTML, /Últimas altas/, 'no es "todos": conviene decirlo');
+  assert.match(caja.innerHTML, /🆕 alta reciente/);
+  assert.match(caja.innerHTML, /de 6\.635/, 'y cuántos hay detrás');
+});

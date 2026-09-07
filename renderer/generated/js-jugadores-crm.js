@@ -190,7 +190,9 @@
       exacto:   ['🎯 exacto',   '#22c55e', 'El usuario es exactamente lo que buscaste'],
       usuario:  ['👤 usuario',  '#7cc4ff', 'El nombre de usuario contiene lo que buscaste'],
       telefono: ['📱 teléfono', '#a78bfa', 'Mismo teléfono (comparado por los últimos 10 dígitos)'],
-      titular:  ['🧾 titular',  '#fbbf24', 'El titular de la cuenta contiene lo que buscaste']
+      titular:  ['🧾 titular',  '#fbbf24', 'El titular de la cuenta contiene lo que buscaste'],
+      reciente: ['🆕 alta reciente', '#94a3b8', 'Sin búsqueda: se muestran las últimas altas de la oficina'],
+      otro:     ['· coincidencia', '#94a3b8', 'Coincide, pero no por usuario, teléfono ni titular']
     }[String(m||'').toLowerCase()];
     if(!M) return '';
     return '<span title="'+M[2]+'" style="background:'+M[1]+'22;color:'+M[1]+';border:1px solid '+M[1]
@@ -1205,10 +1207,17 @@ window.crmBuscarDebounce=function(){
       return;
     }
 
+    // Encabezado que dice qué es esta lista. Sin búsqueda no es "todos": son las últimas
+    // altas, y conviene decirlo antes de que alguien saque conclusiones de lo que ve.
+    const encabezado = st.q
+      ? 'Coinciden con «<b>' + escapeHtml(st.q) + '</b>» · ordenadas por qué tan fuerte es la coincidencia'
+      : 'Últimas altas de tu oficina · escribí arriba para buscar en todas';
+
     const hayMas = st.total != null && st.total > filas.length;
 
     box.innerHTML =
-      '<div class="crm-table-wrap"><table><thead><tr>'
+      '<div class="small" style="color:var(--muted);margin-bottom:8px">' + encabezado + '</div>'
+      + '<div class="crm-table-wrap"><table><thead><tr>'
       + '<th>Jugador</th><th>Teléfono</th><th>Titular</th><th>Alta</th><th>Acciones</th>'
       + '</tr></thead><tbody>'
       + filas.map(function(f){
@@ -1218,7 +1227,10 @@ window.crmBuscarDebounce=function(){
           const alta = f.created_at ? new Date(f.created_at).toLocaleDateString("es-AR") : "—";
           const estado = String(f.estado_vinculo || "").toUpperCase();
           return '<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador(\'' + escapeHtml(uEsc) + '\')" title="Abrir perfil completo">'
-            + '<td><b>' + escapeHtml(u) + '</b>'
+            // Por qué entró esta fila. Sin esto, buscar un teléfono y ver un usuario que no
+            // se parece en nada obliga a adivinar si matcheó por teléfono, por titular o si
+            // es basura.
+            + '<td>' + _motivoBadge(f.motivo) + '<b>' + escapeHtml(u) + '</b>'
               + (f.app_instalada ? ' <span title="App instalada">📱</span>' : '')
               + (estado && estado !== "VINCULADO" ? ' <span class="small" style="color:#f59e0b">' + escapeHtml(estado) + '</span>' : '')
             + '</td>'

@@ -1196,3 +1196,48 @@ Dos veces el mismo problema es un problema de diseño del test, no un descuido. 
 mañana se agrega uno, el test lo toma solo.
 
 Suite: 73/73.
+---
+
+## D-43 · La lista no decía por qué aparecía cada jugador
+
+Juan: *«y ahora que hipotéticamente se ve una lista de usuarios, estaría bueno —y me juego las
+pelotas que no hiciste— mostrar la razón por la cual aparecen en la propia lista»*. No lo había
+hecho.
+
+El badge de motivo ya existía: se hizo en **D-31** para la otra tabla del CRM, la que arma
+`panel_crm_perfil_v1`. La lista nueva de `panel_crm_vinculos_listar` no devolvía motivo, así que
+salía sin él.
+
+**Por qué importa**: buscás un teléfono, aparece un usuario cuyo nombre no se parece en nada, y
+no hay forma de saber si entró por el teléfono, por el titular, o si es ruido. Con `limit 10` eso
+es peor todavía, porque no ves el resto para deducirlo.
+
+### Qué se hizo
+
+La RPC devuelve `motivo` por fila:
+
+| Motivo | Cuándo |
+|---|---|
+| `exacto` | el usuario es **igual** a lo buscado |
+| `usuario` | el nombre de usuario contiene lo buscado |
+| `telefono` | mismo teléfono, comparando los **últimos 10 dígitos** (D-29) |
+| `titular` | el titular contiene lo buscado |
+| `reciente` | sin búsqueda: son las últimas altas de la oficina |
+
+Y **el orden pasa a ser por fuerza de la coincidencia**, no por fecha: exacto → usuario →
+teléfono → titular. Con `limit 10`, si el que buscás queda decimoprimero la búsqueda no sirvió
+de nada — es el mismo problema que D-29, donde la RPC cortaba a 100 y el usuario buscado nunca
+entraba en el corte.
+
+Probado contra P1:
+
+| Búsqueda | Resultado |
+|---|---|
+| `pruebaxx` | `pruebaxx [exacto]` |
+| `prueba` | `pruebaxx [usuario]` · `vaporprueba [usuario]` |
+| `1134970581` | `pruebaxx [telefono]` |
+| `Pepe` | cinco usuarios `[usuario]` |
+
+Además la lista dice de entrada **qué está mostrando**: con búsqueda, «Coinciden con «x» ·
+ordenadas por qué tan fuerte es la coincidencia»; sin búsqueda, «Últimas altas de tu oficina».
+Sin ese encabezado, las primeras 10 filas se leen como si fueran «los jugadores», y no lo son.
