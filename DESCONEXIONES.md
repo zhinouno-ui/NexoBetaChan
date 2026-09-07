@@ -1131,19 +1131,23 @@ se quedaba cargando para siempre.
 
 **No era la base.** Medido: la consulta tarda **126 ms** para P1.
 
-**Era una carrera en mi código.**  abría con un candado booleano:
+**Era una carrera en mi código.** `crmRegistradosCargar` abría con un candado booleano:
 
+```js
+if(!caja || st.cargando) return;
+st.cargando = true;
+```
 
-
- repinta la vista **varias veces** (el override de , el 
-de 1 s). La primera llamada tomaba el candado; el repintado siguiente creaba una caja nueva y
-disparaba otra llamada que **se salteaba** por el candado; y la respuesta de la primera
-terminaba escrita en la caja vieja, ya fuera del DOM. La que veía el operador se quedaba en
-«Cargando…» sin que fallara nada.
+`renderCRM()` repinta la vista **varias veces**: el override de `mostrarVista` y el `setTimeout`
+de 1 s del arranque. La primera llamada tomaba el candado; el repintado siguiente creaba una
+caja nueva y disparaba otra llamada que **se salteaba** por el candado; y la respuesta de la
+primera terminaba escrita en la caja vieja, ya fuera del DOM. La que veía el operador se quedaba
+en «Cargando…» sin que fallara nada, sin error en consola y sin nada que reintentar.
 
 **Arreglado con un token de pedido** en vez de un candado: cada llamada toma un número, ninguna
-se saltea, y al volver se descarta la respuesta si ya hay una búsqueda más nueva. La caja se
-vuelve a buscar por id al pintar, porque entre el pedido y la respuesta la vista pudo repintarse.
+se saltea, y al volver se descarta la respuesta si ya hay una búsqueda más nueva. Además la caja
+se vuelve a buscar por id al momento de pintar, porque entre el pedido y la respuesta la vista
+pudo haberse repintado.
 
 ### Rediseño, por lo que marcó Juan
 
@@ -1152,21 +1156,34 @@ dos apartados distintos, no creo que sea bueno separarlos, si vamos al caso es l
 búsqueda… hacé que sólo busque 10 usuarios y que permita filtrar de a más con un desplegable…
 que cargue lo que el usuario quiera que cargue, acá no hay pestañas tampoco»*.
 
-- **Una sola tarjeta.** Las dos hacían lo mismo: una filtraba memoria, la otra pedía al servidor.
-- **Sin nombre de oficina.** El operador ya está adentro de la suya; que haya siete atrás no le
-  sirve. La oficina se sigue usando para filtrar, pero no se muestra.
-- **10 por defecto**, con desplegable 10 / 25 / 50 / 100. Sin páginas.
-- **Una lista a la vez**: si buscás, se apaga la lista completa de «Cargar lista», y al revés.
-  Si no, quedaban dos tablas apiladas — el problema de los dos apartados otra vez, escondido.
+- **Una sola tarjeta.** Las dos hacían lo mismo: una filtraba lo que había en memoria, la otra
+  pedía al servidor.
+- **Sin nombre de oficina en pantalla.** El operador ya está adentro de la suya; saber que hay
+  siete atrás no le sirve para operar. La oficina se sigue usando para filtrar la consulta, pero
+  no se muestra.
+- **10 por defecto**, con desplegable 10 / 25 / 50 / 100. Sin páginas: se trae lo que el
+  operador pide.
+- **Una lista a la vez.** Si buscás, se apaga la lista completa de «Cargar lista», y al revés.
+  Sin esa regla quedaban dos tablas apiladas en la misma tarjeta — el problema de los dos
+  apartados otra vez, sólo que escondido.
 
 ### La RPC, simplificada
 
- es **UNIQUE (pc_codigo, usuario)**: dentro de una oficina no hay usuarios
-repetidos, así que el  de la primera versión sólo forzaba a ordenar todo el
-conjunto al pedo. Se sacó, y el orden pasa a , que tiene índice propio
-().
+`ux_vinc_pc_usuario` es **UNIQUE (pc_codigo, usuario)**: dentro de una oficina no hay usuarios
+repetidos, así que el `distinct on (lower(btrim(usuario)))` de la primera versión sólo forzaba a
+ordenar todo el conjunto sin necesidad. Se sacó, y el orden pasa a `id desc`, que tiene índice
+propio (`ix_vinc_pc_id_desc`).
+
+### Prueba
+
+`tests/panel-arranque.test.cjs` reproduce la carrera: dispara dos búsquedas, deja la primera
+colgada, resuelve la segunda, y recién entonces resuelve la primera. Verifica que la respuesta
+vieja **no** pise a la nueva y que no quede «Buscando…». Para eso `arrancarPanel` acepta un
+cliente de Supabase falso, que hay que dejar puesto **antes** de cargar los bundles: `supabaseClient`
+es un `const` que se arma con `window.supabase.createClient` al cargar, y no se puede pisar después.
 
 ---
+
 ## D-42 · El test de arranque cargaba de menos (otra vez)
 
 D-40 dejó `tests/panel-arranque.test.cjs` cargando `js-modules.js` + `js-core.js`. Al probar el
