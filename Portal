@@ -1385,9 +1385,9 @@ function _avisoBilleteraSolicitud(){
   const dela = String(state.pendingBilletera||"").trim();
   if(!dela) return "";
   const b = state.billetera||{};
-  const activa = String(b.nombre_visible||b.nombre||"").trim();
-  const alias  = String(b.alias||"").trim();
-  const activaTxt = activa ? (activa + (alias ? " · " + alias : "")) : "";
+  // Se compara con el mismo criterio con el que se guardó: titular primero. Si se comparara el
+  // nombre interno contra un titular, TODO parecería distinto y avisaría siempre.
+  const activaTxt = String(b.titular || b.nombre_visible || b.nombre || "").trim();
   // Comparación floja: alcanza con que el nombre esté adentro, porque una guarda el alias y la
   // otra puede no traerlo.
   const norm = (v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
@@ -2402,7 +2402,10 @@ async function enviarSolicitudCarga(usuario,monto,titular){
     setTimeout(()=>subscribePush(),1200);
     return;
   }
-  setPendiente("CARGA",String(solicitudId),destino||"");
+  // Se guarda el TITULAR de la cuenta, que es lo que la persona vio y reconoce. "SALVATIERRA X"
+  // es como le decimos nosotros adentro y no le dice nada a nadie.
+  setPendiente("CARGA",String(solicitudId),(bp&&bp.billetera_titular)||destino||"");
+
   _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
   toast("Solicitud enviada ✅");haptic([20,30,20]);
   renderHome();
