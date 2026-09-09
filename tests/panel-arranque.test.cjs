@@ -602,3 +602,17 @@ test('el cuadro de la dife dice para qué lado y qué hacer', () => {
   assert.match(cuerpo, /Está cuadrado/);
   assert.ok(!/Qué hacer, en orden/.test(cuerpo), 'sin dife no se le da una lista de tareas');
 });
+
+test('"Ya cargada" no está en la tarjeta del Inicio, sólo en el rechazo', () => {
+  // La tarjeta ya tiene Tomar / Aprobar / Ver / Rechazar. "Ya cargada" es un caso raro
+  // (124 en 30 días) y no merece un lugar fijo ahí: vive donde el operador se da cuenta.
+  const fuente = fs.readFileSync(path.join(RAIZ, 'renderer', 'portal', 'requests-view.js'), 'utf8');
+  assert.ok(!/onclick="v154pYaCargada/.test(fuente), 'no va en la bandeja del Inicio');
+
+  const sb = arrancarPanel();
+  sb.V154P = { solicitudes: [{ ID: '191800', USUARIO: 'pruebaxx' }] };
+  let cuerpo = '';
+  sb.abrirModal = (_t, b) => { cuerpo = b; };
+  sb.v154pRechazarSolicitud('191800');
+  assert.match(cuerpo, /Ya se la cargué/, 'pero sí adentro del rechazo');
+});

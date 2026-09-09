@@ -1702,9 +1702,10 @@ a que hizo algo mal.
 `cerrada_como: YA_CARGADA` en el metadata, y le avisa en consecuencia: *«Tu carga de $X ya está
 acreditada. Revisá tu saldo.»* No carga nada: sólo cierra la solicitud.
 
-Está en dos lugares: un botón **✅ Ya cargada** en la tarjeta de la bandeja, y un atajo arriba
-del modal de rechazo —*«¿Ya se la cargaste por otro lado?»*—, que es donde el operador está
-parado cuando se da cuenta.
+Vive **sólo adentro del modal de rechazo** —*«¿Ya se la cargaste por otro lado?»*—, que es
+donde el operador se da cuenta. Estuvo un rato también como botón en la tarjeta del Inicio y se
+sacó: esa tarjeta ya tiene Tomar / Aprobar / Ver / Rechazar, y esto son 124 casos en 30 días.
+No merece un lugar fijo ahí.
 
 ### El resto de los motivos, para cuando sigamos
 
