@@ -1820,3 +1820,67 @@ titular para otro usuario, `false`; desde otra oficina, `false`.
 
 El bloqueo es **por oficina**. Un titular que se usa para estafar en P1 sigue habilitado en P4.
 Hacerlo global entre oficinas es una decisión de negocio, no técnica — queda anotado.
+
+---
+
+## D-57 · El portal dejaba mandar otra solicitud con una abierta
+
+Juan, probando: *«sigo pudiendo realizar otra carga mientras la anterior sigue en revisión, y no
+destaca que se volvió a abrir la instancia»*. En la captura, el Estado decía **«No tenés
+solicitudes activas»** mientras el historial mostraba una carga **En revisión** de esa mañana.
+
+**Por qué.** El portal sabía si había una solicitud abierta **sólo por su propio localStorage**.
+Esa marca se pierde de cuatro formas, todas normales:
+
+- la canceló (y hasta D-45 eso ni siquiera cancelaba del lado nuestro);
+- limpió los datos del navegador;
+- entró desde otro teléfono;
+- **el operador rescató una rechazada y la volvió a abrir** — el caso de Juan.
+
+Medido: **12.067 solicitudes en 30 días llegan a menos de 15 minutos de la anterior del mismo
+jugador** (13,9 % de 87.082, 1.809 jugadores). Cada una es trabajo duplicado.
+
+**`landing_solicitud_activa`** responde desde el servidor, que es el único que sabe la verdad:
+devuelve la solicitud abierta (`PENDIENTE`/`EN_REVISION`/`EN_PROCESO`, de las últimas 24 h) con
+su tipo, monto, billetera y un flag **`reabierta`**.
+
+Se usa en dos momentos:
+
+- **Al entrar al Estado**, para dejar el portal como corresponde. Corrige los dos sentidos: si el
+  teléfono creía que no había nada y el operador reabrió una, la muestra; si creía que había una
+  que ya se resolvió, limpia la marca vieja sin molestar con carteles.
+- **Justo antes de crear una solicitud** (`_puedeOperarConServidor`), que es el único momento en
+  que vale la pena esperar una consulta más.
+
+Una solicitud de más de 24 h no traba a nadie: eso no está «activa», está colgada, y es otro
+problema (§10 de SISTEMA_ENLACE).
+
+**Cuando la reabrieron, se dice.** Aviso propio arriba del estado: *«Volvimos a abrir esta
+solicitud. Se había rechazado y la estamos revisando de nuevo. **No mandes otra:** es la misma.»*
+Sin eso, la persona ve una rechazada en el historial y una activa arriba, y no entiende que son
+la misma.
+
+---
+
+## D-58 · El portal aceptaba NUESTROS datos como titular
+
+Se podía escribir «Paola Salvatierra» —el titular de nuestra billetera— en el campo «¿a nombre de
+quién está la cuenta que usaste?». El portal lo dejaba pasar, la solicitud llegaba, y recién ahí
+el auto-rechazo `DATO_PROPIO` la frenaba. El jugador pierde el viaje y el operador el tiempo.
+
+Los datos de la billetera están **en el portal, a la vista de la persona**, así que se corta
+antes de mandar. Compara contra titular, alias, CBU/CVU y el nombre interno, normalizando (sin
+espacios ni puntuación, minúsculas). Probado:
+
+| Lo que pone | Resultado |
+|---|---|
+| `Paola Salvatierra` | rechaza |
+| `paola.111.olmo.mp` | rechaza |
+| `SALVATIERRA X` | rechaza |
+| `0000003100012345678901` | rechaza |
+| `paola salvatierra` | rechaza |
+| `Juan Perez` | acepta |
+| `pepep eeedcf` | acepta |
+
+El mensaje dice qué poner, no sólo que está mal: *«Ese es el titular de NUESTRA cuenta, no el
+tuyo. Poné el nombre completo del titular de la cuenta desde la que transferiste.»*

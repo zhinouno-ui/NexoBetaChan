@@ -287,6 +287,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .estado-h{font-weight:900;font-size:19px;margin-bottom:6px}
 .estado-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px}
 .retiro-previos{margin:2px 0 10px;padding:8px 11px;border-radius:10px;background:rgba(233,194,92,.08);border:1px solid rgba(233,194,92,.28);font-size:12px;line-height:1.5;color:var(--gold-2)}
+.reabierta-aviso{margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(56,189,248,.10);border:1px solid rgba(56,189,248,.45);font-size:12.5px;line-height:1.55;color:#bae6fd;text-align:left}
 .bil-sol{margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);text-align:left}
 .bil-sol.cambio{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.45)}
 .bil-sol-k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
@@ -1189,6 +1190,15 @@ function setPendiente(tipo,solicitudId,billetera){
 // está mirando la pantalla de estado. Y el botón que hoy dice "Cancelar solicitud" hace lo que
 // dice: no hay nada que confirmar dos veces.
 function limpiarPendienteManual(){ _confirmarLimpiarPendiente(); }
+
+// El servidor dice que no hay solicitud abierta y el teléfono creía que sí: se limpia la marca
+// vieja, sin cancelar nada (no hay nada que cancelar) y sin molestar con un cartel.
+function limpiarPendienteSilencioso(){
+  try{ stopEstadoPoll(); }catch(_e){}
+  Object.assign(state,{pendingTipo:"",solicitudId:"",pendingBilletera:"",reabierta:false});
+  ["bet300_pending_tipo","bet300_pending_billetera","bet300_solicitud_id","bet300_solicitud_started_at"]
+    .forEach(function(k){ try{ localStorage.removeItem(k); }catch(_e){} });
+}
 async function _confirmarLimpiarPendiente(){
   const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
 
@@ -1418,6 +1428,11 @@ function renderEstado(){
           <div class="step"><span class="dot"></span></div>
         </div>
         <div id="retiroProgreso"></div>
+        ${state.reabierta ? `
+          <div class="reabierta-aviso">
+            <b>Volvimos a abrir esta solicitud.</b>
+            Se había rechazado y la estamos revisando de nuevo. <b>No mandes otra:</b> es la misma.
+          </div>` : ""}
         ${_avisoBilleteraSolicitud()}
         <div class="estado-tx">Un operador la está revisando. Te avisamos acá y por el chat cuando se confirme.</div>
         <div id="estadoLive" class="estado-live"><span class="live-dot"></span>Consultando estado…</div>
@@ -1446,6 +1461,15 @@ function renderEstado(){
   }
   pintarHistorialUsuario();
   startHistPoll();
+  // El teléfono puede estar desactualizado en los dos sentidos: creer que no hay nada cuando
+  // el operador reabrió una, o creer que hay una que ya se resolvió. Se le pregunta al servidor
+  // y se repinta si cambió algo.
+  (async function(){
+    const antes = String(state.solicitudId||"") + "|" + String(state.pendingTipo||"") + "|" + String(state.reabierta||"");
+    try{ await _sincronizarSolicitudActiva(); }catch(_e){ return; }
+    const ahora = String(state.solicitudId||"") + "|" + String(state.pendingTipo||"") + "|" + String(state.reabierta||"");
+    if(antes !== ahora){ try{ renderEstado(); }catch(_e){} }
+  })();
 }
 
 function limpiarPendienteAprobado(obs){
@@ -1824,10 +1848,55 @@ function billeteraSignature(b){
   return [b.id||b.billetera_id||"", b.alias||"", b.cbu||b.cvu||"", b.titular||"", b.nombre_visible||b.nombre||"", b.banco||""].join("|");
 }
 // ── Producción: guard de operación (anti-bypass desde consola) ──
+// El portal sabía si había una solicitud abierta SÓLO por su propio localStorage. Si esa marca
+// se perdía —la canceló, limpió datos, entró desde otro teléfono, o el operador RESCATÓ una
+// rechazada y la volvió a abrir— mostraba "No tenés solicitudes activas" y lo dejaba mandar
+// otra encima. Medido: 12.067 solicitudes en 30 días llegan a menos de 15 min de la anterior
+// del mismo jugador (13,9 %, 1.809 jugadores). Cada una es trabajo duplicado para el operador.
+// El servidor es el único que sabe la verdad, así que se le pregunta a él.
+async function _solicitudActivaEnServidor(){
+  if(!state.usuario || !state.telefono) return null;
+  try{
+    const r = await rpc("landing_solicitud_activa", {
+      p_usuario: state.usuario, p_telefono: state.telefono, p_public_code: state.publicCode||""
+    });
+    if(r.error) return null;                 // sin respuesta no se traba a nadie
+    const d = normalize(r.data) || (Array.isArray(r.data) ? r.data[0] : r.data) || null;
+    return (d && d.solicitud_id) ? d : null;
+  }catch(_e){ return null; }
+}
+
+// Deja el portal en el estado que dice el servidor. Devuelve true si hay una abierta.
+async function _sincronizarSolicitudActiva(){
+  const d = await _solicitudActivaEnServidor();
+  if(!d){
+    // El servidor dice que no hay nada abierto: si el teléfono creía que sí, estaba viejo.
+    if(tieneSolicitudPendiente()){ try{ limpiarPendienteSilencioso(); }catch(_e){} }
+    return false;
+  }
+  const yaLaTenia = String(state.solicitudId||"") === String(d.solicitud_id);
+  state.reabierta = !!d.reabierta;
+  if(!yaLaTenia) setPendiente(String(d.tipo||"CARGA"), String(d.solicitud_id), String(d.billetera||""));
+  return true;
+}
+
 function _puedeOperar(){
   if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return false; }
   if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return false; }
   if(tieneSolicitudPendiente()){ toast("Ya tenés una solicitud en revisión."); try{goEstado();}catch(_e){} return false; }
+  return true;
+}
+
+// Igual que _puedeOperar pero preguntando también al servidor. Se usa justo antes de crear:
+// es el único momento en que vale la pena esperar una consulta más.
+async function _puedeOperarConServidor(){
+  if(!_puedeOperar()) return false;
+  const hay = await _sincronizarSolicitudActiva();
+  if(hay){
+    toast("Ya tenés una solicitud en revisión.");
+    try{ goEstado(); }catch(_e){}
+    return false;
+  }
   return true;
 }
 // ── Producción: tarjeta de transferencia en el chat ──
@@ -2118,6 +2187,20 @@ function validarTitular(valor){
 // mismo titular que le acababan de bloquear. Ahora se consulta a la base.
 // Se pregunta ANTES de crear la solicitud: rechazarla después es hacerle perder el viaje y
 // sumar un rechazo más a la pila.
+// El titular tiene que ser el de la cuenta DESDE LA QUE transfirió, no el de la nuestra.
+// Copiar el nombre de nuestra billetera es el error más común y termina en un rechazo por
+// DATO_PROPIO: el jugador pierde el viaje y el operador pierde el tiempo. Los datos de la
+// billetera los tenemos acá mismo, así que se corta antes de mandar.
+function _titularEsNuestro(titular){
+  const t = String(titular||"").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if(t.length < 3) return false;
+  const b = state.billetera || {};
+  const propios = [b.titular, b.alias, b.cbu, b.cvu, b.nombre_visible, b.nombre]
+    .map(function(v){ return String(v||"").toLowerCase().replace(/[^a-z0-9]/g, ""); })
+    .filter(function(v){ return v.length >= 3; });
+  return propios.some(function(v){ return v === t || v.indexOf(t) !== -1 || t.indexOf(v) !== -1; });
+}
+
 async function _titularBloqueado(titular){
   const t = String(titular||"").trim();
   if(!t || !state.usuario) return null;
@@ -2332,6 +2415,14 @@ async function enviarSolicitudCargaDirecta(){
     haptic(18);
     return toast("Revisá el titular");
   }
+  // Los datos de NUESTRA billetera no son el titular de nadie.
+  if(_titularEsNuestro(titular)){
+    const el=$("cargaTitular");
+    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
+    _titularAviso(el, "Ese es el titular de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferiste.");
+    haptic(18);
+    return toast("Ese no es tu titular");
+  }
   // Bloqueado por un operador. Se corta acá, con el campo marcado y el motivo a la vista.
   const _bloq = await _titularBloqueado(titular);
   if(_bloq){
@@ -2392,7 +2483,7 @@ function limpiarSolicitudAnteriorAntesDeNueva(){
 }
 
 async function enviarSolicitudCarga(usuario,monto,titular){
-  if(!_puedeOperar())return;
+  if(!await _puedeOperarConServidor())return;
   if(!(Number(monto)>0))return toast("Ingresá un monto válido.");
   if(Number(monto)<MONTO_MIN_CARGA)return toast("La carga mínima es "+_money(MONTO_MIN_CARGA)+".");
   if(String(titular||"").trim().length<3)return toast("Indicá el titular que transfiere (mínimo 3 letras).");
@@ -2498,7 +2589,7 @@ async function _rellenarDatosRetiro(){
 
 async function enviarSolicitudRetiro(){
 
-  if(!_puedeOperar())return;
+  if(!await _puedeOperarConServidor())return;
   const restRet=retiroCooldownRestanteMs();
   if(restRet>0)return toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(restRet)+".");
   const usuario=state.usuario,montoRaw=$("retiroMonto")?.value.trim(),destino=$("retiroDestino")?.value.trim(),titular=$("retiroTitular")?.value.trim();
