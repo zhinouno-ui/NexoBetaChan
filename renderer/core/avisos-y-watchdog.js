@@ -80,7 +80,7 @@ window.rechequearFichas = async function(){
   try{ toast('Releyendo fichas de Drex y Chunior...', 'blue'); }catch(_e){}
   try{ await _watchdogPoll(); }catch(_e){}
 };
-// ── Watchdog de fichas: detecta discrepancias entre Drex y Chunior ────────────
+// ── Watchdog de fichas: detecta diferencias entre Drex y Chunior ────────────
 // Cada 60s lee ambos saldos y los compara. En operaciones normales se mueven en
 // direcciones OPUESTAS con el mismo monto (carga: Drex -X, Chunior +X). Si no
 // se cumple, hay alguien moviendo plata fuera de NODO o una carga repetida.
@@ -226,12 +226,12 @@ function _wdActualizarUI(estado, texto){
   try{ renderFichasInicio(estado, texto); }catch(_e){}
 }
 
-// Banner para discrepancia absoluta (Drex saldo agente != Chunior Saldo Fichas)
+// Banner para diferencia absoluta (Drex saldo agente != Chunior Saldo Fichas)
 function _wdMostrarBannerAbs(info){
   _watchdog.alertaActiva = true;
   _watchdog.drexFichas = info.drex;
   _watchdog.chuniorFichas = info.chunior;
-  try{ renderFichasInicio('alerta','Discrepancia detectada'); }catch(_e){}
+  try{ renderFichasInicio('alerta','Diferencia detectada'); }catch(_e){}
   let banner = document.getElementById("watchdogBanner");
   if(!banner){
     banner = document.createElement('div');
@@ -244,7 +244,7 @@ function _wdMostrarBannerAbs(info){
   banner.innerHTML =
     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<span style="font-size:18px">⚠️</span>' +
-      '<span><b>DISCREPANCIA de fichas detectada</b><br>' +
+      '<span><b>DIFERENCIA de fichas detectada</b><br>' +
         '<span style="font-weight:400;font-size:12px">' +
           'Drex: <b>'+drexTxt+'</b> · Chunior: <b>'+chuniorTxt+'</b> · Diferencia: <b>'+diffTxt+'</b> · '+
           formatFecha(new Date().toISOString()) +
@@ -347,12 +347,12 @@ async function _watchdogPoll(){
     return;
   }
 
-  // ── Discrepancia detectada — puede ser TRANSITORIA ──
+  // ── Diferencia detectada — puede ser TRANSITORIA ──
   // Chunior tarda en propagar el "Saldo Fichas" del breadcrumb. Re-leemos en 4s.
   // Si en la 2da lectura coinciden, era transitoria. Si siguen sin coincidir → alerta REAL.
   if(!_watchdog.pendingReconfirm){
     _watchdog.pendingReconfirm = true;
-    console.log('[watchdog] discrepancia detectada · Drex='+ahora.drexFichas+' Chunior='+ahora.chuniorFichas+' diff='+diff+' · re-confirmando en 4s...');
+    console.log('[watchdog] diferencia detectada · Drex='+ahora.drexFichas+' Chunior='+ahora.chuniorFichas+' diff='+diff+' · re-confirmando en 4s...');
     _wdActualizarUI('', '⏳ Verificando fichas (puede ser transitorio)...');
     setTimeout(async function(){
       const recheck = await _watchdogLeer();
@@ -365,19 +365,19 @@ async function _watchdogPoll(){
       const horaR    = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
       if(Math.abs(diffR) <= TOL){
         // Era transitorio
-        console.log('[watchdog] discrepancia transitoria resuelta · diff_final=' + diffR);
+        console.log('[watchdog] diferencia transitoria resuelta · diff_final=' + diffR);
         _watchdog.drexFichas    = recheck.drexFichas;
         _watchdog.chuniorFichas = recheck.chuniorFichas;
         _wdActualizarUI('ok',
           '✓ Fichas OK · Drex '+fmt(recheck.drexFichas)+' = Chunior '+fmt(recheck.chuniorFichas)+' · '+horaR+' (re-confirmado)'
         );
       } else {
-        // Discrepancia CONFIRMADA después del re-check
-        console.warn('[watchdog] DISCREPANCIA CONFIRMADA tras re-check · diff=' + diffR);
+        // Diferencia CONFIRMADA después del re-check
+        console.warn('[watchdog] DIFERENCIA CONFIRMADA tras re-check · diff=' + diffR);
         _watchdog.drexFichas    = recheck.drexFichas;
         _watchdog.chuniorFichas = recheck.chuniorFichas;
         _wdActualizarUI('alerta',
-          '⚠ DISCREPANCIA · Drex '+fmt(recheck.drexFichas)+' ≠ Chunior '+fmt(recheck.chuniorFichas)+' (Δ '+fmt(Math.abs(diffR))+')'
+          '⚠ DIFERENCIA · Drex '+fmt(recheck.drexFichas)+' ≠ Chunior '+fmt(recheck.chuniorFichas)+' (Δ '+fmt(Math.abs(diffR))+')'
         );
         _wdMostrarBannerAbs({
           drex: recheck.drexFichas,

@@ -1729,3 +1729,39 @@ de las últimas 24 h. Verificado sobre los cinco de la captura: los cinco dejaro
 molde de carga/retiro aplicado a algo que no mueve plata (igual que D-38 con el expediente).
 Ahora el botón no aparece en los tipos sin movimiento, y si algo lo llama igual, lo dice en vez
 de inventar una carga.
+
+---
+
+## D-55 · «Discrepancia» pasa a llamarse diferencia, y se explica
+
+Juan: *«la discrepancia la llamamos diferencia»*, y *«al lado del botón rechequear fichas quiero
+un botón de info cuando haya diferencia»*.
+
+**El renombre.** 25 apariciones en 7 archivos, adentro y afuera: los banners del watchdog, el
+estado de la tarjeta de fichas, y también los identificadores —`portalCheckDiscrepancia` →
+`portalCheckDiferencia`, `portalJobDiscrepancia` → `portalJobDiferencia`— con su entrada en el
+contrato de dependencias y el getter del bridge. No quedó ninguna.
+
+**El botón ℹ Dife.** Al lado de ↻ Rechequear, y **aparece sólo cuando hay diferencia**: un botón
+que está siempre se vuelve parte del decorado y nadie lo toca el día que hace falta.
+
+Lo que explica, que es lo que el número solo no dice:
+
+- **Para qué lado.** `+` es *sobran fichas en el casino* —se cargó algo que en Chunior no quedó
+  anotado—; `−` es *faltan* —hay anotado de más, típicamente un retiro anotado dos veces—. El
+  signo es lo que nadie tiene memorizado.
+- **Qué hacer, en orden.** Rechequear primero (si venís de operar, puede ser un movimiento que
+  todavía no impactó) → buscar en el historial del turno **una operación por ese monto exacto**,
+  porque casi siempre la dife es una sola → corregirla donde falte → y si no aparece, dejarla
+  anotada en el cierre de turno. Una dife sin explicar que pasa de turno no la resuelve nadie.
+- **Cuándo está cuadrado**, lo dice y no le da una lista de tareas al pedo.
+
+**Pendiente, por decisión de Juan:** el botón que muestre los movimientos del turno que dan ese
+monto, en un desplegable aparte cargado sólo al abrirlo. Falta decidir de dónde salen — de
+`historial_ops` (lo que anotamos nosotros) o de los movimientos reales de Chunior. Lo segundo es
+lo útil para cotejar, pero implica leer de Chunior con la ventana ocupada unos segundos.
+
+**Idea de fondo anotada, sin implementar:** integrar el cotejo dentro del apartado de billeteras
+en vez de tenerlo como sistema aparte. En palabras de Juan: *«agregá el monto real si tenés dife,
+agregalo en todas las billeteras, el sistema verifica»*. Convierte algo que hay que entender en
+un campo al lado del saldo.

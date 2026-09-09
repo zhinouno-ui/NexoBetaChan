@@ -1,3 +1,50 @@
+// ── Qué es la "dife" y qué hacer con ella ───────────────────────────────────
+// El número solo no dice nada: el operador ve "-$ 3.462" y no sabe si tiene que hacer algo,
+// si es grave, ni de dónde salió. Este cuadro lo explica en los términos de la operación.
+window.explicarDiferenciaFichas = function(){
+  const drex = (typeof _watchdog !== "undefined") ? _watchdog.drexFichas : null;
+  const chu  = (typeof _watchdog !== "undefined") ? _watchdog.chuniorFichas : null;
+  const hay  = (typeof drex === "number" && typeof chu === "number");
+  const diff = hay ? (drex - chu) : 0;
+  const abs  = Math.abs(diff);
+  const hora = (typeof _watchdog !== "undefined" && _watchdog.lastCheck)
+    ? new Date(_watchdog.lastCheck).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}) : null;
+
+  // El signo es lo que dice QUÉ pasó, y es lo que nadie tiene memorizado.
+  const _lado = diff > 0
+    ? { t:'Sobran fichas en el casino', d:'Se cargaron fichas que en Chunior no están anotadas. Suele ser una carga hecha en el agente que no se llegó a registrar.' }
+    : { t:'Faltan fichas en el casino',  d:'Hay movimientos anotados en Chunior que no se reflejan en el casino. Suele ser un retiro anotado dos veces, o una anotación de más.' };
+
+  const filaCmp = function(k, v, color){
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #1e293b">'
+      + '<span class="small" style="color:#8b949e">'+k+'</span>'
+      + '<b style="'+(color?('color:'+color):'')+'">'+v+'</b></div>';
+  };
+
+  const cuerpo = !hay
+    ? '<div class="alert-box">Todavía no hay una lectura de los dos saldos. Tocá <b>↻ Rechequear</b> y volvé.</div>'
+    : (
+        filaCmp('Casino (Drex)', money(drex))
+      + filaCmp('Anotado (Chunior)', money(chu))
+      + filaCmp('Diferencia', (diff>=0?'+':'−')+money(abs), Math.abs(diff)<=1 ? '#22c55e' : '#f59e0b')
+      + (hora ? '<div class="small" style="color:#8b949e;margin-top:6px">Leído a las '+escapeHtml(hora)+'</div>' : '')
+      + (Math.abs(diff) <= 1
+          ? '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4);color:#bbf7d0;font-size:12.5px">'
+            + '<b>Está cuadrado.</b> Lo que hay en el casino y lo anotado en Chunior coinciden. No hay nada que hacer.</div>'
+          : '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.45);color:#fde68a;font-size:12.5px;line-height:1.55">'
+            + '<b>'+_lado.t+' por '+money(abs)+'.</b><br>'+_lado.d
+            + '<div style="margin-top:8px;color:#e6edf3"><b>Qué hacer, en orden:</b></div>'
+            + '<div style="margin-top:4px">1. <b>↻ Rechequear</b>. Si venís de operar recién, la diferencia puede ser de un movimiento que todavía no terminó de impactar.</div>'
+            + '<div style="margin-top:3px">2. Si sigue, mirá el historial del turno buscando una operación por <b>'+money(abs)+'</b>: casi siempre la dife es UNA operación sola.</div>'
+            + '<div style="margin-top:3px">3. Si aparece, corregila donde falte (<b>Reintentar</b> si no se anotó en Chunior, <b>Editar</b> si el monto quedó mal).</div>'
+            + '<div style="margin-top:3px">4. Si no la encontrás, dejala anotada en el cierre de turno antes de irte. Una dife sin explicar que pasa de turno no la resuelve nadie.</div>'
+            + '</div>')
+      );
+
+  abrirModal('📊 Diferencia de fichas', cuerpo, null, '');
+  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+};
+
 function mostrarVista(vista){
   if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
     try{ window.nodoChatMin && nodoChatMin(false); }catch(_e){} // tocar Chat restaura el panel si estaba minimizado
@@ -309,12 +356,21 @@ function renderFichasInicio(extraEstado, extraTexto){
     diffEl.classList.add(ok ? "ok" : "alerta");
     card.classList.add(ok ? "ok" : "alerta");
     // SIEMPRE mostrar de CUÁNDO es la lectura: sin la hora, una comparación vieja parece una
-    // discrepancia actual y el operador desconfía del chequeo entero (portado de NexoBetaChan).
+    // diferencia actual y el operador desconfía del chequeo entero (portado de NexoBetaChan).
     const _horaLect = (typeof _watchdog !== "undefined" && _watchdog.lastCheck)
       ? new Date(_watchdog.lastCheck).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}) : null;
-    estadoEl.textContent = (extraTexto || (ok ? "Sin diferencia" : "Discrepancia detectada"))
+    estadoEl.textContent = (extraTexto || (ok ? "Sin diferencia" : "Diferencia detectada"))
       + (_horaLect ? " · leído "+_horaLect : "");
+    // El botón de explicación aparece SOLO cuando hay algo que explicar. Un botón que está
+    // siempre se vuelve parte del decorado y nadie lo toca el día que hace falta.
+    try{
+      const _bi = document.getElementById("btnInfoDife");
+      if(_bi) _bi.style.display = ok ? "none" : "";
+    }catch(_e){}
+
   }else{
+    // Sin lectura de los dos saldos no hay diferencia que explicar.
+    try{ const _bi = document.getElementById("btnInfoDife"); if(_bi) _bi.style.display = "none"; }catch(_e){}
     diffEl.textContent = "—";
     estadoEl.textContent = extraTexto || "Esperando lectura de saldos";
   }

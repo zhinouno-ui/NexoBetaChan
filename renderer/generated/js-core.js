@@ -1225,6 +1225,53 @@ window.nodoChatMin = function(min){
 };
 try{ if(localStorage.getItem('nodo_chat_min')==='1') document.body.classList.add('chat-min'); }catch(_e){}
 
+// ── Qué es la "dife" y qué hacer con ella ───────────────────────────────────
+// El número solo no dice nada: el operador ve "-$ 3.462" y no sabe si tiene que hacer algo,
+// si es grave, ni de dónde salió. Este cuadro lo explica en los términos de la operación.
+window.explicarDiferenciaFichas = function(){
+  const drex = (typeof _watchdog !== "undefined") ? _watchdog.drexFichas : null;
+  const chu  = (typeof _watchdog !== "undefined") ? _watchdog.chuniorFichas : null;
+  const hay  = (typeof drex === "number" && typeof chu === "number");
+  const diff = hay ? (drex - chu) : 0;
+  const abs  = Math.abs(diff);
+  const hora = (typeof _watchdog !== "undefined" && _watchdog.lastCheck)
+    ? new Date(_watchdog.lastCheck).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}) : null;
+
+  // El signo es lo que dice QUÉ pasó, y es lo que nadie tiene memorizado.
+  const _lado = diff > 0
+    ? { t:'Sobran fichas en el casino', d:'Se cargaron fichas que en Chunior no están anotadas. Suele ser una carga hecha en el agente que no se llegó a registrar.' }
+    : { t:'Faltan fichas en el casino',  d:'Hay movimientos anotados en Chunior que no se reflejan en el casino. Suele ser un retiro anotado dos veces, o una anotación de más.' };
+
+  const filaCmp = function(k, v, color){
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #1e293b">'
+      + '<span class="small" style="color:#8b949e">'+k+'</span>'
+      + '<b style="'+(color?('color:'+color):'')+'">'+v+'</b></div>';
+  };
+
+  const cuerpo = !hay
+    ? '<div class="alert-box">Todavía no hay una lectura de los dos saldos. Tocá <b>↻ Rechequear</b> y volvé.</div>'
+    : (
+        filaCmp('Casino (Drex)', money(drex))
+      + filaCmp('Anotado (Chunior)', money(chu))
+      + filaCmp('Diferencia', (diff>=0?'+':'−')+money(abs), Math.abs(diff)<=1 ? '#22c55e' : '#f59e0b')
+      + (hora ? '<div class="small" style="color:#8b949e;margin-top:6px">Leído a las '+escapeHtml(hora)+'</div>' : '')
+      + (Math.abs(diff) <= 1
+          ? '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4);color:#bbf7d0;font-size:12.5px">'
+            + '<b>Está cuadrado.</b> Lo que hay en el casino y lo anotado en Chunior coinciden. No hay nada que hacer.</div>'
+          : '<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.45);color:#fde68a;font-size:12.5px;line-height:1.55">'
+            + '<b>'+_lado.t+' por '+money(abs)+'.</b><br>'+_lado.d
+            + '<div style="margin-top:8px;color:#e6edf3"><b>Qué hacer, en orden:</b></div>'
+            + '<div style="margin-top:4px">1. <b>↻ Rechequear</b>. Si venís de operar recién, la diferencia puede ser de un movimiento que todavía no terminó de impactar.</div>'
+            + '<div style="margin-top:3px">2. Si sigue, mirá el historial del turno buscando una operación por <b>'+money(abs)+'</b>: casi siempre la dife es UNA operación sola.</div>'
+            + '<div style="margin-top:3px">3. Si aparece, corregila donde falte (<b>Reintentar</b> si no se anotó en Chunior, <b>Editar</b> si el monto quedó mal).</div>'
+            + '<div style="margin-top:3px">4. Si no la encontrás, dejala anotada en el cierre de turno antes de irte. Una dife sin explicar que pasa de turno no la resuelve nadie.</div>'
+            + '</div>')
+      );
+
+  abrirModal('📊 Diferencia de fichas', cuerpo, null, '');
+  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+};
+
 function mostrarVista(vista){
   if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
     try{ window.nodoChatMin && nodoChatMin(false); }catch(_e){} // tocar Chat restaura el panel si estaba minimizado
@@ -1536,12 +1583,21 @@ function renderFichasInicio(extraEstado, extraTexto){
     diffEl.classList.add(ok ? "ok" : "alerta");
     card.classList.add(ok ? "ok" : "alerta");
     // SIEMPRE mostrar de CUÁNDO es la lectura: sin la hora, una comparación vieja parece una
-    // discrepancia actual y el operador desconfía del chequeo entero (portado de NexoBetaChan).
+    // diferencia actual y el operador desconfía del chequeo entero (portado de NexoBetaChan).
     const _horaLect = (typeof _watchdog !== "undefined" && _watchdog.lastCheck)
       ? new Date(_watchdog.lastCheck).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}) : null;
-    estadoEl.textContent = (extraTexto || (ok ? "Sin diferencia" : "Discrepancia detectada"))
+    estadoEl.textContent = (extraTexto || (ok ? "Sin diferencia" : "Diferencia detectada"))
       + (_horaLect ? " · leído "+_horaLect : "");
+    // El botón de explicación aparece SOLO cuando hay algo que explicar. Un botón que está
+    // siempre se vuelve parte del decorado y nadie lo toca el día que hace falta.
+    try{
+      const _bi = document.getElementById("btnInfoDife");
+      if(_bi) _bi.style.display = ok ? "none" : "";
+    }catch(_e){}
+
   }else{
+    // Sin lectura de los dos saldos no hay diferencia que explicar.
+    try{ const _bi = document.getElementById("btnInfoDife"); if(_bi) _bi.style.display = "none"; }catch(_e){}
     diffEl.textContent = "—";
     estadoEl.textContent = extraTexto || "Esperando lectura de saldos";
   }
@@ -2365,14 +2421,14 @@ async function ejecutarOperacionManual(){
           } else if(rChu && rChu.error){
             toast('⚠️ '+tipo+' OK en casino pero falló en Chunior: '+rChu.error, 'red');
             _chuPaso('Chunior FALLÓ: '+rChu.error+' · verificá/reintentá', 'err');
-            // Chunior falló → NO chequeamos fichas (sabríamos que hay discrepancia,
+            // Chunior falló → NO chequeamos fichas (sabríamos que hay diferencia,
             // no aporta info nueva).
           }
         })
         .catch(function(e){ _chuPaso('Error anotando en Chunior: '+(e.message||''), 'err'); toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
     }
     // Si no hay Chunior involucrado (billetera sin CHUNIOR_UID), NO disparamos
-    // el watchdog: sabemos que va a haber discrepancia (Drex cambió, Chunior no).
+    // el watchdog: sabemos que va a haber diferencia (Drex cambió, Chunior no).
 
     if(ok){
       if(bil && bil.ID_BILLETERA) await ajustarSaldoBilletera(bil.ID_BILLETERA, tipo==="CARGA" ? montoAbs : -montoAbs);
@@ -5141,7 +5197,7 @@ function renderHistorial(lista){
     // Botón de reintento. Aparece en dos casos:
     //   1) estado ERROR → verifica Drex/Chunior y reintenta lo que falte
     //   2) estado OK pero SIN chunior_movimiento_id y la billetera TIENE chunior_uid
-    //      → la carga entró en Drex pero NO se anotó en Chunior (queda discrepancia)
+    //      → la carga entró en Drex pero NO se anotó en Chunior (queda diferencia)
     const _bilDeFila = billeteras.find(function(b){ return String(b.ID_BILLETERA) === String(h.billetera_id); });
     // [CHUNIOR_OK_SIN_N] = Chunior SÍ aceptó el movimiento, solo no pudimos leer el N° de
     // vuelta (parseo flaky) — no es una falta real, no hay que ofrecer reintentar.
@@ -7590,7 +7646,7 @@ window.rechequearFichas = async function(){
   try{ toast('Releyendo fichas de Drex y Chunior...', 'blue'); }catch(_e){}
   try{ await _watchdogPoll(); }catch(_e){}
 };
-// ── Watchdog de fichas: detecta discrepancias entre Drex y Chunior ────────────
+// ── Watchdog de fichas: detecta diferencias entre Drex y Chunior ────────────
 // Cada 60s lee ambos saldos y los compara. En operaciones normales se mueven en
 // direcciones OPUESTAS con el mismo monto (carga: Drex -X, Chunior +X). Si no
 // se cumple, hay alguien moviendo plata fuera de NODO o una carga repetida.
@@ -7736,12 +7792,12 @@ function _wdActualizarUI(estado, texto){
   try{ renderFichasInicio(estado, texto); }catch(_e){}
 }
 
-// Banner para discrepancia absoluta (Drex saldo agente != Chunior Saldo Fichas)
+// Banner para diferencia absoluta (Drex saldo agente != Chunior Saldo Fichas)
 function _wdMostrarBannerAbs(info){
   _watchdog.alertaActiva = true;
   _watchdog.drexFichas = info.drex;
   _watchdog.chuniorFichas = info.chunior;
-  try{ renderFichasInicio('alerta','Discrepancia detectada'); }catch(_e){}
+  try{ renderFichasInicio('alerta','Diferencia detectada'); }catch(_e){}
   let banner = document.getElementById("watchdogBanner");
   if(!banner){
     banner = document.createElement('div');
@@ -7754,7 +7810,7 @@ function _wdMostrarBannerAbs(info){
   banner.innerHTML =
     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<span style="font-size:18px">⚠️</span>' +
-      '<span><b>DISCREPANCIA de fichas detectada</b><br>' +
+      '<span><b>DIFERENCIA de fichas detectada</b><br>' +
         '<span style="font-weight:400;font-size:12px">' +
           'Drex: <b>'+drexTxt+'</b> · Chunior: <b>'+chuniorTxt+'</b> · Diferencia: <b>'+diffTxt+'</b> · '+
           formatFecha(new Date().toISOString()) +
@@ -7857,12 +7913,12 @@ async function _watchdogPoll(){
     return;
   }
 
-  // ── Discrepancia detectada — puede ser TRANSITORIA ──
+  // ── Diferencia detectada — puede ser TRANSITORIA ──
   // Chunior tarda en propagar el "Saldo Fichas" del breadcrumb. Re-leemos en 4s.
   // Si en la 2da lectura coinciden, era transitoria. Si siguen sin coincidir → alerta REAL.
   if(!_watchdog.pendingReconfirm){
     _watchdog.pendingReconfirm = true;
-    console.log('[watchdog] discrepancia detectada · Drex='+ahora.drexFichas+' Chunior='+ahora.chuniorFichas+' diff='+diff+' · re-confirmando en 4s...');
+    console.log('[watchdog] diferencia detectada · Drex='+ahora.drexFichas+' Chunior='+ahora.chuniorFichas+' diff='+diff+' · re-confirmando en 4s...');
     _wdActualizarUI('', '⏳ Verificando fichas (puede ser transitorio)...');
     setTimeout(async function(){
       const recheck = await _watchdogLeer();
@@ -7875,19 +7931,19 @@ async function _watchdogPoll(){
       const horaR    = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
       if(Math.abs(diffR) <= TOL){
         // Era transitorio
-        console.log('[watchdog] discrepancia transitoria resuelta · diff_final=' + diffR);
+        console.log('[watchdog] diferencia transitoria resuelta · diff_final=' + diffR);
         _watchdog.drexFichas    = recheck.drexFichas;
         _watchdog.chuniorFichas = recheck.chuniorFichas;
         _wdActualizarUI('ok',
           '✓ Fichas OK · Drex '+fmt(recheck.drexFichas)+' = Chunior '+fmt(recheck.chuniorFichas)+' · '+horaR+' (re-confirmado)'
         );
       } else {
-        // Discrepancia CONFIRMADA después del re-check
-        console.warn('[watchdog] DISCREPANCIA CONFIRMADA tras re-check · diff=' + diffR);
+        // Diferencia CONFIRMADA después del re-check
+        console.warn('[watchdog] DIFERENCIA CONFIRMADA tras re-check · diff=' + diffR);
         _watchdog.drexFichas    = recheck.drexFichas;
         _watchdog.chuniorFichas = recheck.chuniorFichas;
         _wdActualizarUI('alerta',
-          '⚠ DISCREPANCIA · Drex '+fmt(recheck.drexFichas)+' ≠ Chunior '+fmt(recheck.chuniorFichas)+' (Δ '+fmt(Math.abs(diffR))+')'
+          '⚠ DIFERENCIA · Drex '+fmt(recheck.drexFichas)+' ≠ Chunior '+fmt(recheck.chuniorFichas)+' (Δ '+fmt(Math.abs(diffR))+')'
         );
         _wdMostrarBannerAbs({
           drex: recheck.drexFichas,
@@ -9680,7 +9736,7 @@ async function cargarSaldoRapido(usuario, monto){
     estado: 'OK',
     saldo_post: saldoPostC
   });
-  // Sin registro en Chunior → no comparamos fichas (daría discrepancia segura)
+  // Sin registro en Chunior → no comparamos fichas (daría diferencia segura)
 
   toast(`Carga completada · ${usuario} · $${monto.toLocaleString("es-AR")}`,"green");
   await window.ctrlElectron.navigateAgent();

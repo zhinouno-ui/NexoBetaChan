@@ -5,7 +5,7 @@
   else root.NodoPortalOperationModal = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function(){
   'use strict';
-  const dependencies = Object.freeze(["V154P","alert","billeteras","cargarBilleteras","cerrarPortalJobModal","document","ejecutarSolicitudPortalSimple","esc","fecha","getBilleraLanding","money","normalizar","pcAliasesHist","pcOperativa","portalCheckDiscrepancia","setTimeout","supabaseClient","toast","v154pRegistrarParcial","window"]);
+  const dependencies = Object.freeze(["V154P","alert","billeteras","cargarBilleteras","cerrarPortalJobModal","document","ejecutarSolicitudPortalSimple","esc","fecha","getBilleraLanding","money","normalizar","pcAliasesHist","pcOperativa","portalCheckDiferencia","setTimeout","supabaseClient","toast","v154pRegistrarParcial","window"]);
   function create(deps){
 const api = {};
 
@@ -86,13 +86,13 @@ const api = {};
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;align-items:end">
           <div>
             <label style="font-weight:800">Monto a procesar</label>
-            <input id="portalJobMontoAprobado" type="text" inputmode="numeric" autocomplete="off" oninput="portalCheckDiscrepancia()" style="width:100%;height:44px;border-color:#22c55e;font-weight:900;font-size:21px">
+            <input id="portalJobMontoAprobado" type="text" inputmode="numeric" autocomplete="off" oninput="portalCheckDiferencia()" style="width:100%;height:44px;border-color:#22c55e;font-weight:900;font-size:21px">
           </div>
           <div>
             <label>Billetera destino</label>
             <select id="portalJobBilletera" style="width:100%;height:44px"></select>
           </div>
-          <div id="portalJobDiscrepancia" style="display:none;grid-column:1/-1;background:#3b0d0d;border:1px solid #7f1d1d;color:#fca5a5;border-radius:9px;padding:8px 11px;font-size:12px;font-weight:800"></div>
+          <div id="portalJobDiferencia" style="display:none;grid-column:1/-1;background:#3b0d0d;border:1px solid #7f1d1d;color:#fca5a5;border-radius:9px;padding:8px 11px;font-size:12px;font-weight:800"></div>
           <div style="grid-column:1/-1">
             <label>Obs. <span class="small" style="color:#64748b">(opcional)</span></label>
             <textarea id="portalJobObs" rows="2" style="width:100%;resize:vertical" placeholder="Ej: declaró 10.000 pero el comprobante real es 2.000"></textarea>
@@ -122,10 +122,10 @@ const api = {};
     const el = deps.document.getElementById('portalJobModal');
     if(el) el.style.display = 'none';
   };
-  api.portalCheckDiscrepancia = function(){
+  api.portalCheckDiferencia = function(){
     const modal = deps.document.getElementById('portalJobModal');
     const inp = deps.document.getElementById('portalJobMontoAprobado');
-    const box = deps.document.getElementById('portalJobDiscrepancia');
+    const box = deps.document.getElementById('portalJobDiferencia');
     if(!modal || !inp || !box) return;
     const declarado = Math.abs(portalParseMonto(modal.dataset.montoDeclarado || '0'));
     const actual = Math.abs(portalParseMonto(inp.value || '0'));
@@ -197,7 +197,7 @@ const api = {};
       </div>`;
       // La tarjeta llega async (después de que el modal ya pintó el monto) → recalcular
       // la vista previa del bono ahora que ya sabemos el % y el tope.
-      try{ deps.portalCheckDiscrepancia(); }catch(_e){}
+      try{ deps.portalCheckDiferencia(); }catch(_e){}
     }catch(e){ console.warn('[promo]',e); }
   }
   async function portalRenderVinculo(usuario){
@@ -306,7 +306,7 @@ const api = {};
     el.dataset.montoDeclarado = String(Math.abs(monto || 0));
     deps.document.getElementById('portalJobMontoAprobado').value = String(Math.abs(monto || 0));
     deps.document.getElementById('portalJobObs').value = '';
-    try{ deps.portalCheckDiscrepancia(); }catch(_e){}
+    try{ deps.portalCheckDiferencia(); }catch(_e){}
     try{ portalRenderVinculo(s.USUARIO); }catch(_e){}
     try{ portalRenderPromo(s.USUARIO); }catch(_e){}
     const res = deps.document.getElementById('portalJobResultado');

@@ -56,7 +56,7 @@
     get pcAliasesHist(){ return typeof pcAliasesHist === 'undefined' ? undefined : pcAliasesHist; },
     get pcOperativa(){ return typeof pcOperativa === 'undefined' ? undefined : pcOperativa; },
     get poblarManualBilletera(){ return typeof poblarManualBilletera === 'undefined' ? undefined : poblarManualBilletera; },
-    get portalCheckDiscrepancia(){ return window.portalCheckDiscrepancia; },
+    get portalCheckDiferencia(){ return window.portalCheckDiferencia; },
     get recomendarRepartoRetiro(){ return window.recomendarRepartoRetiro; },
     get refreshAgent(){ return typeof refreshAgent === 'undefined' ? undefined : refreshAgent; },
     get registrarCargaEnChunior(){ return typeof registrarCargaEnChunior === 'undefined' ? undefined : registrarCargaEnChunior; },

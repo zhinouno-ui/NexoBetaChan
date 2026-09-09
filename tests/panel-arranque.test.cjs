@@ -553,3 +553,52 @@ test('el atajo "Ya se la cargué" está adentro del modal de rechazo', () => {
   assert.match(cuerpo, /v154pYaCargada\('191800'\)/);
   assert.match(cuerpo, /Motivo/, 'y el rechazo normal sigue estando');
 });
+
+test('la diferencia de fichas se explica, y el botón sale sólo cuando hay', () => {
+  // "-$ 3.462" solo no dice nada: ni si hay que hacer algo, ni de dónde salió. Y un botón que
+  // está siempre se vuelve decorado y nadie lo toca el día que hace falta.
+  const sb = arrancarPanel();
+  assert.equal(typeof sb.explicarDiferenciaFichas, 'function');
+
+  const btn = { style: { display: 'none' } };
+  const celdas = {};
+  for (const id of ['statFichasCard', 'statDrexFichas', 'statChuniorFichas', 'statDiffFichas', 'statFichasEstado']) {
+    celdas[id] = { textContent: '', classList: { add: () => {}, remove: () => {} } };
+  }
+  sb.document.getElementById = (id) => (id === 'btnInfoDife' ? btn : (celdas[id] || null));
+
+  // Cuadrado: el botón no va.
+  vm.runInContext('_watchdog.drexFichas = 100000; _watchdog.chuniorFichas = 100000;', sb);
+  sb.renderFichasInicio();
+  assert.equal(btn.style.display, 'none', 'sin diferencia no hay nada que explicar');
+
+  // Con dife: aparece.
+  vm.runInContext('_watchdog.drexFichas = 103462; _watchdog.chuniorFichas = 100000;', sb);
+  sb.renderFichasInicio();
+  assert.notEqual(btn.style.display, 'none', 'con diferencia tiene que ofrecerse');
+});
+
+test('el cuadro de la dife dice para qué lado y qué hacer', () => {
+  const sb = arrancarPanel();
+  let cuerpo = '';
+  sb.abrirModal = (_t, b) => { cuerpo = b; };
+  sb.document.getElementById = () => null;
+
+  // Sobran fichas en el casino: se cargó algo que no quedó anotado.
+  vm.runInContext('_watchdog.drexFichas = 103462; _watchdog.chuniorFichas = 100000;', sb);
+  sb.explicarDiferenciaFichas();
+  assert.match(cuerpo, /Sobran fichas/, 'el signo es lo que nadie tiene memorizado');
+  assert.match(cuerpo, /Qué hacer, en orden/);
+  assert.match(cuerpo, /Rechequear/, 'lo primero es descartar que sea transitoria');
+
+  // Al revés.
+  vm.runInContext('_watchdog.drexFichas = 100000; _watchdog.chuniorFichas = 103462;', sb);
+  sb.explicarDiferenciaFichas();
+  assert.match(cuerpo, /Faltan fichas/);
+
+  // Cuadrado: lo dice y no manda a hacer nada.
+  vm.runInContext('_watchdog.drexFichas = 100000; _watchdog.chuniorFichas = 100000;', sb);
+  sb.explicarDiferenciaFichas();
+  assert.match(cuerpo, /Está cuadrado/);
+  assert.ok(!/Qué hacer, en orden/.test(cuerpo), 'sin dife no se le da una lista de tareas');
+});

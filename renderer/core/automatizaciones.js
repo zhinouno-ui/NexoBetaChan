@@ -466,7 +466,7 @@ async function cargarSaldoRapido(usuario, monto){
     estado: 'OK',
     saldo_post: saldoPostC
   });
-  // Sin registro en Chunior → no comparamos fichas (daría discrepancia segura)
+  // Sin registro en Chunior → no comparamos fichas (daría diferencia segura)
 
   toast(`Carga completada · ${usuario} · $${monto.toLocaleString("es-AR")}`,"green");
   await window.ctrlElectron.navigateAgent();

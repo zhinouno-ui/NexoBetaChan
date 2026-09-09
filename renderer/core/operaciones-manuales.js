@@ -745,14 +745,14 @@ async function ejecutarOperacionManual(){
           } else if(rChu && rChu.error){
             toast('⚠️ '+tipo+' OK en casino pero falló en Chunior: '+rChu.error, 'red');
             _chuPaso('Chunior FALLÓ: '+rChu.error+' · verificá/reintentá', 'err');
-            // Chunior falló → NO chequeamos fichas (sabríamos que hay discrepancia,
+            // Chunior falló → NO chequeamos fichas (sabríamos que hay diferencia,
             // no aporta info nueva).
           }
         })
         .catch(function(e){ _chuPaso('Error anotando en Chunior: '+(e.message||''), 'err'); toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
     }
     // Si no hay Chunior involucrado (billetera sin CHUNIOR_UID), NO disparamos
-    // el watchdog: sabemos que va a haber discrepancia (Drex cambió, Chunior no).
+    // el watchdog: sabemos que va a haber diferencia (Drex cambió, Chunior no).
 
     if(ok){
       if(bil && bil.ID_BILLETERA) await ajustarSaldoBilletera(bil.ID_BILLETERA, tipo==="CARGA" ? montoAbs : -montoAbs);

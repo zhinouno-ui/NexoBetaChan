@@ -367,7 +367,7 @@ function renderHistorial(lista){
     // Botón de reintento. Aparece en dos casos:
     //   1) estado ERROR → verifica Drex/Chunior y reintenta lo que falte
     //   2) estado OK pero SIN chunior_movimiento_id y la billetera TIENE chunior_uid
-    //      → la carga entró en Drex pero NO se anotó en Chunior (queda discrepancia)
+    //      → la carga entró en Drex pero NO se anotó en Chunior (queda diferencia)
     const _bilDeFila = billeteras.find(function(b){ return String(b.ID_BILLETERA) === String(h.billetera_id); });
     // [CHUNIOR_OK_SIN_N] = Chunior SÍ aceptó el movimiento, solo no pudimos leer el N° de
     // vuelta (parseo flaky) — no es una falta real, no hay que ofrecer reintentar.
