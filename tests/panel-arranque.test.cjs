@@ -43,9 +43,22 @@ function arrancarPanel(opciones) {
   };
   // supabaseClient es un `const` del bundle: se arma con window.supabase.createClient al
   // cargar, asi que el cliente falso hay que dejarlo puesto ANTES, no despues.
-  if (opciones && opciones.rpc) {
-    sb.supabase = { createClient: () => ({ rpc: opciones.rpc, from: () => ({}), channel: () => ({ on: () => ({ subscribe: noop }) }) }) };
-  }
+  // Cliente falso ENCADENABLE. Con uno que devolvia {} en .from(), cualquier cosa que corriera
+  // despues del test -- por ejemplo cargarSolicitudesPortal, que actualizarSolicitudPortal
+  // dispara al terminar -- explotaba con "Cannot read properties of null" y ensuciaba la corrida.
+  const cadena = () => {
+    const q = { then: (r) => Promise.resolve({ data: [], error: null }).then(r) };
+    for (const m of ['select','insert','update','delete','upsert','eq','neq','in','is','gte','lte','gt','lt','like','ilike','or','order','limit','range','single','maybeSingle','not','filter','contains']) {
+      q[m] = () => q;
+    }
+    return q;
+  };
+  sb.supabase = { createClient: () => ({
+    rpc: (opciones && opciones.rpc) || (async () => ({ data: null, error: null })),
+    from: cadena,
+    channel: () => ({ on: () => ({ subscribe: noop }) }),
+    removeChannel: noop
+  }) };
   sb.window = sb; sb.globalThis = sb; sb.self = sb;
   vm.createContext(sb);
 
@@ -495,4 +508,48 @@ test('el aviso de billetera vieja también entiende la solicitud cruda del Inici
   ]) {
     assert.equal(sb._billeteraVieja(it), null, 'no debería avisar: ' + caso);
   }
+});
+
+test('"Ya se la cargué" cierra como acreditada, no como rechazo', async () => {
+  // Medido: 124 rechazos en 30 días con el motivo escrito a mano — "CARGADO", "YA FUE CARGADO",
+  // "FICHAS CARGADAS", "YA SE TE CARGO"… Seis redacciones de lo mismo. El operador ya le cargó y
+  // usa Rechazar para sacarla de la bandeja; el jugador ve "Rechazada" con la plata adentro.
+  const sb = arrancarPanel();
+  assert.equal(typeof sb.v154pYaCargada, 'function', 'el bridge tiene que exponerla');
+
+  // Las funciones del portal quedan atadas a `deps` al montarse, así que el punto donde se puede
+  // interceptar es la RPC — que además es lo que de verdad llega a la base.
+  const llamadas = [];
+  sb.panelAPI = { rpc: async (fn, params) => { llamadas.push({ fn, params }); return { data: {}, error: null }; } };
+  sb.toast = () => {};
+  sb.cerrarModal = () => {};
+  sb.V154P = { solicitudes: [{ ID: '191800', USUARIO: 'pruebaxx', MONTO_REAL: 20000 }] };
+
+  let confirmar = null;
+  sb.abrirModal = (_t, _b, fn) => { confirmar = fn; };
+  sb.v154pYaCargada('191800');
+  assert.equal(typeof confirmar, 'function', 'tiene que abrir el modal');
+  await confirmar();
+
+  const upd = llamadas.find((c) => c.fn === 'panel_v15_5_actualizar_solicitud_portal');
+  assert.ok(upd, 'tiene que cerrar la solicitud');
+  assert.equal(upd.params.p_estado, 'ACREDITADA', 'acreditada, NO rechazada');
+  assert.equal(upd.params.p_metadata.cerrada_como, 'YA_CARGADA');
+  assert.equal(upd.params.p_metadata.etapa, 'YA_CARGADA_MANUAL');
+  assert.equal(upd.params.p_id, 191800);
+
+});
+
+test('el atajo "Ya se la cargué" está adentro del modal de rechazo', () => {
+  // Es donde el operador está parado cuando se da cuenta de que en realidad ya se la cargó.
+  const sb = arrancarPanel();
+  sb.V154P = { solicitudes: [{ ID: '191800', USUARIO: 'pruebaxx' }] };
+
+  let cuerpo = '';
+  sb.abrirModal = (_t, b) => { cuerpo = b; };
+  sb.v154pRechazarSolicitud('191800');
+
+  assert.match(cuerpo, /Ya se la cargué/, 'el atajo tiene que estar a mano');
+  assert.match(cuerpo, /v154pYaCargada\('191800'\)/);
+  assert.match(cuerpo, /Motivo/, 'y el rechazo normal sigue estando');
 });

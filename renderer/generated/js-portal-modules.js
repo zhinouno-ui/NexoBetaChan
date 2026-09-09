@@ -413,7 +413,9 @@ const api = {};
             <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
             ${_esRet?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
+            ${_esRet ? "" : `<button class="v154p-btn" style="background:#14532d;color:#bbf7d0;border:1px solid #22c55e66" onclick="v154pYaCargada(${id})" title="Ya le cargaste las fichas por otro lado: cierra la solicitud como acreditada, no como rechazo">✅ Ya cargada</button>`}
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
+
           </div>
           ${_alertaHtml ? `<div style="grid-column:1/-1">${_alertaHtml}</div>` : ""}
         </div>`;
@@ -700,6 +702,51 @@ const api = {};
   }
   api._portalAutoRechazar = _portalAutoRechazar;
 
+  // ── "Ya se la cargué" ───────────────────────────────────────────────────────
+  // Medido en 30 días: 124 solicitudes rechazadas con el motivo escrito a mano como "CARGADO",
+  // "YA FUE CARGADO", "FICHAS CARGADAS", "YA SE TE CARGO", "CARGADAS", "FUE CARGADO RECIEN".
+  // Seis formas de decir lo mismo. Eso NO es un rechazo: el operador ya le cargó y usa
+  // "Rechazar" para sacarla de la bandeja. El jugador queda viendo "Rechazada" en rojo con la
+  // plata adentro, y encima el motivo suena a que hizo algo mal.
+  //
+  // Esto la cierra como ACREDITADA —que es lo que pasó— y le avisa en consecuencia.
+  api.v154pYaCargada = function(id){
+    const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    const usuario = String((s&&(s.USUARIO||s.USUARIO_JUGADOR))||'').trim();
+    const monto = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+
+    deps.abrirModal("Marcar como ya cargada · #"+id,
+      '<div style="padding:9px 11px;border-radius:9px;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.4);color:#bbf7d0;font-size:12.5px;margin-bottom:10px">'
+      + 'Se cierra como <b>acreditada</b>, no como rechazo. '
+      + (usuario ? ('A <b>'+deps.escapeHtml(usuario)+'</b> le va a figurar la carga confirmada.') : '')
+      + '</div>'
+      + '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Usala cuando ya le cargaste las fichas por otro lado '
+      + '(a mano, por el chat) y esta solicitud quedó dando vueltas. <b>No carga nada:</b> sólo cierra la solicitud.</div>'
+      + '<label>Aclaración <span style="color:#8b949e;font-weight:400">· opcional, la ve el jugador</span></label>'
+      + '<textarea id="v154pYaCargObs" placeholder="Ej: te la cargué a mano recién"></textarea>',
+      async function(){
+        const obs = ((deps.document.getElementById("v154pYaCargObs")||{}).value||"").trim();
+        deps.cerrarModal();
+        try{
+          await deps.actualizarSolicitudPortal(id, "ACREDITADA", {
+            etapa: "YA_CARGADA_MANUAL",
+            cerrada_como: "YA_CARGADA",
+            obs: obs || null,
+            operador: (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel'
+          });
+          if(usuario){
+            await deps.notificarUsuarioEnChat(usuario,
+              "✅ Tu carga" + (monto ? (" de $" + monto.toLocaleString("es-AR")) : "") + " ya está acreditada."
+              + (obs ? ("\n📝 " + obs) : "")
+              + "\nRevisá tu saldo. Si no la ves, escribinos por acá.");
+          }
+          deps.toast("✔ #"+id+" cerrada como ya cargada", "green");
+        }catch(e){
+          deps.toast("No se pudo cerrar: "+(e.message||e), "red");
+        }
+      }, "Cerrar como cargada");
+  };
+
   api.v154pRechazarSolicitud = function(id){
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
     // Motivos rápidos: el usuario los VE en el portal (pantalla Estado), así que tienen que servirle.
@@ -729,7 +776,13 @@ const api = {};
                     : 'Si lo vuelve a mandar igual, se le rechaza solo y no te llega.')+'</div></span></label>')
       : '';
     deps.abrirModal("Rechazar solicitud #"+id,
+      // Si ya se la cargó, esto NO es un rechazo. Sale del rechazo y la cierra bien.
+      '<div style="padding:8px 10px;border-radius:9px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.35);margin-bottom:10px;font-size:12.5px;color:#bbf7d0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<span>¿Ya se la cargaste por otro lado?</span>'+
+      '<button type="button" class="mini-btn green" style="font-size:11.5px" onclick="cerrarModal();v154pYaCargada(\''+id+'\')">✅ Ya se la cargué</button>'+
+      '</div>'+
       '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
+
       '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+
       '<div style="margin-top:6px;font-size:11px;color:#93a3b8">Motivos rápidos (tocá para usar):</div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>'+

@@ -152,7 +152,9 @@ const api = {};
             <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
             ${_esRet?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
+            ${_esRet ? "" : `<button class="v154p-btn" style="background:#14532d;color:#bbf7d0;border:1px solid #22c55e66" onclick="v154pYaCargada(${id})" title="Ya le cargaste las fichas por otro lado: cierra la solicitud como acreditada, no como rechazo">✅ Ya cargada</button>`}
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
+
           </div>
           ${_alertaHtml ? `<div style="grid-column:1/-1">${_alertaHtml}</div>` : ""}
         </div>`;

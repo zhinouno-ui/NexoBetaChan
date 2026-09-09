@@ -385,7 +385,15 @@ function renderHistorial(lista){
     const infoBtn = _hayTraza
       ? '<button class="mini-btn" style="font-size:13px;background:#1e3a5f;color:#7cc4ff;border:1px solid rgba(124,196,255,.45);padding:5px 9px;line-height:1" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️</button>'
       : '';
-    const detalleBtn = '<button class="mini-btn" style="font-size:13px;background:#3b2a09;color:#fde68a;border:1px solid rgba(253,230,138,.45);padding:5px 9px;line-height:1" onclick="verDetalleMovimiento(\x27'+escapeHtml(String(h.id||''))+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" title="Ver detalle del movimiento y el árbol de operaciones del usuario">🔍</button>';
+    // El detalle arma una ficha de CARGA/RETIRO: monto, saldos, destino, árbol de
+    // operaciones. Un CAMBIO_CLAVE o una CONSULTA no tienen nada de eso, y abrirlo mostraba
+    // "⬆️ Carga · pruebaxx · $ 0" con el árbol de OTRAS operaciones colgando abajo. No es que
+    // falte el dato: no existe el movimiento.
+    const _tipoConMovimiento = ["CARGA","RETIRO","MOV_BILLETERA","CAMBIO_BILLETERA",
+                                "DEPOSITO_SR","PROPINA","RECARGA_FICHAS"];
+    const detalleBtn = _tipoConMovimiento.indexOf(String(h.tipo||"").toUpperCase()) === -1
+      ? ''
+      : '<button class="mini-btn" style="font-size:13px;background:#3b2a09;color:#fde68a;border:1px solid rgba(253,230,138,.45);padding:5px 9px;line-height:1" onclick="verDetalleMovimiento(\x27'+escapeHtml(String(h.id||''))+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" title="Ver detalle del movimiento y el árbol de operaciones del usuario">🔍</button>';
     // Anular propina (portado de NexoBetaChan): solo en filas PROPINA con N° de Chunior → pone el monto en 0,10.
     const anularPropBtn = (String(h.tipo||'').toUpperCase()==='PROPINA' && h.chunior_movimiento_id && String(h.estado||'').toUpperCase()!=='ANULADA')
       ? '<button class="mini-btn red" style="font-size:11px" onclick="anularPropinaHistorial(\x27'+escapeHtml(String(h.id))+'\x27)" title="Anular esta propina (pone el monto en 0,10 en Chunior)">🚫 Anular</button>'

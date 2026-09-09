@@ -1676,3 +1676,56 @@ Verificado contra el bundle real, con BANCO como billetera activa:
 
 La lección se repite: una función que devuelve `null` en silencio cuando no entiende su entrada
 es indistinguible de «no hay nada que avisar».
+
+---
+
+## D-53 · «Ya se la cargué»: el rechazo que no era un rechazo
+
+Medido en 30 días, sobre 2.900 rechazos de CARGA:
+
+| Motivo | Veces | Jugadores | Terminaron cargando en 6 h |
+|---|---:|---:|---:|
+| No nos llegó tu transferencia | **1.718** | 892 | 64,4 % |
+| No pudimos procesar (genérico) | 597 | 353 | 56,6 % |
+| Comprobante repetido / ya usado | 390 | 281 | 47,2 % |
+| **«Ya fue cargado»** (6 redacciones) | **124** | ~110 | 49,2 % |
+| Otro | 189 | 118 | 62,4 % |
+| Titular no coincide | 69 | 33 | 63,8 % |
+
+Los 124 son `CARGADO`, `YA FUE CARGADO`, `FICHAS CARGADAS`, `YA SE TE CARGO`, `CARGADAS`,
+`FUE CARGADO RECIEN`: seis formas de escribir lo mismo a mano. **Eso no es un rechazo.** El
+operador ya le cargó las fichas por otro lado y usa «Rechazar» para sacar la solicitud de la
+bandeja. El jugador queda viendo **«Rechazada»** en rojo con la plata adentro, y el motivo suena
+a que hizo algo mal.
+
+**`v154pYaCargada(id)`** la cierra como **ACREDITADA** —que es lo que pasó—, con
+`cerrada_como: YA_CARGADA` en el metadata, y le avisa en consecuencia: *«Tu carga de $X ya está
+acreditada. Revisá tu saldo.»* No carga nada: sólo cierra la solicitud.
+
+Está en dos lugares: un botón **✅ Ya cargada** en la tarjeta de la bandeja, y un atajo arriba
+del modal de rechazo —*«¿Ya se la cargaste por otro lado?»*—, que es donde el operador está
+parado cuando se da cuenta.
+
+### El resto de los motivos, para cuando sigamos
+
+- **«No nos llegó» es el 59 %** y un tercio (611 de 1.718) nunca vuelve a cargar. Ahí está la
+  plata que se pierde.
+- **El titular es el 2,4 %** — 69 casos, 33 jugadores, y el 63,8 % igual termina cargando. Vale
+  arreglarlo, pero no es por donde empezar.
+- **Los motivos son texto libre**, y por eso hay seis formas de «ya se cargó». Sin una lista
+  cerrada, el portal no puede saber qué acción ofrecer para cada rechazo.
+
+---
+
+## D-54 · Dos avisos que mentían
+
+**El badge «esperando» del CRM.** Marcaba como «tiene una solicitud abierta ahora» a jugadores
+cuya única solicitud abierta era un **ticket de SOPORTE de hace dos meses**. El operador veía el
+badge rojo, iba a la bandeja y no había nada. Faltaban dos filtros: sólo `CARGA`/`RETIRO`, y sólo
+de las últimas 24 h. Verificado sobre los cinco de la captura: los cinco dejaron de decirlo.
+
+**El 🔍 de la fila de cambio de clave.** Abría «Detalle del movimiento» y mostraba
+*«⬆️ Carga · pruebaxx · $ 0»* con el árbol de OTRAS operaciones colgando abajo. Es el mismo
+molde de carga/retiro aplicado a algo que no mueve plata (igual que D-38 con el expediente).
+Ahora el botón no aparece en los tipos sin movimiento, y si algo lo llama igual, lo dice en vez
+de inventar una carga.

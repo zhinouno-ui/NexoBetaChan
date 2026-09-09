@@ -495,6 +495,19 @@ window.cargarArbolCompletoUsuario = async function(usuario, onDone){
 };
 window.verDetalleMovimiento = function(histId, usuarioArg){
   const esc = escapeHtml;
+  // Red por si algo lo llama igual: esta ficha es de plata. Para un cambio de clave o una
+  // consulta armaba "Carga · $ 0" con el árbol de otras operaciones abajo, que no tiene
+  // nada que ver con la fila que se abrió.
+  try{
+    const _h = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
+    const _t = String((_h && _h.tipo) || "").toUpperCase();
+    if(_t && ["CARGA","RETIRO","MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR",
+              "PROPINA","RECARGA_FICHAS"].indexOf(_t) === -1){
+      toast("Esa operación no mueve plata: no tiene detalle de movimiento.", "yellow");
+      return;
+    }
+  }catch(_e){}
+
   const map = _movStoreAll();
   let mov = map[String(histId)] || null;
   const hRow = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
