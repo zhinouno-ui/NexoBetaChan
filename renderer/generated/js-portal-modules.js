@@ -1780,7 +1780,19 @@ api._rv2Aprobar = async function(){
     st.hechas[b.id]=true;
     try{ deps._trazaPaso('Billetera '+b.nombre+' debitada ('+deps.money(b.monto)+')', 'ok'); }catch(_e){}
   }
-  await deps._rv2Finalizar();
+  // Sin try/catch, una excepción acá se perdía en un unhandled rejection: la plata YA salió,
+  // el modal quedaba congelado en el último paso de la traza y no se registraba nada — ni en
+  // historial_ops ni en la solicitud. Pasó con un parcial de $500.000 (sol. #198680).
+  try{
+    await deps._rv2Finalizar();
+  }catch(e){
+    const _d = (e && e.message) || String(e);
+    try{ deps._trazaPaso('FALLÓ EL CIERRE: '+_d, 'err'); }catch(_e){}
+    try{ deps.toast('⚠ Se pagó pero NO se cerró la solicitud · anotalo', 'red'); }catch(_e){}
+    try{ deps.alert('⚠️ El retiro SE PAGÓ pero falló el cierre.\n\n' + _d
+      + '\n\nLa plata ya salió y la solicitud quedó con el estado anterior.'
+      + '\nAnotalo y cerralo desde 💸 Parciales.'); }catch(_e){}
+  }
 };
 
 function _rv2RenderConfirmar(){
@@ -1862,7 +1874,18 @@ api._rv2Confirmar = async function(bid){
 
 // Finaliza: marca la solicitud (parcial/completa), avisa al usuario y registra el historial.
 api._rv2Finalizar = async function(){
-  const st = deps.withdrawalState.current; if(!st) return;
+  const st = deps.withdrawalState.current;
+  // Este return existía y era silencioso. Se llega acá DESPUÉS de haber extraído las fichas y
+  // debitado la billetera: irse sin hacer nada y sin decir nada deja la plata afuera y la
+  // solicitud intacta, que es como quedó el parcial de $500.000 (sol. #198680).
+  if(!st){
+    try{ deps._trazaPaso('Se perdió el estado del retiro antes de cerrarlo', 'err'); }catch(_e){}
+    try{ deps.alert('⚠️ Se perdió el estado del retiro justo antes de cerrarlo.\n\n'
+      + 'Si ya transferiste, la plata salió y la solicitud NO se actualizó.'
+      + '\nRevisá el historial y cerrala desde 💸 Parciales.'); }catch(_e){}
+    return;
+  }
+  try{ deps._trazaPaso('Cerrando la solicitud...'); }catch(_e){}
   const total = st.totalPagar;
   // Total REAL del retiro (la deuda). En modo parcial NO puede salir del objetivo: ahí el objetivo
   // es "lo que falta", y tomarlo como total cerraba el retiro con la mitad pagada.
@@ -1897,7 +1920,12 @@ api._rv2Finalizar = async function(){
       saldo_post: st.saldoPost, solicitud_id: st.id,
       chunior_movimiento_id: _chuMovs[0] || null
     });
-  }catch(_e){}
+  }catch(_e){
+    // Sin fila en historial_ops la operación no existe para el cotejo, para la regla de 24 h
+    // ni para el jugador. Callarlo es perder el rastro de plata que ya salió.
+    try{ deps._trazaPaso('No se pudo registrar en el historial: '+((_e&&_e.message)||_e), 'err'); }catch(_x){}
+    try{ deps.toast('⚠ El retiro se pagó pero NO quedó en el historial · anotalo','red'); }catch(_x){}
+  }
   // El titular y el CBU del retiro son el dato más fuerte que tenemos de esa persona:
   // vienen del banco. Hasta ahora quedaban sepultados en las notas y había que rescatarlos
   // con un backfill. Se guardan en el vínculo para que estén a mano en la ficha.

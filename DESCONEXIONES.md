@@ -1922,3 +1922,97 @@ se toma el de ayer — que es el último que existió.
 
 Verificado: un turno dura exactamente 8 h; las 07:30 de ayer **no** son del TM de hoy; las 15:00
 no son TM; una fila sin fecha no cuenta; TN empieza a las 22:00 AR y dura 8 h sin partirse.
+
+---
+
+## D-60 · Billeteras cruzadas entre oficinas · plata al saldo equivocado
+
+Juan: *«se están cruzando datos de billes por ofi»*. En P4, con **GIORDANO** marcada EN PORTAL,
+el aviso decía *«Transfirió a GIORDANO · ahora AVILA MP»*.
+
+Contra la base:
+
+| Billetera | Oficina | EN PORTAL |
+|---|---|---|
+| GIORDANO, CASTRO, MATRELO, PROMOS | **P4** | GIORDANO |
+| **AVILA MP** | **P2** | AVILA MP |
+
+`billeteras` tenía filas de **las dos oficinas** al mismo tiempo, y `getBilleraLanding()` hacía
+`.find(SELECCIONADA_MANUAL==='SI')` **sin filtrar por oficina**: con las dos mezcladas devolvía la
+primera del array, que era la de P2.
+
+**No es cosmético.** Esa función se usa en **17 lugares**, y entre ellos los que ajustan el saldo
+de la billetera después de una carga (`automatizaciones.js:642`, `lotes-y-solicitudes.js:465`).
+Una carga en P4 podía **descontarle el saldo a P2**.
+
+### De dónde salía la mezcla
+
+El tercer fallback de `cargarBilleteras` busca por los UID de wallet detectados en la ventana de
+Chunior:
+
+```js
+.from('billeteras').select('*').in('chunior_uid', uids)
+```
+
+**Sin filtro de oficina.** La misma wallet puede existir en varias oficinas, así que traía las
+ajenas y las mezclaba con las propias.
+
+### Tres cierres, no uno
+
+1. **`getBilleraLanding()` filtra por la oficina actual.** Es la red que cubre los 17 usos de una
+   sola vez. Si no hay oficina resuelta todavía, no filtra —si no, el panel arrancaría sin
+   billeteras—; y una fila sin `pc_codigo` se deja pasar, porque no se puede afirmar que sea ajena.
+2. **El fallback por `chunior_uid` filtra por `pc_codigo`.**
+3. **Red final al armar `billeteras`:** venga del camino que venga, una fila de otra oficina no
+   entra, y si se descarta alguna queda avisado en consola con el conteo.
+
+---
+
+## D-61 · Un retiro parcial de $500.000 que salió y no quedó registrado
+
+La traza mostraba todo en verde hasta el final: fichas extraídas, `Registrado en Chunior
+(N° 9631137)`, `Billetera GIORDANO debitada ($500.000)`. Y después nada — el modal congelado con
+el botón «Cancelar».
+
+Contra la base:
+
+- `landing_solicitudes` **#198680**: `PENDIENTE`, sin `retiro_parcial`, sin pagos, `updated_at`
+  igual a la fecha de creación. **Intacta.**
+- `historial_ops` para ese usuario: **cero filas**.
+
+La plata salió y no quedó registrada en ningún lado.
+
+### Por qué
+
+`_rv2Finalizar` —que registra el historial, avisa al jugador y cierra la solicitud— se llama desde
+**dos lugares**:
+
+```js
+// línea 296
+try{ await deps._rv2Finalizar(); }catch(e){ ...avisa... }
+
+// línea 222  ← el camino que se usó
+await deps._rv2Finalizar();
+```
+
+El segundo **no tenía try/catch**. Una excepción ahí se pierde en un unhandled rejection: sin
+toast, sin alerta, la traza congelada en el último paso que sí funcionó. Y arriba de todo,
+`_rv2Finalizar` abre con `if(!st) return;` — un **return silencioso después de haber movido la
+plata**.
+
+### Qué se hizo
+
+No sé cuál de las dos ramas se disparó —para eso hace falta la consola del momento—, así que se
+cerraron las tres formas de que esto vuelva a pasar **sin dejar rastro**:
+
+1. **La llamada de la línea 222 tiene try/catch**, con el mismo aviso que la otra: traza en rojo,
+   toast y alerta diciendo que la plata salió y la solicitud quedó con el estado viejo.
+2. **El `return` silencioso avisa.** Si se perdió el estado del retiro justo antes de cerrarlo, lo
+   dice en vez de irse callado.
+3. **Perder la fila del historial deja de ser silencioso.** El `catch(_e){}` alrededor de
+   `registrarEnHistorial` no decía nada: sin esa fila la operación no existe para el cotejo, para
+   la regla de 24 h ni para el jugador.
+
+Y se agregó un paso de traza al entrar al cierre, para que la próxima vez se vea si llegó o no.
+
+**La #198680 hay que cerrarla a mano**: son $500.000 pagados que la solicitud no refleja.

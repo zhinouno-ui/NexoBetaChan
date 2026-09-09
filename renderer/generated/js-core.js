@@ -1424,10 +1424,15 @@ async function cargarBilleteras(render=true){
     }
     uids = Array.from(new Set((uids||[]).map(String).filter(Boolean)));
     if(uids.length){
-      const rUid = await supabaseClient
+      // Los UID salen de la ventana de Chunior y la MISMA wallet puede existir en varias
+      // oficinas. Sin filtrar por pc_codigo, este fallback traia billeteras ajenas y las
+      // mezclaba con las propias: en P4 aparecia AVILA MP, que es de P2.
+      let qUid = supabaseClient
         .from('billeteras')
         .select('*')
-        .in('chunior_uid', uids)
+        .in('chunior_uid', uids);
+      if(pcOperativa) qUid = qUid.eq('pc_codigo', pcOperativa);
+      const rUid = await qUid
         .order('seleccionada_manual',{ascending:false})
         .order('orden',{ascending:true})
         .order('nombre_visible',{ascending:true});
@@ -1445,11 +1450,20 @@ async function cargarBilleteras(render=true){
       nombreByUid = JSON.parse(localStorage.getItem('nodo_chunior_wallet_nombres') || '{}');
     }
   }catch(_e){ nombreByUid = {}; }
+  // Red final: venga de donde venga la fila, si es de OTRA oficina no entra. Los tres
+  // caminos de carga (RPC, fallback por pc_codigo, fallback por chunior_uid) pueden traer
+  // filas ajenas, y una sola alcanza para que getBilleraLanding devuelva la billetera
+  // equivocada y se le ajuste el saldo a otra oficina.
+  const _pcAhora = String(pcOperativa||'').trim().toUpperCase();
+  let _descartadas = 0;
   billeteras=(rows||[])
     .filter(function(b){
       const activa = (b.activa === true || String(b.activa).toLowerCase()==='true' || String(b.activa).toUpperCase()==='SI');
       const estado = normalizar(b.estado||'ACTIVA');
-      return activa && estado !== 'FUSIONADA';
+      if(!(activa && estado !== 'FUSIONADA')) return false;
+      const pcBil = String(b.pc_codigo||'').trim().toUpperCase();
+      if(_pcAhora && pcBil && pcBil !== _pcAhora){ _descartadas++; return false; }
+      return true;
     })
     .map(b=>{
       const uid = b.chunior_uid || '';
@@ -1473,6 +1487,10 @@ async function cargarBilleteras(render=true){
         ESTADO:b.estado||''
       };
     });
+
+  if(_descartadas){
+    console.warn('[billeteras] se descartaron '+_descartadas+' billeteras de otra oficina (esta es '+_pcAhora+')');
+  }
 
   // Dedup por CHUNIOR_UID: la misma wallet puede venir repetida (multi-oficina / sync).
   // Conserva la primera ocurrencia (la EN PORTAL queda primera por el orden de la query).
@@ -6883,9 +6901,23 @@ function tablaSolicitudesHTML(lista){
   return html;
 }
 
+// Devuelve la billetera EN PORTAL de ESTA oficina. El filtro por oficina no estaba, y con
+// `billeteras` contaminado con filas de otra PC el .find() agarraba la primera marcada
+// SELECCIONADA_MANUAL de cualquier oficina: en P4 devolvia AVILA MP, que es de P2.
+// No es cosmetico: esta funcion decide a que billetera se le ajusta el saldo despues de
+// una carga (automatizaciones.js, lotes-y-solicitudes.js). Una carga en P4 podia
+// descontarle a P2.
+function _mismaOficinaBilletera(b){
+  const pcAhora = String((typeof pcOperativa !== "undefined" ? pcOperativa : "") || "").trim().toUpperCase();
+  if(!pcAhora) return true;                 // sin oficina resuelta no se filtra nada
+  const pcBil = String((b && b.PC) || "").trim().toUpperCase();
+  if(!pcBil) return true;                   // billetera sin oficina: se deja pasar
+  return pcBil === pcAhora;
+}
 function getBilleraLanding(){
   const lista = (billeteras||[]).filter(function(b){
-    return normalizar(b.ACTIVA)==="SI" && normalizar(b.ESTADO||"ACTIVA") !== "FUSIONADA";
+    return normalizar(b.ACTIVA)==="SI" && normalizar(b.ESTADO||"ACTIVA") !== "FUSIONADA"
+        && _mismaOficinaBilletera(b);
   });
   return lista.find(b=>normalizar(b.SELECCIONADA_MANUAL)==="SI") || lista[0];
 }

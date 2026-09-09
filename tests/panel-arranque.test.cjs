@@ -708,3 +708,35 @@ test('el turno noche cruza la medianoche y no se parte en dos', () => {
   const inicioAR = new Date(b.desde - 3 * 3600 * 1000);
   assert.equal(inicioAR.getUTCHours(), 22, 'el turno noche empieza a las 22:00 AR');
 });
+
+test('getBilleraLanding nunca devuelve una billetera de otra oficina', () => {
+  // Caso real: en P4 devolvía AVILA MP, que es de P2, porque `billeteras` venía contaminado y
+  // el .find() agarraba la primera SELECCIONADA_MANUAL de cualquier oficina. No es cosmético:
+  // esta función decide a qué billetera se le ajusta el saldo después de una carga.
+  const sb = arrancarPanel();
+  vm.runInContext('pcOperativa = "P4";', sb);
+  vm.runInContext(
+    'billeteras.push(' +
+    '{ID_BILLETERA:"b-avila",NOMBRE_VISIBLE:"AVILA MP",PC:"P2",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"},' +
+    '{ID_BILLETERA:"b-gio",NOMBRE_VISIBLE:"GIORDANO",PC:"P4",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"});', sb);
+
+  const b = sb.getBilleraLanding();
+  assert.ok(b, 'tiene que devolver una');
+  assert.equal(b.NOMBRE_VISIBLE, 'GIORDANO', 'la de ESTA oficina, aunque la ajena esté primera');
+  assert.equal(b.PC, 'P4');
+});
+
+test('sin oficina resuelta getBilleraLanding no filtra de más', () => {
+  // Al arrancar, pcOperativa puede estar vacío. Filtrar ahí dejaría al panel sin billeteras.
+  const sb = arrancarPanel();
+  vm.runInContext('pcOperativa = "";', sb);
+  vm.runInContext('billeteras.push({ID_BILLETERA:"b1",NOMBRE_VISIBLE:"UNA",PC:"P4",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"});', sb);
+  assert.ok(sb.getBilleraLanding(), 'sin oficina resuelta se devuelve igual');
+});
+
+test('una billetera sin oficina cargada no se descarta', () => {
+  const sb = arrancarPanel();
+  vm.runInContext('pcOperativa = "P4";', sb);
+  vm.runInContext('billeteras.push({ID_BILLETERA:"b1",NOMBRE_VISIBLE:"SIN PC",PC:"",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"});', sb);
+  assert.ok(sb.getBilleraLanding(), 'sin PC en la fila no se puede afirmar que sea ajena');
+});

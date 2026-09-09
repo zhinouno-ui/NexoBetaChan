@@ -175,9 +175,23 @@ function tablaSolicitudesHTML(lista){
   return html;
 }
 
+// Devuelve la billetera EN PORTAL de ESTA oficina. El filtro por oficina no estaba, y con
+// `billeteras` contaminado con filas de otra PC el .find() agarraba la primera marcada
+// SELECCIONADA_MANUAL de cualquier oficina: en P4 devolvia AVILA MP, que es de P2.
+// No es cosmetico: esta funcion decide a que billetera se le ajusta el saldo despues de
+// una carga (automatizaciones.js, lotes-y-solicitudes.js). Una carga en P4 podia
+// descontarle a P2.
+function _mismaOficinaBilletera(b){
+  const pcAhora = String((typeof pcOperativa !== "undefined" ? pcOperativa : "") || "").trim().toUpperCase();
+  if(!pcAhora) return true;                 // sin oficina resuelta no se filtra nada
+  const pcBil = String((b && b.PC) || "").trim().toUpperCase();
+  if(!pcBil) return true;                   // billetera sin oficina: se deja pasar
+  return pcBil === pcAhora;
+}
 function getBilleraLanding(){
   const lista = (billeteras||[]).filter(function(b){
-    return normalizar(b.ACTIVA)==="SI" && normalizar(b.ESTADO||"ACTIVA") !== "FUSIONADA";
+    return normalizar(b.ACTIVA)==="SI" && normalizar(b.ESTADO||"ACTIVA") !== "FUSIONADA"
+        && _mismaOficinaBilletera(b);
   });
   return lista.find(b=>normalizar(b.SELECCIONADA_MANUAL)==="SI") || lista[0];
 }
