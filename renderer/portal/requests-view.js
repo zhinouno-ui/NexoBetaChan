@@ -124,9 +124,15 @@ const api = {};
             </div>
           </div>`;
         }
-        return `<div class="v154p-card">
+        // El jugador no refrescó el portal y transfirió a la billetera anterior. Tiene que
+        // verse ACÁ, en la tarjeta, sin desplegar nada: es lo que decide a qué billetera
+        // mirar antes de aprobar.
+        const _bv = deps.window._billeteraVieja ? deps.window._billeteraVieja(s) : null;
+        return `<div class="v154p-card"${_bv ? ' style="border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b"' : ''}>
           <div>
             <div class="v154p-main">${deps.esc(s.USUARIO || "-")}</div>
+            ${_bv ? `<div style="margin:3px 0;font-size:10.5px;font-weight:900;color:#fbbf24;background:rgba(245,158,11,.12);border:1px solid #f59e0b55;border-radius:6px;padding:2px 6px;display:inline-block">⚠ Transfirió a ${deps.esc(_bv.vieja)} · ahora ${deps.esc(_bv.actual)}</div>` : ""}
+
             <div class="v154p-small">#${id} · ${deps.fecha(s.FECHA_CREACION)} · ${deps.esc(s.ORIGEN || "PORTAL")}</div>
             ${s.TITULAR ? `<div class="v154p-small" style="color:#fde68a">Titular: ${deps.esc(s.TITULAR)}${(function(){
               // Si ese titular está bloqueado (ficha del jugador), que se vea ACÁ, que es donde

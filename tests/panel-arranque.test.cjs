@@ -461,3 +461,38 @@ test('sonda OK refresca el panel y reinicia el reloj', async () => {
   assert.equal(refrescos, 1, 'después de 6 minutos quieto lo que se ve ya envejeció');
   assert.ok(sb._drexUltimaOpOk > antes, 'el reloj arranca de nuevo');
 });
+
+test('el aviso de billetera vieja también entiende la solicitud cruda del Inicio', () => {
+  // _billeteraVieja sólo entendía el item del historial unificado (claves en minúscula). La
+  // tarjeta del Inicio y el modal de aprobar trabajan con la solicitud CRUDA del portal
+  // (MAYÚSCULAS), así que ahí —que es donde el operador decide— el aviso nunca aparecía.
+  const sb = arrancarPanel();
+  vm.runInContext(
+    'billeteras.push(' +
+    '{ID_BILLETERA:"b-banco",NOMBRE_VISIBLE:"BANCO",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"},' +
+    '{ID_BILLETERA:"b-salva",NOMBRE_VISIBLE:"SALVATIERRA X",ACTIVA:"SI"});', sb);
+
+  const cruda = { ID: 191800, TIPO: 'CARGA', ESTADO: 'PENDIENTE',
+                  BILLETERA_NOMBRE: 'SALVATIERRA X', ID_BILLETERA: 'b-salva' };
+  const r = sb._billeteraVieja(cruda);
+  assert.ok(r, 'la solicitud cruda tiene que avisar igual que el item unificado');
+  assert.equal(r.vieja, 'SALVATIERRA X');
+  assert.equal(r.actual, 'BANCO');
+
+  // Sin ID_BILLETERA (metadata viejo) compara por nombre.
+  assert.ok(sb._billeteraVieja({ ID: 4, TIPO: 'CARGA', ESTADO: 'PENDIENTE',
+                                 BILLETERA_NOMBRE: 'SALVATIERRA X' }));
+
+  // Y sigue funcionando el item del historial unificado.
+  assert.ok(sb._billeteraVieja({ pendiente: true, tipo: 'CARGA',
+                                 billetera_nombre: 'SALVATIERRA X', billetera_id: 'b-salva', _raw: {} }));
+
+  // Los que no corresponden.
+  for (const [caso, it] of [
+    ['con la activa', { ID: 1, TIPO: 'CARGA', ESTADO: 'PENDIENTE', BILLETERA_NOMBRE: 'BANCO', ID_BILLETERA: 'b-banco' }],
+    ['ya acreditada', { ID: 2, TIPO: 'CARGA', ESTADO: 'ACREDITADA', BILLETERA_NOMBRE: 'SALVATIERRA X', ID_BILLETERA: 'b-salva' }],
+    ['retiro', { ID: 3, TIPO: 'RETIRO', ESTADO: 'PENDIENTE', BILLETERA_NOMBRE: 'SALVATIERRA X', ID_BILLETERA: 'b-salva' }]
+  ]) {
+    assert.equal(sb._billeteraVieja(it), null, 'no debería avisar: ' + caso);
+  }
+});

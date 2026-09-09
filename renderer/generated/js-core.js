@@ -5441,23 +5441,41 @@ function _esTipoChunior(t){ return TIPOS_CHUNIOR.includes(String(t||"").toUpperC
 // cerrada la billetera activa cambió mil veces y el aviso seria ruido.
 function _billeteraVieja(it){
   try{
-    if(!it || !it.pendiente) return null;
-    const t = String(it.tipo||"").toUpperCase();
-    if(t !== "CARGA") return null;              // en un retiro pagamos nosotros: no aplica
+    if(!it) return null;
+    // Sirve para las dos formas que andan dando vueltas: el item del historial unificado
+    // (claves en minúscula) y la solicitud cruda del portal (MAYÚSCULAS). Antes sólo
+    // entendía la primera, así que la tarjeta del Inicio —que es donde el operador decide—
+    // nunca mostraba el aviso.
+    const crudo = it._raw || it;
+    const tipo = String(it.tipo || it.TIPO || it.TIPO_SOLICITUD ||
+                        crudo.TIPO || crudo.TIPO_SOLICITUD || "").toUpperCase();
+    if(tipo !== "CARGA") return null;              // en un retiro pagamos nosotros: no aplica
+
+    // Abierta: o lo dice el item, o se deduce del estado.
+    const estado = String(it.estado || it.ESTADO || crudo.ESTADO || "").toUpperCase();
+    const abierta = (it.pendiente === true) ||
+      (it.pendiente === undefined && estado !== "" &&
+       ["ACREDITADA","PAGADA","APROBADA","RECHAZADA","CANCELADA","CERRADA","CERRADO",
+        "FINALIZADA","OK","COMPLETADA","REVERTIDA"].indexOf(estado) === -1);
+    if(!abierta) return null;                      // ya cerrada: la activa cambió mil veces
+
     if(typeof getBilleraLanding !== "function") return null;
     const activa = getBilleraLanding();
     if(!activa) return null;
-    const idSol = String((it._raw && (it._raw.ID_BILLETERA || it._raw.id_billetera)) || it.billetera_id || "").trim();
-    const idAct = String(activa.ID_BILLETERA || "").trim();
-    const nomSol = String(it.billetera_nombre || "").trim();
+
+    const idSol  = String(it.billetera_id || it.ID_BILLETERA || crudo.ID_BILLETERA || "").trim();
+    const nomSol = String(it.billetera_nombre || it.BILLETERA_NOMBRE || crudo.BILLETERA_NOMBRE || "").trim();
+    const idAct  = String(activa.ID_BILLETERA || "").trim();
     const nomAct = String(activa.NOMBRE_VISIBLE || "").trim();
-    if(!nomSol && !idSol) return null;          // sin dato no se inventa un aviso
+    if(!nomSol && !idSol) return null;             // sin dato no se inventa un aviso
+
     const mismo = (idSol && idAct) ? (idSol === idAct)
                                    : (nomSol.toUpperCase() === nomAct.toUpperCase());
     if(mismo) return null;
     return { vieja: nomSol || idSol, actual: nomAct || idAct };
   }catch(_e){ return null; }
 }
+
 window._billeteraVieja = _billeteraVieja;
 
 function _esTipoClave(t){

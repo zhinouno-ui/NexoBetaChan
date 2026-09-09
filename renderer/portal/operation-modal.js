@@ -270,7 +270,20 @@ const api = {};
       // CARGA prolijo: titular (quien transfiere) prominente + destino declarado (billetera que usó).
       _refHtml += '<div style="grid-column:1/-1"><span style="color:#64748b;font-size:11px;text-transform:uppercase;font-weight:800">Titular que transfiere</span>'
         + '<div style="font-size:17px;font-weight:900;color:#fff;line-height:1.15">'+deps.esc(_titular)+'</div></div>'
-        + ((_destino&&_destino!=='—') ? '<div style="grid-column:1/-1;margin-top:3px"><span style="color:#64748b">Destino declarado:</span> <b style="color:#e6edf3">'+deps.esc(_destino)+'</b></div>' : '');
+        + ((_destino&&_destino!=='—') ? '<div style="grid-column:1/-1;margin-top:3px"><span style="color:#64748b">Destino declarado:</span> <b style="color:#e6edf3">'+deps.esc(_destino)+'</b></div>' : '')
+        // El jugador no refrescó el portal: transfirió a la billetera que estaba antes.
+        // Va acá arriba y en ámbar porque es el dato que cambia la decisión.
+        + (function(){
+            try{
+              const bv = deps.window._billeteraVieja ? deps.window._billeteraVieja(s) : null;
+              if(!bv) return '';
+              return '<div style="grid-column:1/-1;margin-top:6px;padding:8px 10px;border-radius:8px;'
+                + 'background:rgba(245,158,11,.14);border:1px solid #f59e0b;color:#fde68a;font-size:12.5px;line-height:1.5">'
+                + '<b>⚠ No refrescó el portal.</b> Transfirió a <b>'+deps.esc(bv.vieja)+'</b>, '
+                + 'pero la billetera activa ahora es <b>'+deps.esc(bv.actual)+'</b>. '
+                + 'Revisá en cuál entró la plata antes de aprobar.</div>';
+            }catch(_e){ return ''; }
+          })()
     }
     deps.document.getElementById('portalJobRef').innerHTML = _refHtml;
     // Avisos de bono sin liberar / CBU compartido (solo en RETIRO). Informan, no bloquean.

@@ -1631,3 +1631,48 @@ la pestaña está en segundo plano).
 Cada fila dice de dónde salió: **«Te la cargamos nosotros»** para las de mostrador. Sin eso, una
 carga que la persona no pidió por el portal parece una solicitud suya que no recuerda haber
 mandado.
+
+---
+
+## D-52 · El aviso de billetera vieja no llegaba donde se decide
+
+Juan probó el caso exacto: *«en la misma sesión cambié la billetera y subí la solicitud sin
+recargar la página. NODO no muestra que la billetera está incorrecta hasta que desplegás la
+carga, y tampoco lo destaca»*.
+
+El aviso existía desde **D-39**, pero sólo en el Centro de Solicitudes. La tarjeta de
+**«Solicitudes pendientes» del Inicio** —que es la que el operador mira— la dibuja otro código
+(`renderer/portal/requests-view.js`), y el **modal de aprobar** otro más. En ninguno de los dos
+aparecía.
+
+### Por qué no aparecía aunque la función estuviera
+
+`_billeteraVieja` leía sólo la forma del historial unificado: `it.pendiente`, `it.tipo`,
+`it.billetera_nombre`, `it.billetera_id` — todo en minúscula. Pero la tarjeta del Inicio y el
+modal trabajan con la **solicitud cruda del portal**, que viene en MAYÚSCULAS: `s.TIPO`,
+`s.ESTADO`, `s.BILLETERA_NOMBRE`, `s.ID_BILLETERA`. La función recibía el objeto, no encontraba
+nada de lo que buscaba, y devolvía `null` sin quejarse.
+
+Ahora entiende las dos formas y deduce «abierta» del estado cuando no viene el flag `pendiente`.
+Verificado contra el bundle real, con BANCO como billetera activa:
+
+| Caso | Resultado |
+|---|---|
+| solicitud cruda del Inicio (el caso de Juan) | ⚠ SALVATIERRA X → BANCO |
+| cruda, con la billetera activa | sin aviso |
+| cruda ya acreditada | sin aviso |
+| cruda de RETIRO | sin aviso |
+| item del historial unificado | ⚠ SALVATIERRA X → BANCO |
+| cruda sin `ID_BILLETERA`, sólo nombre | ⚠ SALVATIERRA X → BANCO |
+
+### Dónde se ve ahora
+
+- **Tarjeta del Inicio**: borde ámbar, franja lateral, y arriba del todo
+  **«⚠ Transfirió a SALVATIERRA X · ahora BANCO»**. Sin desplegar nada.
+- **Modal de aprobar**: un bloque ámbar arriba de los datos —
+  *«⚠ No refrescó el portal. Transfirió a SALVATIERRA X, pero la billetera activa ahora es BANCO.
+  Revisá en cuál entró la plata antes de aprobar.»* Es el último punto antes de acreditar.
+- **Centro de Solicitudes y ficha**: como estaban desde D-39.
+
+La lección se repite: una función que devuelve `null` en silencio cuando no entiende su entrada
+es indistinguible de «no hay nada que avisar».
