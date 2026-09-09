@@ -32,7 +32,7 @@ async function _registrarAdminChunior(addUrl, chunior_uid, monto, notas){
       's.value='+JSON.stringify(String(chunior_uid))+'; s.dispatchEvent(new Event("change",{bubbles:true}));' +
       'm.value='+JSON.stringify(String(monto))+'; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));' +
       'n.value='+JSON.stringify(String(notas||""))+'; n.dispatchEvent(new Event("input",{bubbles:true})); n.dispatchEvent(new Event("change",{bubbles:true}));' +
-      'var snap={ok:true, valS:s.value, valM:m.value, valN:n.value}; b.click(); return snap;' +
+      'var snap={ok:true, valS:s.value, valM:m.value, valN:n.value}; try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click(); return snap;' +
       '})()'
     );
   }catch(e){ return { ok:false, movimientoId:null, error:e.message||'Error inyectando datos' }; }
@@ -96,7 +96,7 @@ async function registrarRecargaFichasChunior(monto){
     // Monto CON SIGNO: negativo descuenta fichas del puesto (no se usa Math.abs a propósito).
     + 'm.value=' + JSON.stringify(String(Number(monto)||0)) + ';'
     + 'm.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));'
-    + 'b.click(); return {ok:true, puesto:puesto};'
+    + 'try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click(); return {ok:true, puesto:puesto};'
     + '})()'
   ).catch(function(e){ return {ok:false, err:(e&&e.message)||'exec falló'}; });
   if(!inj || !inj.ok) return { ok:false, error:'No se pudo completar el formulario ('+((inj&&inj.err)||'')+')' };
@@ -244,7 +244,7 @@ async function _editarMovimientoChunior(tipoUrl, movId, cambios){
       '(function(){' + setMonto + setNotas +
       'var b=document.querySelector("input[name=\'_save\']")||document.querySelector("input[type=\'submit\'],button[type=\'submit\']");' +
       'if(!b) return {ok:false,err:"sin botón guardar"};' +
-      'b.click(); return {ok:true};' +
+      'try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click(); return {ok:true};' +
       '})()'
     );
   }catch(e){ return { ok:false, error:e.message||'Error escribiendo en Chunior' }; }
@@ -408,7 +408,7 @@ async function _anularMovimientoChunior(tipoUrl, movId){
         'var b=document.querySelector("input[name=\'_save\']")||document.querySelector("input[name=\'_addanother\']")||document.querySelector("input[type=\'submit\'],button[type=\'submit\']");' +
         'if(!m||!b) return {ok:false,err:"campos faltantes",hasM:!!m,hasB:!!b};' +
         'm.value="0.1"; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));' +
-        'var snap={ok:true,val:m.value}; b.click(); return snap;' +
+        'var snap={ok:true,val:m.value}; try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click(); return snap;' +
       '})()'
     );
   }catch(e){ return { ok:false, error:e.message||'Error inyectando' }; }
@@ -562,7 +562,7 @@ window.reclamarDepo = function(movId, montoTxt, billeteraTxt){
           const t0=Date.now(); let ready=false;
           while(Date.now()-t0<10000){ ready=await window.chunior.exec('(function(){return !!document.querySelector("input[name=\'_convertir_fichas\']");})()').catch(function(){return false;}); if(ready)break; await new Promise(function(r){ setTimeout(r,300); }); }
           if(!ready){ _trazaPaso('No apareció el botón "Convertir en fichas"','err'); _trazaFin('err'); toast('No se encontró "Convertir en fichas" en Chunior.','red'); return; }
-          const conv = await window.chunior.exec('(function(){var b=document.querySelector("input[name=\'_convertir_fichas\']"); if(!b) return {ok:false}; b.click(); return {ok:true};})()').catch(function(){return {ok:false};});
+          const conv = await window.chunior.exec('(function(){var b=document.querySelector("input[name=\'_convertir_fichas\']"); if(!b) return {ok:false}; try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click(); return {ok:true};})()').catch(function(){return {ok:false};});
           if(!conv || !conv.ok){ _trazaPaso('No se pudo clickear convertir','err'); _trazaFin('err'); toast('No se pudo convertir en fichas.','red'); return; }
           await new Promise(function(r){ setTimeout(r,2000); });
           _trazaPaso('Convertido en fichas en Chunior','ok');

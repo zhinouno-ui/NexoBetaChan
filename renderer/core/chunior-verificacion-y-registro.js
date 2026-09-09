@@ -225,7 +225,7 @@ async function _registrarCargaEnChuniorImpl(chunior_uid, monto, usuario){
       'n.value='+JSON.stringify(String(usuario||""))+'; n.dispatchEvent(new Event("input",{bubbles:true})); n.dispatchEvent(new Event("change",{bubbles:true}));' +
       // Devolvemos los valores PRE-click para verificar que entraron antes del submit
       'var snap={ok:true, valS:s.value, valM:m.value, valN:n.value};' +
-      'b.click();' +
+      'try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click();' +
       'return snap;' +
       '})()'
     );
@@ -392,7 +392,7 @@ async function _cambiarBilleteraChunior(movId, nuevoChuniorUid){
         's.value=' + JSON.stringify(String(nuevoChuniorUid)) + ';' +
         's.dispatchEvent(new Event("change",{bubbles:true}));' +
         'var snap={ok:true, valS:s.value};' +
-        'b.click();' +
+        'try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click();' +
         'return snap;' +
       '})()'
     );
@@ -484,7 +484,7 @@ async function _transferirEntreBilleterasChunior(origenUid, destinoUid, monto, n
         'd.value=' + JSON.stringify(String(destinoUid)) + '; d.dispatchEvent(new Event("change",{bubbles:true}));' +
         'm.value=' + JSON.stringify(String(monto))      + '; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));' +
         'if(n){ n.value=' + JSON.stringify(String(notas||"")) + '; n.dispatchEvent(new Event("input",{bubbles:true})); }' +
-        'b.click();' +
+        'try{document.querySelectorAll("ul.messagelist, li.success, .messagelist .success, .success").forEach(function(n){ try{ n.remove(); }catch(_x){} });}catch(_x){} b.click();' +
         'return {ok:true};' +
       '})()'
     );

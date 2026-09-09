@@ -2016,3 +2016,46 @@ cerraron las tres formas de que esto vuelva a pasar **sin dejar rastro**:
 Y se agregó un paso de traza al entrar al cierre, para que la próxima vez se vea si llegó o no.
 
 **La #198680 hay que cerrarla a mano**: son $500.000 pagados que la solicitud no refleja.
+
+---
+
+## D-62 · Dos operaciones distintas con el MISMO N° de Chunior
+
+Mirando las trazas de los dos intentos de retiro de herlan:
+
+```
+intento 1:  Registrado en Chunior (N° 9631137 · GIORDANO)   $ 500.000
+intento 2:  Registrado en Chunior (N° 9631137 · CASTRO)     $ 1
+```
+
+**El mismo número, distinta billetera, distinto monto.** Y `9631137` no existe en `historial_ops`
+—porque el cierre nunca corrió (D-61)—, así que el número salió del scraper, no de la base.
+
+### Por qué
+
+Después de enviar el formulario, el panel espera a que aparezca un cartel de éxito y le saca el
+número:
+
+```js
+var ok = document.querySelector("li.success") || document.querySelector(".messagelist .success") ...
+```
+
+**Nunca verifica que el cartel sea NUEVO.** Si la navegación no ocurrió —validación, lentitud,
+sesión caída, el click que no llegó a enviar— el cartel de la operación **anterior** sigue en la
+página, el poll lo encuentra al instante y devuelve **su** número.
+
+Es peor que un dato equivocado: un N° repetido rompe el cotejo (dos operaciones apuntando al
+mismo movimiento) y **tapa una operación que quizás nunca se registró en Chunior**. El operador ve
+el tilde verde y se queda tranquilo.
+
+### Qué se hizo
+
+Antes de hacer click, se **borran de la página los carteles de éxito que ya estén**. Así,
+cualquier `.success` que aparezca después es necesariamente de esta operación. Va en los **ocho**
+envíos que parsean número: cargas, retiros, propinas, depósitos sin reclamar, transferencias y
+anulaciones.
+
+Verificado que el snippet inyectado parsea como JS y que efectivamente remueve los carteles.
+
+**Queda pendiente comprobar en Chunior** si el retiro de $1 quedó anotado con otro número o si no
+se anotó: desde acá no se puede saber, porque la fila nunca llegó a `historial_ops`.
