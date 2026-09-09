@@ -5765,6 +5765,39 @@ function _obtenerTurnoDeFecha(ts){
   return 'TN';
 }
 
+// _obtenerTurnoDeFecha clasifica SOLO por hora: devuelve "TM" para las 07:30 de hoy, de ayer
+// y de la semana pasada. Filtrar por "turno actual" traía entonces todo lo de esa franja de
+// cualquier día — de ahí "15 cargas aprobadas en el turno" con una carga por día en la lista.
+//
+// Un turno es un bloque de UN día concreto. Estas funciones dan sus bordes reales, en hora
+// argentina (UTC−3). El caso complicado es TN, que cruza la medianoche: a la 01:00 el turno
+// noche en curso empezó AYER a las 22:00.
+const _TURNO_INICIO = { TM: 6, TT: 14, TN: 22 };
+
+function _bordesTurno(turno, ahoraMs){
+  const ini = _TURNO_INICIO[String(turno||"").toUpperCase()];
+  if(ini === undefined) return null;
+  const MS_H = 3600 * 1000;
+  const ahora = (ahoraMs == null ? Date.now() : ahoraMs);
+  // Se trabaja en "hora AR corrida": se resta el huso y se razona en UTC.
+  const ar = new Date(ahora - 3 * MS_H);
+  const diaAR = Date.UTC(ar.getUTCFullYear(), ar.getUTCMonth(), ar.getUTCDate());
+  let desdeAR = diaAR + ini * MS_H;
+  // Si ese turno todavía no arrancó hoy, el que corresponde es el de ayer.
+  if(desdeAR > ar.getTime()) desdeAR -= 24 * MS_H;
+  const desde = desdeAR + 3 * MS_H;          // de vuelta a UTC real
+  return { desde: desde, hasta: desde + 8 * MS_H };
+}
+
+// ¿Esta fecha cae dentro del turno indicado (el bloque concreto, no la franja)?
+function _enTurno(ts, turno){
+  if(!ts) return false;                      // sin fecha no se puede afirmar que sea del turno
+  const b = _bordesTurno(turno);
+  if(!b) return false;
+  const t = new Date(ts).getTime();
+  return !isNaN(t) && t >= b.desde && t < b.hasta;
+}
+
 function _turnoActual(){
   const d = new Date(Date.now() - 3 * 3600 * 1000);
   const h = d.getUTCHours();
@@ -5805,12 +5838,11 @@ function renderSolicitudesKpis(listaCompleta){
   const arr = Array.isArray(listaCompleta) ? listaCompleta : [];
   const turnoEfectivo = _filtroTurno === 'ACTUAL' ? _turnoActual() : _filtroTurno;
 
+  // Antes esto comparaba la FRANJA horaria y contaba lo de esa hora de cualquier día. Y las
+  // filas sin fecha entraban siempre, sumando al total sin pertenecer a ningún turno.
   const arrTurno = (turnoEfectivo === 'TODOS')
     ? arr
-    : arr.filter(function(x){
-        if(!x.fecha) return true;
-        return _obtenerTurnoDeFecha(x.fecha) === turnoEfectivo;
-      });
+    : arr.filter(function(x){ return _enTurno(x.fecha, turnoEfectivo); });
 
   const cargas = arrTurno.filter(function(x){ return x.tipo === 'CARGA'; });
   const retiros = arrTurno.filter(function(x){ return x.tipo === 'RETIRO'; });
@@ -6175,10 +6207,7 @@ function renderHistorialUnificado(){
   // expresamente algo de otro dia, esconderlo por turno seria devolverle una lista vacia.
   const _hayBusquedaRemota = (window._histBusquedaServidor || []).length > 0;
   if(turnoEfectivo !== 'TODOS' && !_hayBusquedaRemota){
-    lista = lista.filter(function(it){
-      if(!it.fecha) return true;
-      return _obtenerTurnoDeFecha(it.fecha) === turnoEfectivo;
-    });
+    lista = lista.filter(function(it){ return _enTurno(it.fecha, turnoEfectivo); });
   }
 
   if(fuente) lista = lista.filter(function(it){ return it.fuente===fuente; });

@@ -1884,3 +1884,41 @@ espacios ni puntuación, minúsculas). Probado:
 
 El mensaje dice qué poner, no sólo que está mal: *«Ese es el titular de NUESTRA cuenta, no el
 tuyo. Poné el nombre completo del titular de la cuenta desde la que transferiste.»*
+
+---
+
+## D-59 · «15 operaciones en el turno» con una carga por día en la lista
+
+Juan: *«fijate por qué esas 15 operaciones… estás viendo que hay una carga cada día,
+literalmente, en la misma vista»*. El KPI decía **15 cargas aprobadas · En el turno seleccionado**
+y la lista de al lado mostraba 9/9, 9/9, 7/9, 7/9.
+
+**Los dos tenían razón.** El clasificador de turnos miraba **sólo la hora**:
+
+```js
+function _obtenerTurnoDeFecha(ts){
+  const d = new Date(new Date(ts).getTime() - 3*3600*1000);
+  const h = d.getUTCHours();
+  if(h >= 6 && h < 14) return 'TM';
+  ...
+}
+```
+
+Devuelve `TM` para las 07:30 **de hoy, de ayer y de la semana pasada**. Así que «turno actual»
+significaba en realidad «esa franja horaria, de cualquier día que esté cargado». El KPI contaba
+todo eso; la lista, ordenada por fecha, dejaba ver que eran de días distintos.
+
+Encima, el filtro incluía las filas **sin fecha** (`if(!x.fecha) return true`), que sumaban al
+total sin pertenecer a ningún turno.
+
+### Qué se hizo
+
+Un turno es un **bloque de un día concreto**, no una franja. `_bordesTurno(turno)` calcula sus
+límites reales en hora argentina y `_enTurno(fecha, turno)` responde si una fecha cae adentro.
+
+El caso que había que resolver bien es **TN, que cruza la medianoche**: a la 01:00 el turno noche
+en curso empezó **ayer** a las 22:00. Y si el operador elige un turno que hoy todavía no arrancó,
+se toma el de ayer — que es el último que existió.
+
+Verificado: un turno dura exactamente 8 h; las 07:30 de ayer **no** son del TM de hoy; las 15:00
+no son TM; una fila sin fecha no cuenta; TN empieza a las 22:00 AR y dura 8 h sin partirse.

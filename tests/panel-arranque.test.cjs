@@ -664,3 +664,47 @@ test('el panel trae al arrancar los titulares que bloqueó otra PC', async () =>
   await sb.sincronizarTitularesBloqueados();
   assert.ok(sb.titularBloqueado('otrojugador', 'Juan Perez'), 'después de sincronizar, sí');
 });
+
+test('un turno es un bloque de un día, no una franja horaria de todos', () => {
+  // El KPI decía "15 cargas aprobadas en el turno" mientras la lista mostraba una carga por DÍA.
+  // Causa: se comparaba sólo la hora, así que "TM" incluía las 07:30 de hoy, de ayer y de la
+  // semana pasada.
+  const sb = arrancarPanel();
+  const enTurno = vm.runInContext('_enTurno', sb);
+  const bordes = vm.runInContext('_bordesTurno', sb);
+
+  // Hora argentina = UTC−3. Las 10:00 AR de hoy son las 13:00 UTC.
+  const hoyAR = (h, m) => {
+    const ahora = new Date(Date.now() - 3 * 3600 * 1000);
+    return new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth(), ahora.getUTCDate(), h, m || 0) + 3 * 3600 * 1000);
+  };
+
+  const b = bordes('TM');
+  assert.ok(b && b.hasta - b.desde === 8 * 3600 * 1000, 'un turno dura 8 h');
+
+  // Mismo horario, otro día: NO es del turno.
+  const ayerMismaHora = new Date(hoyAR(7, 30).getTime() - 24 * 3600 * 1000);
+  assert.equal(enTurno(ayerMismaHora.toISOString(), 'TM'), false, 'las 07:30 de ayer no son de este turno');
+
+  // Fuera de la franja tampoco.
+  assert.equal(enTurno(hoyAR(15, 0).toISOString(), 'TM'), false, 'las 15:00 no son TM');
+
+  // Sin fecha no se cuenta: antes entraba siempre y engordaba el KPI.
+  assert.equal(enTurno(null, 'TM'), false);
+  assert.equal(enTurno('', 'TM'), false);
+
+  // Un turno inexistente no rompe.
+  assert.equal(enTurno(new Date().toISOString(), 'XX'), false);
+});
+
+test('el turno noche cruza la medianoche y no se parte en dos', () => {
+  const sb = arrancarPanel();
+  const bordes = vm.runInContext('_bordesTurno', sb);
+  const b = bordes('TN');
+  assert.ok(b, 'TN tiene bordes');
+  assert.equal(b.hasta - b.desde, 8 * 3600 * 1000, 'de 22:00 a 06:00 son 8 h');
+
+  // Arranca a las 22:00 hora argentina, sea de hoy o de ayer según cuándo se pregunte.
+  const inicioAR = new Date(b.desde - 3 * 3600 * 1000);
+  assert.equal(inicioAR.getUTCHours(), 22, 'el turno noche empieza a las 22:00 AR');
+});
