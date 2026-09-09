@@ -30,7 +30,18 @@ function arrancarPanel(opciones) {
   const sb = {
     console: { log: noop, warn: noop, error: noop, info: noop },
     document: doc,
-    localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    // localStorage DE VERDAD, en memoria. Con uno que no guardaba nada, todo lo que usa caché
+    // local -- titulares bloqueados, la ruta del portal, el período del historial -- parecía
+    // roto en los tests aunque anduviera.
+    localStorage: (() => {
+      const m = new Map();
+      return {
+        getItem: (k) => (m.has(String(k)) ? m.get(String(k)) : null),
+        setItem: (k, v) => { m.set(String(k), String(v)); },
+        removeItem: (k) => { m.delete(String(k)); },
+        clear: () => m.clear()
+      };
+    })(),
     sessionStorage: { getItem: () => null, setItem: noop },
     setTimeout: () => 0, setInterval: () => 0, clearTimeout: noop, clearInterval: noop,
     navigator: { userAgent: 'node', clipboard: {} },
@@ -615,4 +626,41 @@ test('"Ya cargada" no está en la tarjeta del Inicio, sólo en el rechazo', () =
   sb.abrirModal = (_t, b) => { cuerpo = b; };
   sb.v154pRechazarSolicitud('191800');
   assert.match(cuerpo, /Ya se la cargué/, 'pero sí adentro del rechazo');
+});
+
+test('bloquear un titular ahora va a la base, no sólo al localStorage de la PC', async () => {
+  // El bloqueo vivía en el localStorage de UNA máquina: el portal no se enteraba nunca y le
+  // seguía ofreciendo al jugador el titular que le acababan de bloquear; otro operador en otra
+  // PC tampoco lo veía; y limpiar los datos del navegador lo borraba.
+  const llamadas = [];
+  const sb = arrancarPanel({ rpc: async (fn, params) => { llamadas.push({ fn, params }); return { data: {}, error: null }; } });
+  sb.toast = () => {};
+  vm.runInContext('pcOperativa = "P1";', sb);
+
+  sb.marcarTitularRechazado('pruebaxx', 'pepep eeedcf', 'BLOQUEADO_POR_OPERADOR');
+  const bloq = llamadas.find((c) => c.fn === 'panel_titular_bloquear');
+  assert.ok(bloq, 'tiene que escribir en la base');
+  assert.equal(bloq.params.p_usuario, 'pruebaxx');
+  assert.equal(bloq.params.p_titular, 'pepep eeedcf');
+  assert.equal(bloq.params.p_pc, 'P1');
+
+  // Y el caché local sigue, para que la pantalla reaccione sin esperar la red.
+  assert.ok(sb.titularBloqueado('pruebaxx', 'pepep eeedcf'), 'el local es el caché rápido');
+
+  sb.desmarcarTitularRechazado('pruebaxx', 'pepep eeedcf');
+  assert.ok(llamadas.find((c) => c.fn === 'panel_titular_desbloquear'), 'desbloquear también');
+  assert.equal(sb.titularBloqueado('pruebaxx', 'pepep eeedcf'), null);
+});
+
+test('el panel trae al arrancar los titulares que bloqueó otra PC', async () => {
+  const sb = arrancarPanel({
+    rpc: async (fn) => (fn === 'panel_titulares_bloqueados'
+      ? { data: [{ usuario: 'otrojugador', titular: 'Juan Perez', motivo: 'x', created_at: '2026-09-09T10:00:00Z' }], error: null }
+      : { data: {}, error: null })
+  });
+  vm.runInContext('pcOperativa = "P1";', sb);
+
+  assert.equal(sb.titularBloqueado('otrojugador', 'Juan Perez'), null, 'todavía no lo conoce');
+  await sb.sincronizarTitularesBloqueados();
+  assert.ok(sb.titularBloqueado('otrojugador', 'Juan Perez'), 'después de sincronizar, sí');
 });

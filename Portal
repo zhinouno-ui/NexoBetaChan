@@ -2113,7 +2113,26 @@ function validarTitular(valor){
   return "";
 }
 // Sanea el campo mientras escribe y avisa en el momento si copió algo que no va.
+// Titulares bloqueados. El operador los marca desde el panel y hasta ahora eso quedaba en el
+// localStorage DE ESA PC: el portal no se enteraba nunca y le seguía ofreciendo al jugador el
+// mismo titular que le acababan de bloquear. Ahora se consulta a la base.
+// Se pregunta ANTES de crear la solicitud: rechazarla después es hacerle perder el viaje y
+// sumar un rechazo más a la pila.
+async function _titularBloqueado(titular){
+  const t = String(titular||"").trim();
+  if(!t || !state.usuario) return null;
+  try{
+    const r = await rpc("landing_titular_bloqueado", {
+      p_usuario: state.usuario, p_titular: t, p_public_code: state.publicCode||""
+    });
+    if(r.error) return null;                 // sin respuesta no se traba a nadie
+    const d = normalize(r.data) || (Array.isArray(r.data) ? r.data[0] : r.data) || {};
+    return d && d.bloqueado === true ? d : null;
+  }catch(_e){ return null; }
+}
+
 function onTitularInput(el){
+
   if(!el) return;
   const antes=el.value, limpio=_soloLetras(antes);
   if(limpio!==antes){
@@ -2312,6 +2331,15 @@ async function enviarSolicitudCargaDirecta(){
     _titularAviso(el,_malT);
     haptic(18);
     return toast("Revisá el titular");
+  }
+  // Bloqueado por un operador. Se corta acá, con el campo marcado y el motivo a la vista.
+  const _bloq = await _titularBloqueado(titular);
+  if(_bloq){
+    const el=$("cargaTitular");
+    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
+    _titularAviso(el, "Este titular está bloqueado para tu cuenta. Poné el titular de la cuenta desde la que transferiste, o escribinos por el chat.");
+    haptic(18);
+    return toast("Ese titular no se puede usar");
   }
   const btn=$("btnEnviarCarga");
   if(btn){btn.disabled=true;btn.textContent="Enviando...";}

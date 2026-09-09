@@ -47,19 +47,52 @@ window.titularBloqueado = function(usuario, titular){
 window.titularYaRechazado = function(usuario, titular){ return !!window.titularBloqueado(usuario, titular); };
 
 // usuario === '*' → bloqueo global (para TODAS las cuentas).
+// El bloqueo vivía SOLO en el localStorage de esta PC. El portal no se enteraba nunca —otro
+// origen, otra máquina— y le seguía ofreciendo al jugador el titular que acabábamos de
+// bloquear; otro operador en otra PC tampoco lo veía; y si se limpiaban los datos del
+// navegador, el bloqueo desaparecía. Ahora se guarda en la base y el local queda como caché
+// para que la pantalla reaccione al instante sin esperar la red.
 window.marcarTitularRechazado = function(usuario, titular, motivo){
   if(!titular) return;
   const m = _rechStore();
   const k = (usuario === '*') ? _rechClaveGlobal(titular) : _rechClave(usuario, titular);
   m[k] = { motivo:motivo||'', fecha:new Date().toISOString(), titular:String(titular||''), usuario:String(usuario||'') };
-  const ks = Object.keys(m); if(ks.length > 500) delete m[ks[0]];   // tope: no crece para siempre
+  const ks = Object.keys(m); if(ks.length > 500) delete m[ks[0]];   // tope del caché local
   _rechSave(m);
+
+  // A la base, que es lo que ve el portal y el resto de las PCs. No se espera: si falla, el
+  // bloqueo local igual quedó y se avisa.
+  try{
+    supabaseClient.rpc('panel_titular_bloquear', {
+      p_pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : null),
+      p_usuario: (usuario === '*' ? '*' : String(usuario||'')),
+      p_titular: String(titular||''),
+      p_motivo: motivo || null,
+      p_operador: (window.operador && (window.operador.usuario||window.operador.nombre)) || null,
+      p_secret: window.PANEL_DATA_SECRET
+    }).then(function(r){
+      if(r && r.error){
+        console.warn('[titular bloqueado] no se guardó en la base:', r.error.message);
+        try{ toast('⚠ El bloqueo quedó sólo en esta PC: '+(r.error.message||''), 'orange'); }catch(_e){}
+      }
+    });
+  }catch(e){ console.warn('[titular bloqueado]', e); }
 };
 window.desmarcarTitularRechazado = function(usuario, titular){
   const m = _rechStore();
   delete m[_rechClave(usuario, titular)];
   delete m[_rechClaveGlobal(titular)];        // desbloquear siempre limpia los dos
   _rechSave(m);
+  try{
+    supabaseClient.rpc('panel_titular_desbloquear', {
+      p_pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : null),
+      p_usuario: String(usuario||''),
+      p_titular: String(titular||''),
+      p_secret: window.PANEL_DATA_SECRET
+    }).then(function(r){
+      if(r && r.error) console.warn('[titular desbloqueado] no se borró en la base:', r.error.message);
+    });
+  }catch(e){ console.warn('[titular desbloqueado]', e); }
 };
 window.titularesBloqueadosTodos = function(){
   const m = _rechStore();
@@ -215,3 +248,23 @@ try{
 // Nexo (nexo.js). Lo que se fue es la pantalla, no el dato.
 
 // ══════════════════════════════════════════════════════════════════════════
+
+// Traer los bloqueos de la oficina al arrancar. Sin esto, una PC sólo conoce los que bloqueó
+// ella misma: el operador del turno siguiente, en otra máquina, no ve nada.
+window.sincronizarTitularesBloqueados = async function(){
+  try{
+    const pc = (typeof pcOperativa !== 'undefined' ? pcOperativa : null);
+    if(!pc) return;
+    const { data, error } = await supabaseClient.rpc('panel_titulares_bloqueados', {
+      p_pc: pc, p_secret: window.PANEL_DATA_SECRET
+    });
+    if(error || !Array.isArray(data)) return;
+    const m = _rechStore();
+    data.forEach(function(b){
+      const u = String(b.usuario||'');
+      const k = (u === '*') ? _rechClaveGlobal(b.titular) : _rechClave(u, b.titular);
+      m[k] = { motivo:b.motivo||'', fecha:b.created_at||'', titular:String(b.titular||''), usuario:u };
+    });
+    _rechSave(m);
+  }catch(e){ console.warn('[titulares bloqueados] sync', e); }
+};

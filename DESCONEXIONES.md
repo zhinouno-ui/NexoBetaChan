@@ -1766,3 +1766,57 @@ lo útil para cotejar, pero implica leer de Chunior con la ventana ocupada unos 
 en vez de tenerlo como sistema aparte. En palabras de Juan: *«agregá el monto real si tenés dife,
 agregalo en todas las billeteras, el sistema verifica»*. Convierte algo que hay que entender en
 un campo al lado del saldo.
+
+---
+
+## D-56 · Bloquear un titular no salía de esa PC
+
+Juan: *«acabo de bloquear ese titular, ¿por qué no se ve reflejado en la página?»*.
+
+Porque el bloqueo se guardaba acá:
+
+```js
+function _rechSave(m){ localStorage.setItem(_RECH_KEY, JSON.stringify(m)); }
+```
+
+**El `localStorage` de esa PC.** No hay ninguna tabla: lo verifiqué, no existe nada parecido a
+`titulares_bloqueados` en la base. Consecuencias, todas reales:
+
+- **El portal no se entera nunca.** Es otro origen y otra máquina: le seguía ofreciendo al
+  jugador el titular prellenado que acabábamos de bloquear.
+- **Otro operador en otra PC tampoco lo ve.** Cada máquina conoce sólo los que bloqueó ella.
+- **Si se limpian los datos del navegador, el bloqueo desaparece.**
+- Había un **tope de 500** y el más viejo se borraba solo, sin avisar.
+
+O sea que bloquear un titular sólo servía para el auto-rechazo **de esa PC, en ese perfil**.
+
+### Qué se hizo
+
+**Tabla `titulares_bloqueados`** (`pc_codigo`, `usuario` —con `'*'` = todas las cuentas de la
+oficina—, `titular_norm`, `titular`, `motivo`, `operador`), con índice único por oficina + usuario
++ titular normalizado.
+
+**La normalización es compartida.** `nodo_norm_titular()` en la base hace lo mismo que
+`_normNombre()` en el panel: minúsculas, sin acentos, lo que no es alfanumérico pasa a un espacio,
+trim. Si las dos no coinciden, el bloqueo no matchea y no sirve para nada. Probado: `pepep eeedcf`
+y `  PEPEP   EEEDCF ` dan el mismo resultado.
+
+**Cuatro RPCs:** una que usa el portal (`landing_titular_bloqueado`, sin secreto: es un sí/no
+sobre un dato que la persona ya tiene delante), y tres del panel para bloquear, desbloquear y
+listar.
+
+**El panel escribe en la base y mantiene el local como caché**, para que la pantalla reaccione al
+instante sin esperar la red. Si la escritura falla, avisa que el bloqueo quedó sólo en esa PC.
+Y al resolver la oficina en el login, **trae los bloqueos de las otras PCs**.
+
+**El portal pregunta antes de crear la solicitud**, no después: rechazarla después es hacerle
+perder el viaje a la persona y sumar un rechazo más a la pila. Si está bloqueado, marca el campo
+y explica qué hacer.
+
+Verificado contra la base con el caso de Juan: bloqueado para `pruebaxx` da `true`; el mismo
+titular para otro usuario, `false`; desde otra oficina, `false`.
+
+### Lo que queda por decidir
+
+El bloqueo es **por oficina**. Un titular que se usa para estafar en P1 sigue habilitado en P4.
+Hacerlo global entre oficinas es una decisión de negocio, no técnica — queda anotado.

@@ -229,6 +229,10 @@ async function _chuniorConfirmarPuesto(value, text){
     // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
     try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}
 
+    // Los titulares bloqueados los pudo haber marcado OTRA PC: hasta ahora cada máquina sólo
+    // conocía los suyos. Se traen de la base ahora que la oficina está resuelta.
+    try{ if(typeof sincronizarTitularesBloqueados==="function") setTimeout(function(){ sincronizarTitularesBloqueados(); }, 800); }catch(_e){}
+
     // 5. Si NODO todavía no se finalizó (primer login), hacerlo ahora
     if(!_nodoListo){
       finalizarLogin(true);
