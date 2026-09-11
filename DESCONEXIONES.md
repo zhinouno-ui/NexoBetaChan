@@ -2281,3 +2281,87 @@ generaciones queda como la buena antes de tocar nada del chat.
 | D-69 · P8 | **abierto** · falta saber si es oficina nueva |
 | D-73 · iniciar chat desde el panel | **abierto** · depende de resolver D-74 primero |
 | D-74 · dos generaciones de chat | **abierto** · hay que decidir cuál queda antes de tocar el chat |
+
+
+# ¿QUÉ PUEDE FRENAR QUE SE SUMEN MÁS OFICINAS? · 2026-09-11
+
+Relevamiento pedido después de descubrir D-72 (una lista de oficinas escrita a mano frenaba a
+P6, P7 y P8). Se buscó el mismo patrón en cuatro lugares: funciones SQL, restricciones de la
+base, tablas de catálogo, y el código del panel y del admi.
+
+**Lo que está bien** (queda anotado para no volver a investigarlo):
+
+- No hay **ninguna restricción** (`CHECK`) en la base que limite los códigos de oficina.
+- `_normalizar_pc` termina en `else upper(p_raw)`: deja pasar cualquier oficina.
+- `pcAliasesHist()` (`renderer/core/historial-operaciones.js:9`) termina en `return v ? [v] : ["P1"]`:
+  P8 devuelve `["P8"]`. El historial no se rompe.
+- `canonPc` en `validacion-pc.js` y `validacion-scope.js` también deja pasar lo desconocido.
+- **P8 ya está completa**: ruta pública activa, 6 alias de Chunior y 29 billeteras. Es una
+  oficina real y provisionada, no un código mal tipeado.
+
+## D-75 · El respaldo de "código de ruta → oficina" manda a P1 lo que no conoce
+
+`landing_portal_v16_pc_from_code` es un `case` con los códigos de las cinco primeras oficinas
+y **`else 'P1'`**. No rechaza lo desconocido: lo convierte en P1.
+
+Probado contra los códigos reales:
+
+| Oficina | Código | Resuelve a |
+|---|---|---|
+| P1–P5 | rt-a8f31 … rt-x2v61 | correcto |
+| P6 | rt-r5023 | **P1** |
+| P7 | rt-m2z3r | **P1** |
+| P8 | rt-xvv80 | **P1** |
+
+**No es un bloqueador activo.** `landing_portal_v16_crear_solicitud` resuelve primero contra
+`landing_rutas_publicas` y sólo cae en el `case` si la tabla no encontró la ruta o está
+inactiva. Las 8 oficinas tienen su ruta activa, así que hoy no se dispara.
+
+**Es una trampa latente**, y por eso se anota: si una ruta se desactiva, se borra o el código
+llega mal escrito, en vez de fallar con `AGENTE_NO_RESUELTO` la solicitud pasa a P1 **en
+silencio**. De P1 a P5 el respaldo acierta de casualidad; de P6 en adelante manda la operación a
+la oficina equivocada. Y como el asistente de alta genera el código al azar (`"rt-"+random`),
+toda oficina nueva nace con un código que ese `case` no conoce.
+
+### Qué falta
+
+Sacar el `else 'P1'`: que devuelva null y que el llamador levante `AGENTE_NO_RESUELTO`. Fallar
+es correcto; adivinar la oficina con plata de por medio, no.
+
+## D-76 · El admi sólo deja filtrar de P1 a P5
+
+En `admi-V23-COMPLETO-con-whaticket.html`, los tres selectores de oficina del tablero
+—`dash_pc` (línea 57), `live_pc` (124) y `growth_pc` (181)— tienen las opciones escritas a mano
+y llegan hasta P5. Además hay varios `["P1","P2","P3","P4","P5","P6"]` sembrados en
+`loadPcs`, `fillPcSelects`, `renderOfiCards`, `adminFillAjustesSelects` y `fillHistorialPcSelect`.
+
+**Desde el panel de administración no se puede filtrar por P6, P7 ni P8**: esas oficinas no
+aparecen en los desplegables aunque tengan operación real.
+
+## D-77 · Las autorespuestas de soporte excluyen a P8
+
+`trg_soporte_autorespuesta` tiene `v_reales text[] := array['P1'..'P7']` con el comentario
+"acá contesta de verdad". P8 quedó afuera: no recibe la autorespuesta de soporte.
+
+## D-78 · El scope estricto de Verificaciones sólo sabe descartar P1 a P5
+
+`renderer/extensions/validacion-scope.js:138-151` saca de la tabla las filas de otras oficinas
+comparando contra una lista de textos fija: P1, PC1, P2, PC2, P3, PC3, P4, PC4, SANCHEZ, P5, PC5.
+
+P6, P7 y P8 no están en esa lista, así que **sus filas no se descartan en ninguna oficina**: se
+ven desde todas. Es la misma clase de fuga entre oficinas que D-60, pero al revés — no es que
+una oficina vea de más por error de consulta, es que el filtro no sabe que existen.
+
+(El alias sí resuelve bien: `PC_ALIAS[c] || [c]` deja pasar P8. El problema es sólo el descarte.)
+
+## D-79 · Un desplegable de oficina con P1–P5 fijo en la cola de validación
+
+`renderer/extensions/validacion-cola.js:290` arma `<option value="P1">…<option value="P5">` a
+mano. Mismo patrón que D-76, del lado del panel.
+
+## Pendiente de revisar
+
+`panel_nodo_list_chats` tiene un `or upper(coalesce(cs.pc_codigo,'')) = 'P1'` dentro del filtro
+de oficina, que haría visibles los chats de P1 desde cualquier oficina. No se terminó de
+verificar porque hoy es discutible: `chat_sesiones` está congelada desde junio (D-74) y no se
+crean sesiones nuevas. Revisarlo cuando se decida qué generación de chat queda.
