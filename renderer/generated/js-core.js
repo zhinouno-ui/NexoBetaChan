@@ -3655,12 +3655,14 @@ window.sincronizarTitularesBloqueados = async function(){
   }catch(e){ console.warn('[titulares bloqueados] sync', e); }
 };
 // ── Datos de ingreso del jugador ────────────────────────────────────────────
-// Lo que hay que mandarle para que entre a la plataforma: usuario, clave y el teléfono con el
-// que quedó vinculado. La clave NO se inventa: sale de la última que le pusimos nosotros
-// —RESET_CLAVE del panel o CAMBIO_CLAVE del portal— y si no hay ninguna, se dice y se ofrece
-// cambiarla. Medido: sólo el 3,9 % de los usuarios tiene clave conocida, así que el camino
-// normal va a ser "no la sé → se la cambio → se la paso".
+// Lo que hay que mandarle para que entre: usuario, clave y un enlace que lo deja adentro YA
+// VALIDADO (token propio, 30 minutos, uno solo por usuario). La clave NO se inventa: sale de la
+// última que le pusimos —RESET_CLAVE del panel o CAMBIO_CLAVE del portal—. La clave estándar de
+// la operación es 12345a: si figura otra, o no sabemos ninguna, se refresca de un toque desde
+// acá mismo, que es donde el operador ya está parado. Medido: sólo el 3,9 % de los usuarios
+// tenía clave conocida, así que refrescarla es el camino normal, no la excepción.
 window.PLATAFORMA_URL = localStorage.getItem("nodo_plataforma_url") || "https://bet-300.pw";
+window.CLAVE_ESTANDAR = "12345a";
 
 window.pjDatosIngreso = async function(usuario){
   const u = String(usuario||"").trim();
@@ -3685,13 +3687,22 @@ window.pjDatosIngreso = async function(usuario){
   const tel   = String(d.telefono||"").trim();
   const cuando = d.clave_fecha ? new Date(d.clave_fecha).toLocaleDateString("es-AR") : "";
   const uEsc = u.replace(/'/g,"\\'");
+  const esEstandar = clave === window.CLAVE_ESTANDAR;
+
+  // El enlace con token: entra ya validado, sin tipear usuario ni clave. Es UNO solo —generar
+  // otro anula el anterior— y es lo que se manda siempre. Si no se puede generar (sin vínculo,
+  // sin oficina resuelta), se cae al dominio pelado, que al menos lo deja en la puerta.
+  let enlace = "";
+  try{
+    if(window.crmEnlaceAccesoUrl) enlace = (await window.crmEnlaceAccesoUrl(u, "INICIO")) || "";
+  }catch(_e){}
 
   // El texto que se copia y se manda. Sin la clave no se arma: mandar "Clave: —" es peor que
   // no mandar nada.
   const texto = "Usuario: " + u + "\n"
               + (clave ? ("Clave: " + clave + "\n") : "")
               + (tel ? ("Teléfono registrado: " + tel + "\n") : "")
-              + "Entrá en: " + window.PLATAFORMA_URL;
+              + "Entrá en: " + (enlace || window.PLATAFORMA_URL);
   window._pjTextoIngreso = texto;
 
   const fila = function(k, v, extra){
@@ -3703,28 +3714,44 @@ window.pjDatosIngreso = async function(usuario){
   const cuerpo =
       fila('Usuario', '<b class="mono" style="font-size:15px;color:#fff">'+escapeHtml(u)+'</b>')
     + fila('Clave', clave
-        ? '<b class="mono" style="font-size:15px;color:#facc15">'+escapeHtml(clave)+'</b>'
+        ? '<b class="mono" style="font-size:15px;color:'+(esEstandar?'#22c55e':'#facc15')+'">'+escapeHtml(clave)+'</b>'
+          + (esEstandar ? '' : '<div class="small" style="color:#fbbf24">no es la estándar ('+escapeHtml(window.CLAVE_ESTANDAR)+')</div>')
           + (cuando ? '<div class="small" style="color:#8b949e">puesta el '+escapeHtml(cuando)
               + (d.clave_origen==='portal' ? ' · la pidió él' : ' · se la pusimos') + '</div>' : '')
         : '<span style="color:#f87171">No sabemos cuál es</span>'
-          + '<div class="small" style="color:#8b949e">nunca se la cambiamos desde acá</div>')
+          + '<div class="small" style="color:#8b949e">refrescala acá y queda en '+escapeHtml(window.CLAVE_ESTANDAR)+'</div>')
     + fila('Teléfono registrado', tel
         ? '<b class="mono" style="font-size:15px">'+escapeHtml(tel)+'</b>'
         : '<span style="color:#f87171">Sin teléfono</span>')
-    + fila('Entra en', '<span class="mono">'+escapeHtml(window.PLATAFORMA_URL)+'</span>')
+    + fila('Entra en', enlace
+        ? '<span class="mono" style="font-size:11px;color:#7dd3fc;word-break:break-all">'+escapeHtml(enlace)+'</span>'
+          + '<div class="small" style="color:#22c55e">entra ya validado · vale 30 minutos</div>'
+        : '<span class="mono">'+escapeHtml(window.PLATAFORMA_URL)+'</span>'
+          + '<div class="small" style="color:#8b949e">sin enlace validado — va a tener que ingresar a mano</div>')
     + (clave ? '' :
         '<div class="alert-box" style="margin-top:12px">La clave no se puede recuperar: no se guarda en ningún lado '
-        + 'salvo cuando se la cambiamos nosotros. Cambiásela y te la paso acá mismo.</div>');
+        + 'salvo cuando se la cambiamos nosotros. Refrescala acá y te la paso en el mismo texto.</div>');
 
+  // Un solo toque y sin preguntar cuál: la clave de la operación es SIEMPRE la estándar. Cuando
+  // ya la tiene, el botón queda apagado pero disponible (sirve si el jugador dice que no entra).
   const acciones =
-      (clave ? '<button class="btn btn-green" onclick="pjCopiarIngreso()">📋 Copiar para mandar</button>' : '')
-    + (clave && tel ? '<button class="mini-btn blue" onclick="pjIngresoWhatsapp(\''+escapeHtml(uEsc)+'\')">💬 Mandar por WhatsApp</button>' : '')
-    + '<button class="mini-btn yellow" onclick="cerrarModal();cambiarClaveJugador(\''+escapeHtml(uEsc)+'\')">🔑 '
-      + (clave ? 'Cambiar la clave' : 'Cambiarle la clave ahora') + '</button>';
+      '<button class="mini-btn '+(esEstandar?'gray':'yellow')+'" onclick="pjRefrescarClave(\''+escapeHtml(uEsc)+'\')">🔑 '
+    + (esEstandar ? 'Volver a poner ' : 'Refrescar la clave a ') + escapeHtml(window.CLAVE_ESTANDAR) + '</button>';
 
+  // El botón azul del modal es el que copia: antes se le pasaba (null, '') y salía mudo y muerto.
   abrirModal('🔑 Datos de ingreso · '+escapeHtml(u),
     cuerpo + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'+acciones+'</div>',
-    null, '');
+    pjCopiarIngreso, '📋 Copiar datos');
+};
+
+// Refresca la clave a la estándar sin preguntar nada y vuelve a la ficha, ya con la clave nueva
+// y un enlace nuevo. resetClaveRapido la cambia en el agente y la deja anotada en el historial,
+// que es de donde panel_datos_ingreso la vuelve a leer.
+window.pjRefrescarClave = async function(usuario){
+  const u = String(usuario||"").trim(); if(!u) return;
+  try{ cerrarModal(); }catch(_e){}
+  await resetClaveRapido(u, window.CLAVE_ESTANDAR);
+  try{ pjDatosIngreso(u); }catch(_e){}
 };
 
 window.pjCopiarIngreso = function(){
@@ -3748,19 +3775,6 @@ window.pjCopiarIngreso = function(){
       navigator.clipboard.writeText(t).then(ok).catch(porTextarea);
     } else porTextarea();
   }catch(_e){ porTextarea(); }
-};
-
-window.pjIngresoWhatsapp = function(usuario){
-  const t = window._pjTextoIngreso || "";
-  if(!t){ toast("No hay nada para mandar.","yellow"); return; }
-  // Se manda al teléfono VINCULADO, que es el mismo que aparece en el cuadro.
-  const m = t.match(/Tel[eé]fono registrado:\s*(\S+)/i);
-  const tel = m ? String(m[1]).replace(/\D/g,'') : '';
-  if(!tel){ toast("Ese jugador no tiene teléfono cargado.","yellow"); return; }
-  const numero = tel.length === 10 ? ('549' + tel) : tel;
-  try{
-    window.open("https://web.whatsapp.com/send?phone="+numero+"&text="+encodeURIComponent(t), "_blank");
-  }catch(_e){ toast("No se pudo abrir WhatsApp.","red"); }
 };
 
 // PERFIL DE JUGADOR — layout de "record page" copiado de los CRM probados
@@ -4384,7 +4398,11 @@ window._retiroPagadoDelHistorial = function(solicitudId){
 };
 
 window._retiroParcialInfo = function(s){
-  const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+  // El total salía SIEMPRE del monto de la solicitud, ignorando el que registró la RPC de
+  // parciales. Con un monto mal cargado —hay solicitudes que entraron del portal con un cero
+  // de más (D-65)— la caja mostraba cifras delirantes y "cuánto falta" quedaba sin sentido.
+  // Manda el total que usó el motor de pagos; el de la solicitud queda de respaldo (D-66).
+  let total = 0;
   let pagado = 0, pagadoAlt = 0;
   try{
     let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
@@ -4395,7 +4413,9 @@ window._retiroParcialInfo = function(s){
     // escribe el panel). Si un pago quedó registrado en uno solo, los números no coinciden y el
     // retiro se ve "a medio pagar" aunque esté saldado. Guardamos el otro para poder avisarlo.
     pagadoAlt = Math.abs(Number(m.monto_pagado!=null ? m.monto_pagado : pagado)||0);
+    total = Number(rp.total)||0;
   }catch(_e){}
+  if(!(total>0)) total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   if(total>0 && pagado>total) pagado=total;
   const _alt = (total>0 && pagadoAlt>total) ? total : pagadoAlt;
   return {

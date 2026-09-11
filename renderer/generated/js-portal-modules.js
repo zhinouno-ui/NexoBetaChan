@@ -1816,7 +1816,7 @@ function _rv2RenderConfirmar(){
     // Con todas confirmadas el cierre ya salió solo (ver _rv2Confirmar). El botón queda como
     // reintento manual por si ese cierre automático falló, no como paso obligatorio.
     +   (faltan===0
-         ? '<button class="mini-btn green" style="font-weight:800" onclick="_rv2Finalizar()">Cerrar el retiro</button>'
+         ? '<button class="mini-btn green" style="font-weight:800" onclick="this.disabled=true;_rv2Finalizar()">Cerrar el retiro</button>'
          : '<span class="small" style="color:#8b949e;align-self:center">Faltan '+faltan+' transferencia(s)</span>')
     + '</div></div>';
   el.style.display='block';
@@ -1873,7 +1873,13 @@ api._rv2Confirmar = async function(bid){
 };
 
 // Finaliza: marca la solicitud (parcial/completa), avisa al usuario y registra el historial.
-api._rv2Finalizar = async function(){
+// Candado de reentrada. El botón "Cerrar el retiro" no tenía ninguno: cada clic escribía una
+// fila en historial_ops y volvía a notificar al usuario. En la solicitud 84401 quedaron ONCE
+// filas de $500.000 en 20 segundos —con intervalos de hasta 1 ms, imposibles para una persona—
+// todas SIN número de Chunior: la transferencia fue una sola, el registro se disparó once
+// veces. Si además cada clic ajustó el saldo de la billetera, ese saldo quedó mal (D-64).
+let _rv2Cerrando = false;
+const _rv2FinalizarInterno = async function(){
   const st = deps.withdrawalState.current;
   // Este return existía y era silencioso. Se llega acá DESPUÉS de haber extraído las fichas y
   // debitado la billetera: irse sin hacer nada y sin decir nada deja la plata afuera y la
@@ -2007,6 +2013,15 @@ api._rv2Finalizar = async function(){
   deps.cerrarRetiroV2();
   try{ if(typeof deps.cerrarExpedienteSolicitud === 'function') deps.cerrarExpedienteSolicitud(); else if(deps.window.cerrarExpedienteSolicitud) deps.window.cerrarExpedienteSolicitud(); }catch(_e){}
   try{ if(typeof deps.cerrarPortalJobModal === 'function') deps.cerrarPortalJobModal(); else if(deps.window.cerrarPortalJobModal) deps.window.cerrarPortalJobModal(); }catch(_e){}
+};
+api._rv2Finalizar = async function(){
+  if(_rv2Cerrando){
+    try{ deps.toast('El retiro ya se está cerrando · esperá','yellow'); }catch(_e){}
+    return;
+  }
+  _rv2Cerrando = true;
+  try{ return await _rv2FinalizarInterno.apply(this, arguments); }
+  finally{ _rv2Cerrando = false; }
 };
 
 

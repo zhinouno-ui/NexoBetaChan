@@ -302,7 +302,7 @@ test('los datos de ingreso no inventan una clave que no sabemos', async () => {
   await sb.pjDatosIngreso('lmaurod');
 
   assert.match(modal.cuerpo, /No sabemos cuál es/);
-  assert.match(modal.cuerpo, /Cambiarle la clave ahora/, 'el camino real es cambiarla y pasarla');
+  assert.match(modal.cuerpo, /Refrescar la clave a 12345a/, 'el camino real es refrescarla y pasarla');
   assert.ok(!/Copiar para mandar/.test(modal.cuerpo), 'sin clave no hay nada que copiar');
   assert.match(modal.cuerpo, /3517352547/, 'el teléfono sí lo sabemos');
 });
@@ -324,15 +324,28 @@ test('con clave conocida arma el texto listo para mandar', async () => {
   assert.match(t, /bet-300/, 'y adónde entrar');
 });
 
-test('el WhatsApp de ingreso le pega el 549 a un número de 10 dígitos', () => {
-  const sb = arrancarPanel();
-  let abierto = '';
-  sb.open = (u) => { abierto = u; };
-  sb._pjTextoIngreso = 'Usuario: x\nClave: y\nTeléfono registrado: 3517352547\nEntrá en: https://bet-300.pw';
-  sb.pjIngresoWhatsapp('x');
+test('la ficha de ingreso ya no ofrece WhatsApp, y el botón azul dice qué hace', async () => {
+  // WhatsApp Web no carga adentro de Electron: window.open abría otra ventana de Electron y la
+  // página quedaba colgada. Y el botón azul del modal salía mudo y muerto: (null, '').
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: [{ usuario: 'lmaurod', telefono: '3517352547', clave: '12345a' }], error: null }) });
+  sb.toast = () => {};
+  let modal = null;
+  sb.abrirModal = (titulo, cuerpo, saveFn, saveText) => { modal = { titulo, cuerpo, saveFn, saveText }; };
+  await sb.pjDatosIngreso('lmaurod');
 
-  assert.match(abierto, /phone=5493517352547/, 'sin el 549 WhatsApp no lo encuentra');
-  assert.match(abierto, /web\.whatsapp\.com/);
+  assert.equal(typeof sb.pjIngresoWhatsapp, 'undefined', 'la función se borró');
+  assert.ok(!/WhatsApp/i.test(modal.cuerpo), 'y no queda el botón');
+  assert.equal(modal.saveText, '📋 Copiar datos');
+  assert.equal(typeof modal.saveFn, 'function', 'el botón azul ahora copia');
+});
+
+test('la clave que se pasa es siempre la estándar de la operación', async () => {
+  const sb = arrancarPanel({ rpc: () => Promise.resolve({ data: [{ usuario: 'lmaurod', telefono: '3517352547', clave: 'otracosa9' }], error: null }) });
+  sb.toast = () => {};
+  sb.abrirModal = () => {};
+  await sb.pjDatosIngreso('lmaurod');
+  assert.equal(sb.CLAVE_ESTANDAR, '12345a');
+  assert.match(sb._pjTextoIngreso, /Clave: otracosa9/, 'se muestra la real, no una inventada');
 });
 
 test('actualizarSolicitudSupabase escribe donde viven las solicitudes de verdad', async () => {
@@ -739,4 +752,198 @@ test('una billetera sin oficina cargada no se descarta', () => {
   vm.runInContext('pcOperativa = "P4";', sb);
   vm.runInContext('billeteras.push({ID_BILLETERA:"b1",NOMBRE_VISIBLE:"SIN PC",PC:"",ACTIVA:"SI",SELECCIONADA_MANUAL:"SI"});', sb);
   assert.ok(sb.getBilleraLanding(), 'sin PC en la fila no se puede afirmar que sea ajena');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EL CIRCUITO DEL RETIRO PARCIAL, de punta a punta
+// 32 cierres manuales en las 7 oficinas quedaron SIN motivo guardado. Que el código fuente
+// se vea bien no alcanza: estas pruebas ejercitan el circuito sobre el bundle que corre.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Una solicitud de retiro a medio pagar, con el progreso ya registrado por la RPC.
+function _solParcial(pagado){
+  return {
+    ID: 4242, TIPO: 'RETIRO', ESTADO: 'EN_PROCESO',
+    USUARIO: 'demoparcial', TITULAR: 'Demo Parcial', MONTO: 2000000,
+    METADATA: { retiro_parcial: {
+      total: 2000000, pagado: pagado,
+      pagos: [{ monto: pagado, fecha: '2026-09-01T10:00:00Z', operador: 'op1' }]
+    } }
+  };
+}
+
+// getElementById de mentira: devuelve lo que se le pida por id, y algo inofensivo para el resto.
+function _domCon(campos){
+  return function(id){
+    if(Object.prototype.hasOwnProperty.call(campos, id)) return campos[id];
+    return { style:{}, classList:{ add(){}, remove(){}, toggle(){}, contains(){ return false; } },
+             value:'', textContent:'', innerHTML:'', appendChild(){}, remove(){},
+             setAttribute(){}, getAttribute(){ return null; },
+             querySelector(){ return null; }, querySelectorAll(){ return []; },
+             scrollIntoView(){}, focus(){} };
+  };
+}
+
+test('parcial · el motivo y la nota llegan, y no pisan lo ya pagado', async () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  sb.registrarEnHistorial = async () => ({});
+  sb.cargarSolicitudesPortal = async () => {};
+  sb._parcialesEnProceso = [_solParcial(500000)];
+
+  let modal = null;
+  sb.abrirModal = (titulo, cuerpo, saveFn, saveText) => { modal = { titulo, cuerpo, saveFn, saveText }; };
+  sb.document.getElementById = _domCon({
+    cierreParcialMotivo: { value: 'SE_LO_JUGO' },
+    cierreParcialNota:   { value: 'Se jugó el resto del saldo antes de terminar de cobrar.' }
+  });
+
+  let enviado = null;
+  sb.actualizarSolicitudPortal = async (id, estado, extra) => { enviado = { id, estado, extra }; return { error: null }; };
+
+  sb.cerrarRetiroSaldado(4242);
+  assert.equal(typeof modal.saveFn, 'function', 'el modal de cierre tiene que pedir el motivo');
+  await modal.saveFn();
+
+  assert.ok(enviado, 'el cierre tiene que llegar al servidor');
+  assert.equal(enviado.estado, 'PAGADA');
+  assert.equal(enviado.extra.cierre_motivo, 'SE_LO_JUGO', 'el motivo viaja');
+  assert.match(enviado.extra.cierre_nota, /se jugó el resto/i, 'la nota viaja');
+  assert.equal(enviado.extra.etapa, 'RETIRO_CIERRE_MANUAL');
+
+  // Lo que más importa: la RPC hace merge SHALLOW, así que si el panel manda retiro_parcial
+  // sin lo que ya había, BORRA el progreso. Tiene que venir completo.
+  const rp = enviado.extra.retiro_parcial;
+  assert.equal(rp.total, 2000000, 'el total ya registrado se conserva');
+  assert.equal(rp.pagado, 500000, 'lo ya pagado se conserva');
+  assert.equal(rp.pagos.length, 1, 'los pagos anteriores se conservan');
+  assert.equal(rp.cierre.motivo, 'SE_LO_JUGO');
+  assert.equal(rp.cierre.faltante, 1500000, 'queda asentado cuánto quedó sin pagar');
+});
+
+test('parcial · sin explicar qué pasó, no se cierra', async () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  sb._parcialesEnProceso = [_solParcial(500000)];
+
+  let modal = null;
+  sb.abrirModal = (t, c, saveFn) => { modal = { saveFn }; };
+  sb.document.getElementById = _domCon({
+    cierreParcialMotivo: { value: 'OTRO' },
+    cierreParcialNota:   { value: 'nada' }   // menos de 8 caracteres
+  });
+  let llamado = false;
+  sb.actualizarSolicitudPortal = async () => { llamado = true; return { error: null }; };
+
+  sb.cerrarRetiroSaldado(4242);
+  await modal.saveFn();
+  assert.equal(llamado, false, 'sin nota no se cierra: es el único registro de por qué quedó a medias');
+});
+
+test('parcial · se va a su caja, y la solicitud común se queda en la lista', () => {
+  const sb = arrancarPanel();
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = _domCon({ tablaSolicitudesInicio: caja });
+
+  const carga = { ID: 7, TIPO: 'CARGA', ESTADO: 'PENDIENTE', USUARIO: 'otro', MONTO: 5000, METADATA: {} };
+  sb.V154P.solicitudes = [_solParcial(500000), carga];
+
+  sb.v154pRenderSolicitudesPortalEnInicio();
+
+  assert.equal(sb._parcialesEnProceso.length, 1, 'el parcial sale de la lista principal');
+  assert.equal(String(sb._parcialesEnProceso[0].ID), '4242');
+  assert.match(caja.innerHTML, /otro/, 'y la carga pendiente sigue a la vista');
+  assert.ok(!/demoparcial/.test(caja.innerHTML), 'el parcial ya no tapa la lista');
+});
+
+test('parcial · la caja lo dibuja con su progreso', () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  sb._parcialesEnProceso = [_solParcial(500000)];
+  let modal = null;
+  sb.abrirModal = (titulo, cuerpo) => { modal = { titulo, cuerpo }; };
+
+  sb.verRetirosParciales();
+
+  assert.match(modal.titulo, /Retiros pagándose por partes/);
+  assert.match(modal.cuerpo, /demoparcial/, 'se ve de quién es');
+  assert.match(modal.cuerpo, new RegExp('falta\\s*' + sb.money(1500000).replace(/[$.]/g, '\\$&')), 'y cuánto falta');
+  assert.match(modal.cuerpo, /width:25%/, 'la barra dibuja el 25% pagado');
+});
+
+test('parcial · el progreso avanza a medida que se paga', () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  const dibujar = function(pagado){
+    sb._parcialesEnProceso = [_solParcial(pagado)];
+    let cuerpo = '';
+    sb.abrirModal = (t, c) => { cuerpo = c; };
+    sb.verRetirosParciales();
+    return cuerpo;
+  };
+
+  const alInicio = dibujar(500000);
+  const aMitad   = dibujar(1500000);
+  const alFinal  = dibujar(2000000);
+
+  assert.match(alInicio, /width:25%/);
+  assert.match(aMitad,   /width:75%/, 'el progreso se mueve con cada pago');
+  assert.match(alFinal,  /width:100%/);
+
+  assert.ok(!/saldado/.test(alInicio), 'a medio pagar NO dice saldado');
+  assert.match(alFinal, /saldado/, 'cuando se cubre el total, queda marcado como saldado');
+  // Y el botón cambia: mientras falta plata se puede seguir pagando; saldado, solo cerrar.
+  assert.match(aMitad,  /Pagar más/);
+  assert.ok(!/Pagar más/.test(alFinal), 'saldado ya no ofrece pagar más');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LOS ARREGLOS DEL RELEVAMIENTO DEL 2026-09-11
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('D-66 · el total del parcial sale del progreso, no del monto podrido de la solicitud', () => {
+  const sb = arrancarPanel();
+
+  // Caso real: una solicitud entró del portal con un cero de más (monto 65.000.000) pero el
+  // motor de pagos registró el total bueno. Antes la caja tomaba el monto de la solicitud y
+  // mostraba que faltaban 64 millones.
+  const podrida = sb._retiroParcialInfo({
+    MONTO: 65000000,
+    METADATA: { retiro_parcial: { total: 650000, pagado: 600000 } }
+  });
+  assert.equal(podrida.total, 650000, 'manda el total que usó el motor de pagos');
+  assert.equal(podrida.restante, 50000, 'y "cuánto falta" vuelve a tener sentido');
+
+  // Sin total registrado, sigue valiendo el de la solicitud: no se pierde el caso normal.
+  const sinProgreso = sb._retiroParcialInfo({
+    MONTO: 300000,
+    METADATA: { retiro_parcial: { pagado: 100000 } }
+  });
+  assert.equal(sinProgreso.total, 300000, 'de respaldo, el monto de la solicitud');
+  assert.equal(sinProgreso.restante, 200000);
+});
+
+test('D-70 · abrirChat vuelve a recibir el id de la conversación', () => {
+  const sb = arrancarPanel();
+
+  // El bug: chat-local.js carga último y pisaba la implementación buena con una que NO recibía
+  // id (`async function(){ renderChatListStep2(); }`), así que hacer clic en un chat no abría
+  // nada. La arity es la prueba directa: la rota declaraba cero parámetros.
+  assert.equal(typeof sb.abrirChat, 'function');
+  assert.equal(sb.abrirChat.length, 1, 'la que quedó viva tiene que recibir el id');
+
+  // Y llamarla sin argumentos sigue siendo válido (repinta la lista, no explota).
+  assert.doesNotThrow(() => { sb.abrirChat(); });
+});
+
+test('D-64 · el botón de cerrar el retiro se apaga al primer clic', () => {
+  // El candado de reentrada vive adentro del módulo y no se alcanza desde el sandbox, pero la
+  // otra mitad del arreglo sí se puede verificar donde importa: en el bundle que se distribuye.
+  // Si alguien saca el disabled, esto falla.
+  const bundle = fs.readFileSync(
+    path.join(RAIZ, 'renderer', 'generated', 'js-portal-modules.js'), 'utf8');
+  assert.match(bundle, /onclick="this\.disabled=true;_rv2Finalizar\(\)"/,
+    'el botón tiene que apagarse solo: sin eso, once clics fueron once registros');
+  assert.ok(!/onclick="_rv2Finalizar\(\)"/.test(bundle),
+    'y no puede quedar ninguna versión sin apagar');
 });

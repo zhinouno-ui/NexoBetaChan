@@ -83,7 +83,11 @@ window._retiroPagadoDelHistorial = function(solicitudId){
 };
 
 window._retiroParcialInfo = function(s){
-  const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+  // El total salía SIEMPRE del monto de la solicitud, ignorando el que registró la RPC de
+  // parciales. Con un monto mal cargado —hay solicitudes que entraron del portal con un cero
+  // de más (D-65)— la caja mostraba cifras delirantes y "cuánto falta" quedaba sin sentido.
+  // Manda el total que usó el motor de pagos; el de la solicitud queda de respaldo (D-66).
+  let total = 0;
   let pagado = 0, pagadoAlt = 0;
   try{
     let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
@@ -94,7 +98,9 @@ window._retiroParcialInfo = function(s){
     // escribe el panel). Si un pago quedó registrado en uno solo, los números no coinciden y el
     // retiro se ve "a medio pagar" aunque esté saldado. Guardamos el otro para poder avisarlo.
     pagadoAlt = Math.abs(Number(m.monto_pagado!=null ? m.monto_pagado : pagado)||0);
+    total = Number(rp.total)||0;
   }catch(_e){}
+  if(!(total>0)) total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   if(total>0 && pagado>total) pagado=total;
   const _alt = (total>0 && pagadoAlt>total) ? total : pagadoAlt;
   return {

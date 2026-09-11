@@ -218,12 +218,25 @@
   },true);
 
   ensureCss();
+  // Este reloj reescribía pestañas y marcadores cada 1,8 s sobre la MISMA lista que recargan
+  // otros dos (los chats cada 15 s, el chat abierto cada 5 s). Los marcadores desaparecían con
+  // cada repintado y volvían a aparecer acá: de ahí el parpadeo y el contador saltando 0↔N.
+  // Ahora sólo se toca el DOM si cambió algo de verdad. La firma incluye cuántos marcadores
+  // hay puestos, así que si un repintado se los llevó, se vuelven a poner UNA vez.
+  // Es una MITIGACIÓN: el problema de fondo es que dos sistemas son dueños de la misma lista
+  // y eso se resuelve al unificar el chat (D-71, D-74).
+  let _firmaNoLeidos = '';
   setInterval(function(){
     try{
       notifyNewMessages();
+      const puestos = (document.querySelectorAll('.wq2-unread-final')||[]).length;
+      const firma = allTickets().filter(t=>t.accepted)
+        .map(function(t){ return chatKey(t)+':'+unreadForTicket(t); }).join('|') + '#' + puestos;
+      if(firma === _firmaNoLeidos) return;
+      _firmaNoLeidos = firma;
       updateChatUnreadBadges();
     }catch(_e){}
-  },1800);
+  },4000);
 
   setTimeout(function(){
     try{updateChatUnreadBadges()}catch(_e){}

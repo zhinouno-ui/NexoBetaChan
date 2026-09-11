@@ -8,6 +8,11 @@
   function S(v){return String(v??"")}
   function U(v){return S(v).trim().toUpperCase()}
   function N(v){return S(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim()}
+  // Un teléfono se compara por sus ÚLTIMOS 10 dígitos: 549, 54, 0 y 15 son prefijos de marcado,
+  // no parte del número. Las dos RPC del servidor ya lo hacían (right(...,10)); este filtro, que
+  // corre en el navegador, comparaba texto pelado — así que buscar "5492915129182" no encontraba
+  // al que está guardado como "2915129182". Menos de 6 dígitos no es un teléfono: es ruido.
+  function _tel10(v){ const d=S(v).replace(/\D/g,""); return d.length>=6 ? d.slice(-10) : ""; }
   function money(v){const n=Number(v||0);return isNaN(n)?0:n}
   function fmtMoney(n){try{return "$ "+Math.round(Number(n||0)).toLocaleString("es-AR")}catch(_e){return "$ "+n}}
   function toDate(v){const d=new Date(v||0);return isNaN(d.getTime())?null:d}
@@ -100,39 +105,44 @@
   // Vence a los 30 minutos y al generar uno nuevo el anterior queda anulado. NO es de un solo uso:
   // la RPC nunca marca usado_at, así que la defensa real es la ventana de tiempo, no el consumo.
   window.PORTAL_BASE_URL = localStorage.getItem("nodo_portal_base_url") || "https://portal-bet300-a4xj.vercel.app";
+  // Devuelve la URL del enlace validado, sin tocar el portapapeles ni avisar nada. La usa la
+  // ficha de datos de ingreso, que necesita el enlace ADENTRO del texto que copia el operador.
+  // Enlace LIMPIO sobre el dominio propio de la oficina: https://vip.<dominio>/?t=…
+  //  · en WhatsApp se lee como la marca y no como un ".vercel.app" cualquiera
+  //  · el dominio ya dice de qué oficina es, así que el ?r= sobra y solo ensucia
+  //  · si el token ya fue usado, la persona igual cae en el portal correcto
+  // Sin dominio propio cargado se cae al genérico CON ?r=, que ahí sí hace falta para saber la
+  // oficina (el portal se muda solo al dominio bueno apenas la resuelve).
+  window.crmEnlaceAccesoUrl = async function(usuario, destino){
+    const pc = String((typeof pcOperativa!=="undefined" && pcOperativa) || window.pcOperativa || "").trim();
+    if(!pc) throw new Error("No sé de qué oficina sos. Reabrí el panel.");
+    const op = (typeof operador!=="undefined" && operador && (operador.usuario||operador.nombre)) || "";
+    const r = await supabaseClient.rpc("panel_acceso_link_crear",{
+      p_secret: window.PANEL_DATA_SECRET, p_pc: pc, p_usuario: usuario,
+      p_destino: destino, p_operador: op, p_minutos: 30
+    });
+    if(r.error){
+      // "sin vínculo" y "bloqueado" ya vienen redactados para leer; el resto son técnicos.
+      const m = String(r.error.message||"");
+      throw new Error(/no-auth/i.test(m) ? "Este panel no tiene permiso para generar enlaces. Avisá a soporte."
+                    : m || "No se pudo generar el enlace");
+    }
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    if(!row || !row.o_token) return "";
+    return row.o_host
+      ? ("https://" + row.o_host + "/?t=" + row.o_token)
+      : (window.PORTAL_BASE_URL + "/?r=" + encodeURIComponent(row.o_public_code||"") + "&t=" + row.o_token);
+  };
+
   window.crmEnlaceAcceso = async function(usuario, destino){
     const btnTxt = destino==="RETIRAR" ? "retirar" : "cargar";
-    try{
-      const pc = String((typeof pcOperativa!=="undefined" && pcOperativa) || window.pcOperativa || "").trim();
-      if(!pc){ toast("No sé de qué oficina sos. Reabrí el panel.","red"); return; }
-      const op = (typeof operador!=="undefined" && operador && (operador.usuario||operador.nombre)) || "";
-      const r = await supabaseClient.rpc("panel_acceso_link_crear",{
-        p_secret: window.PANEL_DATA_SECRET, p_pc: pc, p_usuario: usuario,
-        p_destino: destino, p_operador: op, p_minutos: 30
-      });
-      if(r.error){
-        // "sin vínculo" y "bloqueado" ya vienen redactados para leer; el resto son técnicos.
-        const m = String(r.error.message||"");
-        toast(/no-auth/i.test(m) ? "Este panel no tiene permiso para generar enlaces. Avisá a soporte."
-            : m ? m
-            : "No se pudo generar el enlace", "red");
-        return;
-      }
-      const row = Array.isArray(r.data) ? r.data[0] : r.data;
-      if(!row || !row.o_token){ toast("No se pudo generar el enlace","red"); return; }
-      // Enlace LIMPIO sobre el dominio propio de la oficina: https://vip.portal-bet-300.com/?t=…
-      //  · en WhatsApp se lee como la marca y no como un ".vercel.app" cualquiera
-      //  · el dominio ya dice de qué oficina es, así que el ?r= sobra y solo ensucia
-      //  · si el token ya fue usado, la persona igual cae en el portal correcto
-      // Sin dominio propio cargado se cae al genérico CON ?r=, que ahí sí hace falta para
-      // saber la oficina (el portal se muda solo al dominio bueno apenas la resuelve).
-      const url = row.o_host
-        ? ("https://" + row.o_host + "/?t=" + row.o_token)
-        : (window.PORTAL_BASE_URL + "/?r=" + encodeURIComponent(row.o_public_code||"") + "&t=" + row.o_token);
-      const msg = "Entrá por acá para " + btnTxt + ", ya validado 👇\n" + url + "\n\n(Es personal y vale por 30 minutos.)";
-      try{ await navigator.clipboard.writeText(msg); toast("Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp","green"); }
-      catch(_e){ prompt("Copiá el enlace:", url); }
-    }catch(e){ toast("No se pudo generar el enlace","red"); }
+    let url = "";
+    try{ url = await window.crmEnlaceAccesoUrl(usuario, destino); }
+    catch(e){ toast((e && e.message) || "No se pudo generar el enlace","red"); return; }
+    if(!url){ toast("No se pudo generar el enlace","red"); return; }
+    const msg = "Entrá por acá para " + btnTxt + ", ya validado 👇\n" + url + "\n\n(Es personal y vale por 30 minutos.)";
+    try{ await navigator.clipboard.writeText(msg); toast("Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp","green"); }
+    catch(_e){ prompt("Copiá el enlace:", url); }
   };
 
   window.crmFiltrar=function(){
@@ -142,8 +152,10 @@
     // filtraban sobre buildCRM(), que devuelve [] si nadie cargó la lista, así que casi
     // siempre filtraban nada. El orden por score se mantiene, que es el útil por defecto.
     const q=N(qraw);
+    const qTel=_tel10(qraw);
     let arr=data.slice();
-    if(q)arr=arr.filter(j=>N([j.usuario,j.telefono,j.titular,j.billeteraHabitual,j.operadorHabitual,j.accion,j.segmento].join(" ")).includes(q));
+    if(q)arr=arr.filter(j=>N([j.usuario,j.telefono,j.titular,j.billeteraHabitual,j.operadorHabitual,j.accion,j.segmento].join(" ")).includes(q)
+                        || (qTel && _tel10(j.telefono)===qTel));
     arr.sort((a,b)=>b.score-a.score);
     renderCRMTabla(arr);
     // Con texto, manda el servidor: score y segmento calculados sobre TODAS las

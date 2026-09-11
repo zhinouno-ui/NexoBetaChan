@@ -309,7 +309,15 @@
   window.cargarChats = async function(){ renderChatListStep2(); return {ok:true,data:ticketsAgrupados()}; };
   window.cargarChatActual = async function(){ renderChatConversationStep2(); return {ok:true,data:[]}; };
   window.enviarChat = async function(){ enviarChatStep2(); return {ok:true}; };
-  window.abrirChat = async function(){ renderChatListStep2(); };
+  // Este bundle carga DESPUÉS de portal-bridge y portal-chat-unificado, así que esta línea
+  // pisaba la implementación que sí abre el chat. Y ésta ignoraba el id: sólo repintaba la
+  // lista, o sea que hacer clic en una conversación no abría nada (D-70). Ahora delega cuando
+  // le pasan un id, y conserva el repintado cuando la llaman sin argumentos.
+  const _abrirChatPrevio = (typeof window.abrirChat === 'function') ? window.abrirChat : null;
+  window.abrirChat = async function(id){
+    if(id != null && _abrirChatPrevio) return _abrirChatPrevio.call(this, id);
+    renderChatListStep2();
+  };
   window.v15RenderChatList = renderChatListStep2;
   window.v15RenderChatMensajes = renderChatConversationStep2;
   window.v15CargarChatsCompacto = window.cargarChats;

@@ -2059,3 +2059,225 @@ Verificado que el snippet inyectado parsea como JS y que efectivamente remueve l
 
 **Queda pendiente comprobar en Chunior** si el retiro de $1 quedó anotado con otro número o si no
 se anotó: desde acá no se puede saber, porque la fila nunca llegó a `historial_ops`.
+
+
+# RELEVAMIENTO DEL 2026-09-11
+
+Hallazgos abiertos salvo donde diga lo contrario. Sin nombres de jugadores ni de operadores a
+propósito: este archivo está en un repositorio público (ver D-63).
+
+## D-63 · Las claves del panel están publicadas en repos públicos · URGENTE
+
+`PANEL_DATA_SECRET` ("la clave de datos del panel") y `PUSH_SECRET` están escritos en el código
+—`renderer/core/configuracion-y-estado.js`, `services/worker-bootstrap.js`, `SQL_cotejo_casos.sql`—
+y ese código está publicado:
+
+- `NexoBetaChan`: en la rama `integracion` y en el historial desde el 2026-09-06.
+- `nodo-panel`: en 8 commits del historial. La punta de `main` ya no lo trae.
+- La clave de push está en la **punta de `main` de los dos**, no sólo en el historial.
+
+Probado contra Supabase: la clave de datos es la que está en uso y se exige
+(`panel_blindaje.crm_secret.exigir = true`). **Abre 44 funciones**, entre ellas las de
+credenciales de backoffice, datos de acceso de jugadores y alta y selección de billeteras —
+o sea, hay un camino directo a desviar cargas.
+
+**El detalle de cuáles son y qué permite cada una NO se escribe acá**: este archivo está en un
+repositorio público y la clave todavía es válida, así que enumerarlas sería publicar el mapa al
+lado de la llave. El listado completo se pasa por canal privado.
+
+Revisado el 2026-09-10: las 7 billeteras en portal eran las legítimas y no hay llamadas desde IPs
+ajenas en los logs (todo sale de las oficinas y sus proxies). **No hay señal de uso, pero el
+registro de uso no cubre esas funciones** (validan con `_panel_data_auth`, que no registra).
+
+**Plan propuesto, pendiente de decisión:** Supabase acepta la vieja y la nueva durante la
+transición → sale una release que ya no la trae en el código → se carga en cada PC → se da de
+baja la vieja. Rotar vuelve inofensivo el historial: no hace falta reescribir nada.
+
+Aparte: este mismo archivo tiene teléfonos, usuarios de jugadores y titulares, y está publicado.
+
+## D-64 · "Cerrar el retiro" no tiene candado: 11 filas para un solo pago
+
+Solicitud **84401** (P2, 2026-08-08): pidió $756.400, y contra ella hay **12 movimientos por
+$5.700.000**. Mirados uno por uno: el primero es un parcial legítimo de $200.000, y los otros
+**once son de $500.000 desde la misma billetera, en 20 segundos**, con intervalos de 46 ms, 8 ms,
+1 ms y 0 ms. Eso no lo hace una persona: es el botón apretado a repetición.
+
+Las once tienen `chunior_movimiento_id = null` → **ninguna se anotó en Chunior**, así que la
+transferencia real fue una sola. Se duplicó el registro, no la plata.
+
+### Por qué
+
+`renderer/portal/withdrawals-execution.js:258` dibuja
+`<button onclick="_rv2Finalizar()">Cerrar el retiro</button>` y `_rv2Finalizar` (línea 315) **no
+tiene guarda de reentrada**: cada clic escribe una fila en `historial_ops` y notifica de nuevo.
+El camino normal sí cierra el modal enseguida (línea 134), pero este botón no.
+
+### Qué falta
+
+Bloquear el botón al primer clic y una guarda de reentrada en `_rv2Finalizar`. **Sin verificar:**
+si cada clic además ajustó el saldo de la billetera, esa billetera quedó descontada $5.500.000 de
+más. No se puede comprobar por `billetera_movimientos` porque esa tabla arrancó después.
+
+## D-65 · El portal acepta montos absurdos
+
+11 solicitudes donde el monto pedido y el monto real difieren por factor 10, 25 o 100:
+
+| Solicitud | Oficina | Entró como | Era |
+|---|---|---|---|
+| 71213 | P2 | $80.000.000 | $800.000 |
+| 162329 | P2 | $65.000.000 | $650.000 |
+| 11610 | P4 | $25.000.000 | $1.000.000 |
+| + 8 más | P2/P3/P4 | factor 10 | |
+
+**Todas vienen del portal**: `origen_portal = PORTAL_V16`,
+`created_by_rpc = landing_portal_v16_crear_solicitud`, desde navegadores reales (Chrome Android,
+Safari iOS, Samsung Internet). O sea, el jugador escribe el monto y se lo aceptamos.
+
+No se perdió plata —el operador lo corrige al aprobar— pero el campo `monto` queda podrido y
+**cualquier reporte que sume `monto` está inflado por decenas de millones**. La más reciente es
+del 2026-09-06: sigue pasando.
+
+### Qué falta
+
+Validar el monto en el portal contra algo razonable antes de crear la solicitud.
+
+## D-66 · El total del parcial sale del monto de la solicitud, no del progreso
+
+`window._retiroParcialInfo` (`renderer/core/archivo-historial.js:86`) calcula el total así:
+
+```js
+const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+```
+
+Toma el monto **de la solicitud**, no `retiro_parcial.total`. Con un monto podrido (D-65) la caja
+de parciales muestra cifras delirantes y el cálculo de "cuánto falta" queda sin sentido. Fue lo
+que hizo aparecer $64.900.000 "sin pagar" en un relevamiento por oficina.
+
+## D-67 · 15 de 193 parciales: el registro no coincide con la plata movida
+
+Contrastando contra `historial_ops` (contando un movimiento por número de Chunior, porque los
+repetidos comparten número), últimos 45 días:
+
+| Oficina | Parciales | No coinciden | Diferencia neta |
+|---|---|---|---|
+| P4 | 54 | 6 | −$174.799 |
+| P2 | 40 | 4 | +$4.590.000 |
+| P3 | 44 | 2 | +$225.000 |
+| P1 | 3 | 2 | +$50.001 |
+| P6 | 23 | 1 | −$500.000 |
+| P7 | 21 | 0 | — |
+| P5 | 8 | 0 | — |
+
+Los **negativos** son los que importan para el jugador: el registro dice que se pagó más de lo que
+realmente salió, así que puede venir a reclamar contra una solicitud que figura pagada.
+
+El progreso vive en dos lugares que no se sincronizan (`retiro_parcial.pagado` y `monto_pagado`
+suelto) — es D-12, todavía abierto.
+
+## D-68 · 32 cierres manuales sin motivo · EXPLICADO, queda limpiar
+
+En las 7 oficinas hay 32 retiros parciales cerrados a mano y **ninguno guardó el motivo**. En toda
+la historia de la tabla hay 0 solicitudes con `cierre_motivo`, `cierre_nota` o
+`retiro_parcial.cierre`.
+
+**No es un bug.** La nota obligatoria entró el 2026-09-07 (`e8b3fcb`), viajó en v1.2.0 —publicada
+el 2026-09-09 a las 12:41 UTC— y el último cierre manual fue el 2026-09-09 a las 02:14, diez horas
+antes. Hoy las 8 oficinas corren 1.2.0, así que a partir de ahora los cierres tienen que traer
+motivo. Verificado además con 5 pruebas sobre el bundle real (motivo y nota llegan, el progreso
+previo no se pisa, sin nota no cierra, va a su caja, se dibuja y avanza).
+
+### Qué falta
+
+**Comprobación abierta:** el próximo cierre manual tiene que traer `cierre_motivo`. Si aparece uno
+sin motivo, ahí sí hay un defecto y se caza con ese caso.
+
+Y quedan **18 cierres históricos con deuda y sin explicación**. Hay que decidir si se rastrean uno
+por uno o se asumen.
+
+## D-69 · Apareció P8 y no está en ningún relevamiento
+
+`panel_actividad` lista **P8** con latido del 2026-09-11. Todos los cortes por oficina hechos
+hasta ahora asumen 7 oficinas (P1–P7). Hay que revisar si P8 es una oficina nueva o un puesto mal
+codificado, y rehacer los números si corresponde.
+
+## D-70 · `abrirChat` está definido cinco veces y gana el que no sirve
+
+`window.abrirChat` se redefine en cuatro archivos:
+
+| Orden de carga | Archivo | Recibe `id` |
+|---|---|---|
+| 4 | `extensions/portal-bridge.js:116` | sí |
+| 8 | `extensions/portal-chat-unificado.js:103` y `:283` | sí |
+| **10** | **`chat/chat-local.js:312`** | **no** |
+
+`chat-local.js` carga último y define `window.abrirChat = async function(){ renderChatListStep2(); }`
+— **ignora el id y sólo repinta la lista**. Ningún bundle posterior la vuelve a definir. Es el que
+queda vivo, y explica que hacer clic en un chat no abra nada.
+
+## D-71 · El parpadeo del chat: cuatro relojes sobre el mismo DOM
+
+Sobre la misma lista corren a la vez:
+
+- `portal-bridge.js:135` → recarga chats cada **15 s**
+- `portal-bridge.js:136` → recarga el chat abierto cada **5 s**
+- `chat-no-leidos.js:221` → cada **1,8 s** reescribe pestañas y marcadores
+- más timers en `chat-local.js:336`, `chat-estabilidad.js:109`, `chat-macros.js:235` y `chat-hilos.js:685`
+
+El de 1,8 s hace `state.textContent += ' · N nuevos'` y agrega marcadores sobre filas que otro
+timer acaba de repintar. De ahí el parpadeo y el contador que salta 0↔N.
+
+## D-72 · `landing_crear_chat_v2` tiene las oficinas hardcodeadas
+
+```sql
+if v_pc not in ('P1','P2','P3','P4','P5','PC1','PC2','PC3','PC4','PC5') then
+  raise exception 'PC inválida';
+```
+
+**P6, P7 y P8 son rechazadas.** Cualquier chat iniciado desde esas oficinas falla. Las otras
+funciones que crean sesiones (`chat_obtener_o_crear_sesion`, `landing_crear_chat`,
+`nodo_chat_whaticket_accept`) no tienen ese tope.
+
+## D-73 · No se puede iniciar un chat desde el panel
+
+No hay **ni un llamador** de ninguna función de creación de chat en todo el renderer. El panel
+sólo sabe responder sobre un chat que ya existe: `panel_core_enviar_chat_json` busca la sesión y
+devuelve `CHAT_NO_ENCONTRADO` si no está.
+
+El jugador nos puede escribir; nosotros no le podemos escribir primero. La RPC de creación ya está
+habilitada en la lista blanca de `main/panel-rpc.js`, así que falta la acción en el panel (y
+arreglar D-72 antes, o P6/P7/P8 no van a poder).
+
+## D-74 · `chat_sesiones` congelada desde junio, `chat_mensajes` sigue viva
+
+| Tabla | Filas | Últimos 7 días | Última |
+|---|---|---|---|
+| `chat_sesiones` | 116 | **0** | 2026-06-22 |
+| `chat_mensajes` | 427 | **160** | 2026-09-09 |
+| `chat_conversaciones` | 0 | 0 | — |
+
+Los mensajes siguen entrando, pero **no se crea una sesión nueva desde el 22 de junio**. El chat
+que funciona hoy se apoya en 116 sesiones viejas: un jugador sin sesión previa no puede tener una.
+Es la misma forma que D-48 (la tabla muerta).
+
+### Qué falta
+
+Confirmar a qué sesiones se enganchan esos 160 mensajes nuevos, y decidir cuál de las dos
+generaciones queda como la buena antes de tocar nada del chat.
+
+
+## Estado al 2026-09-11 · qué se arregló de este relevamiento
+
+| | Estado |
+|---|---|
+| D-64 · candado en "Cerrar el retiro" | **hecho** · botón que se apaga al primer clic + guarda de reentrada en `_rv2Finalizar` |
+| D-66 · total del parcial | **hecho** · manda `retiro_parcial.total`, el monto de la solicitud queda de respaldo |
+| D-70 · `abrirChat` | **hecho** · `chat-local.js` delega en la implementación real cuando recibe un id |
+| D-71 · parpadeo del chat | **mitigado** · el reloj pasa a 4 s y no toca el DOM si no cambió nada. El problema de fondo (dos dueños de la misma lista) sigue abierto |
+| D-72 · oficinas hardcodeadas | **hecho** · `landing_crear_chat_v2` acepta cualquier `P<n>` / `PC<n>` |
+| D-63 · rotar la clave | **pendiente de decisión** · rompe producción si se hace sin coordinar |
+| D-65 · montos absurdos del portal | **abierto** · hay que validarlo del lado del portal |
+| D-67 · 15 parciales descuadrados | **abierto** · decidir si se rastrean uno por uno |
+| D-68 · 18 cierres históricos con deuda | **abierto** · decidir si se rastrean o se asumen |
+| D-69 · P8 | **abierto** · falta saber si es oficina nueva |
+| D-73 · iniciar chat desde el panel | **abierto** · depende de resolver D-74 primero |
+| D-74 · dos generaciones de chat | **abierto** · hay que decidir cuál queda antes de tocar el chat |
