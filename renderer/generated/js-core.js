@@ -1841,7 +1841,14 @@ function _trazaEl(){
   if(el) return el;
   el = document.createElement('div');
   el.id = 'trazaStrip';
-  el.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9998;max-width:min(560px,92vw);background:#0e1420;border:1px solid #2a3548;border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.5);padding:12px 14px;font-size:12px;color:#c8d2e0;display:none';
+  // Esquina de abajo a la izquierda, apoyada sobre el badge de Agentes. Antes iba centrada
+  // (left:50% + translateX): quedaba flotando en el MEDIO de la pantalla, tapando la tabla y
+  // montándose a la barra de desplazamiento. Va a la izquierda a propósito — de ese lado no hay
+  // scrollbar ni panel de chat, así que se ve igual con el chat abierto o cerrado.
+  el.style.cssText = 'position:fixed;bottom:52px;left:84px;right:auto;transform:none;z-index:9998;'
+    + 'width:max-content;max-width:min(460px,calc(100vw - 110px));background:#0e1420;'
+    + 'border:1px solid #2a3548;border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.5);'
+    + 'padding:12px 14px;font-size:12px;color:#c8d2e0;display:none';
   document.body.appendChild(el);
   return el;
 }
@@ -2810,14 +2817,16 @@ function abrirModalCrearUsuario(){
     '➕ Crear nuevo usuario',
     '<div style="color:#c0cad8;font-size:13px;margin-bottom:12px">Se crea en el casino y queda <b>validado y agendado</b> en el mismo paso.</div>' +
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">USUARIO (alias)</label>' +
-    '<input id="nuevoJugUsuario" type="text" placeholder="ej: martin2024" autocomplete="off" style="margin-bottom:8px">' +
+    '<input id="nuevoJugUsuario" type="text" placeholder="ej: martin2024" autocomplete="off" oninput="_altaNuevoCotejar()" style="margin-bottom:8px">' +
     // El teléfono es lo que ata la cuenta a la persona: sin él la cuenta nace suelta y cuando
     // entra al portal el cotejo no cierra — termina en soporte pidiendo que la validen a mano,
     // por algo que ya sabíamos en el momento de crearla.
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">TELÉFONO <span style="font-weight:400;text-transform:none;color:#777">(con código de área, sin 0 ni 15)</span></label>' +
-    '<input id="nuevoJugTelefono" type="tel" inputmode="tel" placeholder="ej: 11 2345 6789" autocomplete="off" style="margin-bottom:8px">' +
+    '<input id="nuevoJugTelefono" type="tel" inputmode="tel" placeholder="ej: 11 2345 6789" autocomplete="off" oninput="_altaNuevoCotejar()" style="margin-bottom:8px">' +
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">CLAVE INICIAL <span style="font-weight:400;text-transform:none;color:#777">(mín 6 caracteres)</span></label>' +
     '<input id="nuevoJugClave" type="text" placeholder="12345a" value="12345a" autocomplete="off" style="margin-bottom:4px">' +
+    // El veredicto va ARRIBA del botón, no abajo: es lo que decide si hay que crear la cuenta o no.
+    '<div id="nuevoJugCotejo" style="margin-top:8px"></div>' +
     '<div id="nuevoJugRes" style="min-height:16px;margin-top:4px"></div>',
     null,
     'Crear y copiar'
@@ -2831,6 +2840,47 @@ function abrirModalCrearUsuario(){
     document.getElementById("nuevoJugUsuario")?.focus();
   }, 30);
 }
+
+// Cotejo EN VIVO del alta, con la misma tarjeta de veredicto del modal de validar.
+// Antes acá no se verificaba nada: el alias duplicado saltaba recién cuando el casino lo
+// rechazaba, y el teléfono con dueño no saltaba NUNCA — la cuenta nacía pisando el número de
+// otro usuario y el problema aparecía días después, del lado del jugador.
+let _altaNuevoTimer = null;
+function _altaNuevoCotejar(){
+  try{ clearTimeout(_altaNuevoTimer); }catch(_e){}
+  _altaNuevoTimer = setTimeout(_altaNuevoCotejarYa, 500);
+}
+async function _altaNuevoCotejarYa(){
+  const box = document.getElementById('nuevoJugCotejo');
+  if(!box) return;
+  const u = (document.getElementById('nuevoJugUsuario')||{}).value || '';
+  const t = (document.getElementById('nuevoJugTelefono')||{}).value || '';
+  const uT = String(u).trim(), tT = String(t).trim();
+  if(uT.length < 3 && tT.replace(/\D/g,'').length < 6){ box.innerHTML=''; box.__ultimo=''; return; }
+  const marca = uT + '|' + tT;
+  if(box.__ultimo === marca) return;          // no re-cotejar lo mismo en cada tecla
+  box.__ultimo = marca;
+  let r;
+  try{ r = await window.altaCotejarDatos(uT, tT); }catch(_e){ box.innerHTML=''; return; }
+  if(box.__ultimo !== marca) return;          // el operador siguió escribiendo
+  const out = _altaCotejoHtml(uT, tT, r, '_altaNuevoUsarSugerencia', 'antes de crear');
+  box.innerHTML = out.html;
+  // Y que SUENE. Un cartel que aparece debajo del campo no lo ve quien está mirando el teclado:
+  // así el choque de teléfono se descubría con la cuenta ya creada.
+  if(out.alerta && box.__sono !== marca){
+    box.__sono = marca;
+    try{ sonido('solicitud'); }catch(_e){}
+  }
+}
+window._altaNuevoCotejar = _altaNuevoCotejar;
+// Los chips de la tarjeta ("usar «el alias que ya tiene ese número»") completan los campos.
+window._altaNuevoUsarSugerencia = function(usuario, telefono){
+  const iu = document.getElementById('nuevoJugUsuario');
+  const it = document.getElementById('nuevoJugTelefono');
+  if(iu && usuario) iu.value = usuario;
+  if(it && telefono) it.value = telefono;
+  try{ _altaNuevoCotejar(); }catch(_e){}
+};
 
 async function _ejecutarCrearUsuario(){
   const usuario = (document.getElementById("nuevoJugUsuario")?.value || "").trim().toLowerCase().replace(/\s+/g, "");
@@ -8679,7 +8729,8 @@ window._altaCotejoTrigger=function(){
 // Qué teléfono se está por escribir. Vincular PISA el teléfono guardado con el que se
 // valida, así que si el operador valida con el número de la solicitud que tiene abierta
 // —y el cliente lo tipeó mal esa vez— queda guardado el malo y el portal lo rechaza para
-// siempre. Caso aril1213: usó el bueno 199 veces y el mal tipeado 13, y quedó el malo.
+// siempre. Caso real: un jugador usó el número bueno 199 veces y el mal tipeado 13 — y el que
+// quedó guardado fue el malo.
 async function _altaTelRender(){
   const box=document.getElementById('altaTelBox'); if(!box) return;
   const usr=String((document.getElementById('vincUsuarioInp')||{}).value||'').trim()

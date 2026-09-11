@@ -2424,3 +2424,70 @@ Quedan **otros dos botones que usan `prompt()`** y por lo tanto no hacen nada en
 
 No se tocaron en este pase. Hay que reemplazarlos por un modal, como ya se hizo en el resto del
 panel.
+
+
+## D-81 · Todo se mueve solo debajo del cursor · RESUELTO
+
+Reportado por Juan con capturas: "cada vez que se refresca se mueve todo — si tenés el cursor en
+aceptar, se desplaza hacia abajo y después arriba y queda desfasado". Y, pegado a eso, que al
+abrir el modal de una carga aparecía **el proceso de la carga anterior**.
+
+No era un problema: eran cinco, todos de la misma familia — algo aparece o crece DESPUÉS de que
+el operador ya decidió dónde iba a hacer clic.
+
+### 1) El bloque de la cola empujaba la lista entera
+
+`_colaCargaBox()` inserta su bloque **arriba** de `tablaSolicitudesInicio`. Al aprobar, ese
+bloque nacía y empujaba toda la lista hacia abajo; al terminar, desaparecía y la devolvía arriba.
+Justo el recorrido que hace el cursor cuando el operador va a aprobar la siguiente.
+
+### 2) La misma solicitud dibujada dos veces
+
+Mientras estaba en la cola, la carga se veía **en la cola y en pendientes al mismo tiempo**, con
+la tarjeta de pendientes exactamente igual que antes de aprobarla — mismo botón "Aprobar"
+disponible. De ahí la sensación de que la app no estaba haciendo nada, y el doble clic sobre la
+misma carga.
+
+Ahora la cola publica su estado en `window._colaCargaEstado` y **la tarjeta lo muestra en su
+lugar**: badge "⚙ Cargando…" / "🕒 Nº en la cola", y las acciones pasan a "Sacar de la cola" + "Ver".
+El bloque de arriba sólo dibuja lo que NO está a la vista en la lista (que muestra 8), así que en
+el caso normal no aparece y no empuja nada.
+
+### 3) El resultado de una carga escribiéndose en el modal de la siguiente
+
+El modal de aprobar es **uno solo** y se reusa. La operación corre en segundo plano, así que para
+cuando termina el operador ya abrió el de la siguiente solicitud — y ahí se escribía
+"Operando en Agentes...", "✅ CARGA completada", y se le apagaba el botón Aprobar con "Operando...".
+Todo de **otra** solicitud.
+
+`_ejecutarSolicitudAhora` capturaba `portalJobResultado` y `portalJobEnviarBtn` al arrancar y
+escribía sin volver a preguntar. Ahora hay un guard (`_esMiModal`): sólo pinta si el modal sigue
+siendo el de ESA solicitud. Los ~12 lugares que escriben quedaron igual — el envoltorio los filtra.
+
+### 4) Los modales creciendo mientras se los usa
+
+En "Validar y vincular" entran tres bloques async uno abajo del otro (cotejo, teléfono,
+antecedentes) y el modal entero scrolleaba: **los botones bajaban solos** mientras el operador iba
+a apretarlos. Lo mismo en "Aprobar portal" con el bono y el vínculo, que llegan después de que el
+monto ya está pintado.
+
+Arreglado en los dos, y en todos los modales del panel de una: scrollea el **cuerpo**, el título y
+los botones quedan fijos (`.modal` pasa a flex column, `#modalBody` con `overflow-y:auto`).
+En el modal del portal, la parte que crece vive en `#portalJobScroll` y "Monto a procesar" y
+"Aprobar" quedan abajo, quietos.
+
+### 5) Dos carteles ocupando esquinas
+
+- La tira de proceso (`#trazaStrip`) estaba **centrada** (`left:50%`): flotaba en el medio de la
+  pantalla, tapaba la tabla y se montaba a la barra de desplazamiento. Va abajo a la izquierda,
+  donde no hay ni scrollbar ni panel de chat — así se ve igual con el chat abierto o cerrado.
+- El cartel "NODO · PILOTO OPERATIVO" ocupaba la esquina de abajo a la izquierda de forma
+  permanente sin decir nada accionable. Se sacó; el badge de Agentes baja a esa esquina.
+
+## Lo que NO se tocó
+
+**La frecuencia de refresco.** El portal se relee cada 60s y el chat cada 15s, y después de cada
+operación se fuerza otra lectura. No se cambió ningún intervalo: el salto que se veía era el
+layout, no el refresco. Si con esto sigue sintiéndose brusco, lo que hay que revisar es el
+`renderHistorialUnificado`, que repinta la tabla entera sin el guard de "no repintar si no cambió"
+que sí tiene la lista de pendientes.

@@ -5,7 +5,7 @@
   else root.NodoPortalOperationExecution = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function(){
   'use strict';
-  const dependencies = Object.freeze(["_autoregistrarUsuarioSiFalta","_drexGlobalLock","_drexGlobalUnlock","_historialData","_trazaFin","_trazaInit","_trazaPaso","_watchdogTrigger","_wdForceUnlock","_wdLock","_wdUnlock","actualizarSolicitudPortal","ajustarSaldoBilletera","alert","billeteras","callDrex","cargarHistorial","cargarSolicitudesPortal","cerrarPortalJobModal","colaPendientesAdd","confirmarRetiroDuplicado","document","ensureDrexSession","esc","money","normalizar","operador","poblarManualBilletera","portalBilleteraPreferida","refreshAgent","registrarCargaEnChunior","registrarEnHistorial","registrarRetiroEnChunior","renderBillerasInicio","setTimeout","supabaseClient","toast","verificarRetiro24h","window"]);
+  const dependencies = Object.freeze(["_autoregistrarUsuarioSiFalta","_drexGlobalLock","_drexGlobalUnlock","_historialData","_trazaFin","_trazaInit","_trazaPaso","_watchdogTrigger","_wdForceUnlock","_wdLock","_wdUnlock","actualizarSolicitudPortal","ajustarSaldoBilletera","alert","billeteras","callDrex","cargarHistorial","cargarSolicitudesPortal","cerrarPortalJobModal","colaPendientesAdd","confirmarRetiroDuplicado","document","ensureDrexSession","esc","money","normalizar","operador","poblarManualBilletera","portalBilleteraPreferida","refreshAgent","registrarCargaEnChunior","registrarEnHistorial","registrarRetiroEnChunior","renderBillerasInicio","renderSolicitudesPortalEnInicio","setTimeout","supabaseClient","toast","verificarRetiro24h","window"]);
   function create(deps){
 const api = {};
   let _portalSolicitudOperacionEnCurso = false;
@@ -81,10 +81,38 @@ function ultimoSaldoPostUsuarioHistorial(usuario){
     return box;
   }
   function _colaCargaRender(){
+    // Estado público de la cola: la tarjeta de la solicitud lo muestra EN SU LUGAR, en vez de que
+    // la misma carga aparezca dos veces (una acá y otra en pendientes). Esa duplicación es lo que
+    // daba la sensación de que la app no estaba haciendo nada hasta que la fila se borraba sola.
+    const estado = {};
+    _colaCarga.forEach(function(it, i){
+      const sid = String((it.ctx && it.ctx.id) || '');
+      if(sid) estado[sid] = { estado: it.estado, pos: i+1, cid: it.cid };
+    });
+    try{ deps.window._colaCargaEstado = estado; }catch(_e){}
+    // Repintar la lista para que las tarjetas tomen el estado nuevo. No agrega parpadeo: el render
+    // de la lista ya no repinta si el HTML le queda igual.
+    // Por deps, no por window: el bridge lo deja acá (Object.assign(deps, service)) y requests-view
+    // se monta ANTES que este módulo, así que ya está disponible. En window vive con otro nombre.
+    try{
+      const _repintar = deps.renderSolicitudesPortalEnInicio
+                     || deps.window.v154pRenderSolicitudesPortalEnInicio;
+      if(typeof _repintar === 'function') _repintar();
+    }catch(_e){}
+
     const box = _colaCargaBox(); if(!box) return;
-    if(!_colaCarga.length){ box.innerHTML=''; box.style.display='none'; return; }
+    // Acá abajo sólo quedan las que NO están a la vista en pendientes (la lista muestra 8). Antes
+    // se dibujaban TODAS, y este bloque —que vive ARRIBA de la lista— aparecía y desaparecía
+    // empujando todo hacia abajo y de vuelta arriba, justo cuando el operador iba a apretar
+    // "Aprobar" en la tarjeta de al lado. De ahí que el clic terminara desfasado.
+    const sueltas = _colaCarga.filter(function(it){
+      const sid = String((it.ctx && it.ctx.id) || '');
+      return !(sid && deps.document.getElementById('v154pCard' + sid));
+    });
+    if(!sueltas.length){ box.innerHTML=''; box.style.display='none'; return; }
     box.style.display='block';
-    const filas = _colaCarga.map(function(it,i){
+    const filas = sueltas.map(function(it){
+      const i = _colaCarga.indexOf(it);
       const c = it.ctx || {};
       const corriendo = it.estado==='corriendo';
       const tipo = String(c.tipo||'CARGA').toUpperCase();
@@ -105,7 +133,7 @@ function ultimoSaldoPostUsuarioHistorial(usuario){
         + '</div>';
     }).join('');
     box.innerHTML = '<div style="font-size:11px;font-weight:800;color:#8b949e;text-transform:uppercase;'
-      + 'letter-spacing:.5px;margin:2px 2px 0">En cola para cargar · '+_colaCarga.length+'</div>' + filas;
+      + 'letter-spacing:.5px;margin:2px 2px 0">En cola para cargar · '+sueltas.length+'</div>' + filas;
   }
   // Sacar de la cola NO rechaza la solicitud: sólo la desencola. Vuelve a quedar en la
   // bandeja como estaba, para aprobarla de nuevo cuando se quiera.
@@ -183,8 +211,25 @@ async function _ejecutarSolicitudAhora(ctx){
 
     const {id, usuario, tipo, montoAprobado:montoAbs, bilId} = ctx;
     const bil = (deps.billeteras || []).find(b => String(b.ID_BILLETERA) === String(bilId)) || deps.portalBilleteraPreferida(ctx.solicitud);
-    const res = deps.document.getElementById('portalJobResultado');
-    const btn = deps.document.getElementById('portalJobEnviarBtn');
+    const _esMiModal = function(){
+      try{
+        const m = deps.document.getElementById('portalJobModal');
+        return !!(m && m.style.display !== 'none'
+               && Number(m.dataset && m.dataset.solicitudId) === Number(id));
+      }catch(_e){ return false; }
+    };
+    const _pintarEn = function(idEl, html){
+      if(!_esMiModal()) return;
+      const e = deps.document.getElementById(idEl);
+      if(e) e.innerHTML = html;
+    };
+    const res = { set innerHTML(v){ _pintarEn('portalJobResultado', v); } };
+    const _btnEl = function(){ return _esMiModal() ? deps.document.getElementById('portalJobEnviarBtn') : null; };
+    const btn = {
+      set disabled(v){ const e=_btnEl(); if(e) e.disabled = v; },
+      set textContent(v){ const e=_btnEl(); if(e) e.textContent = v; },
+      get style(){ const e=_btnEl(); return e ? e.style : {}; }
+    };
 
     _portalSolicitudOperacionEnCurso = true;
     if(btn){ btn.disabled = true; btn.style.opacity = '.65'; btn.textContent = 'Operando...'; }

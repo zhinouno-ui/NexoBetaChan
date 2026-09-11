@@ -389,7 +389,8 @@ window._altaCotejoTrigger=function(){
 // Qué teléfono se está por escribir. Vincular PISA el teléfono guardado con el que se
 // valida, así que si el operador valida con el número de la solicitud que tiene abierta
 // —y el cliente lo tipeó mal esa vez— queda guardado el malo y el portal lo rechaza para
-// siempre. Caso aril1213: usó el bueno 199 veces y el mal tipeado 13, y quedó el malo.
+// siempre. Caso real: un jugador usó el número bueno 199 veces y el mal tipeado 13 — y el que
+// quedó guardado fue el malo.
 async function _altaTelRender(){
   const box=document.getElementById('altaTelBox'); if(!box) return;
   const usr=String((document.getElementById('vincUsuarioInp')||{}).value||'').trim()

@@ -128,7 +128,29 @@ const api = {};
         // verse ACÁ, en la tarjeta, sin desplegar nada: es lo que decide a qué billetera
         // mirar antes de aprobar.
         const _bv = deps.window._billeteraVieja ? deps.window._billeteraVieja(s) : null;
-        return `<div class="v154p-card"${_bv ? ' style="border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b"' : ''}>
+        // ¿Ya está en la cola de carga? Se dice ACÁ y las acciones cambian. Antes la aprobabas,
+        // la tarjeta quedaba EXACTAMENTE igual que antes, y se aprobaba de nuevo pensando que el
+        // clic se había perdido. Lo único que tiene que cambiar al aceptar es cómo se presenta.
+        const _cola = (deps.window._colaCargaEstado || {})[String(id)] || null;
+        const _colaCorre = !!(_cola && _cola.estado === 'corriendo');
+        const _colaCol = _colaCorre ? '#22c55e' : '#7cc4ff';
+        const _borde = _cola
+          ? ` style="border-color:${_colaCol};box-shadow:inset 3px 0 0 ${_colaCol}"`
+          : (_bv ? ' style="border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b"' : '');
+        // "Ya cargada" NO va en la tarjeta: ya tiene cinco botones y es un caso raro (124 en 30
+        // días). Vive dentro del modal de rechazo, que es cuando el operador se da cuenta.
+        const _acciones = _cola
+          ? ((_colaCorre
+                ? `<button class="v154p-btn" disabled style="opacity:.55;cursor:default">⚙ Cargando…</button>`
+                : `<button class="v154p-btn" onclick="colaCargaQuitar('${_cola.cid}')" style="background:transparent;border:1px solid #7f1d1d;color:#fca5a5">Sacar de la cola</button>`)
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`)
+          : ((tomada ? `<button class="v154p-btn yellow" disabled>Tomada</button>`
+                     : `<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`)
+             + `<button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>`
+             + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
+             + `<button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`);
+        return `<div class="v154p-card" id="v154pCard${id}"${_borde}>
           <div>
             <div class="v154p-main">${deps.esc(s.USUARIO || "-")}</div>
             ${_bv ? `<div style="margin:3px 0;font-size:10.5px;font-weight:900;color:#fbbf24;background:rgba(245,158,11,.12);border:1px solid #f59e0b55;border-radius:6px;padding:2px 6px;display:inline-block">⚠ Transfirió a ${deps.esc(_bv.vieja)} · ahora ${deps.esc(_bv.actual)}</div>` : ""}
@@ -146,18 +168,10 @@ const api = {};
           </div>
           <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${deps.esc(s.TIPO || "-")}</span></div>
           <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
-          <div><span class="v154p-badge">${deps.esc(_estadoLegible(s.ESTADO))}</span></div>
-          <div class="v154p-actions">
-            ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
-            ${_esRet?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
-            <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
-            <!-- "Ya cargada" NO va acá: la tarjeta ya tiene cinco botones y este es un caso raro
-                 (124 en 30 días). Vive dentro del modal de rechazo, que es el momento en que el
-                 operador se da cuenta de que en realidad ya se la cargó. -->
-            <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
-
-          </div>
+          <div>${_cola
+            ? `<span class="v154p-badge" style="background:${_colaCorre?'rgba(34,197,94,.15)':'rgba(124,196,255,.12)'};color:${_colaCol};border:1px solid ${_colaCorre?'rgba(34,197,94,.35)':'rgba(124,196,255,.35)'}">${_colaCorre?'⚙ Cargando…':'🕒 '+_cola.pos+'º en la cola'}</span>`
+            : `<span class="v154p-badge">${deps.esc(_estadoLegible(s.ESTADO))}</span>`}</div>
+          <div class="v154p-actions">${_acciones}</div>
           ${_alertaHtml ? `<div style="grid-column:1/-1">${_alertaHtml}</div>` : ""}
         </div>`;
       }).join("");

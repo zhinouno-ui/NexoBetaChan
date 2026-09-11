@@ -5,13 +5,9 @@
    ============================================================ */
 (function(){
   const VERSION="BASE_PILOTO_OPERATIVO_2026_06";
-  function badgePiloto(){
-    if(document.getElementById("nodoPilotoBadge"))return;
-    const b=document.createElement("div");
-    b.id="nodoPilotoBadge";
-    b.textContent="NODO · PILOTO OPERATIVO";
-    document.body.appendChild(b);
-  }
+  // El cartel "NODO · PILOTO OPERATIVO" se sacó. Ocupaba la esquina de abajo a la izquierda de
+  // forma permanente para no decirle nada al operador: no es un estado, no cambia, no se puede
+  // accionar. Ese lugar ahora lo usa la tira de proceso, que sí dice qué está haciendo la app.
   function fixLabels(){
     try{
       document.querySelectorAll("*").forEach(el=>{
@@ -88,7 +84,6 @@
     }catch(_e){}
   }
   function initPiloto(){
-    badgePiloto();
     fixLabels();
     exposeDiagnostics();
     safePanelHealth();

@@ -45,16 +45,9 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
 .crm-table-wrap table th{background:#1b2434!important}
 .mini-btn,.btn,.nav-btn{transition:.14s ease!important}
 .mini-btn:hover,.btn:hover,.nav-btn:hover{filter:brightness(1.08)}
-#nodoPilotoBadge{
-  position:fixed;left:84px;bottom:12px;z-index:9990;
-  background:rgba(18,24,35,.92);border:1px solid rgba(18,183,106,.38);
-  color:#b9f7cb;border-radius:999px;padding:6px 10px;font-size:10px;font-weight:900;
-  box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
-}
-@media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
 /* Qué está haciendo Agentes ahora mismo. Antes el panel contestaba "hay otra operación corriendo"
    sin decir cuál, desde cuándo, ni cómo salir. Esto aparece solo cuando el agente está tomado. */
-#agentesBadge{position:fixed;left:84px;bottom:46px;z-index:99997;display:none;align-items:center;gap:8px;
+#agentesBadge{position:fixed;left:84px;bottom:12px;z-index:99997;display:none;align-items:center;gap:8px;
   background:#1b2230;border:1px solid #3a4459;border-radius:999px;padding:6px 10px 6px 12px;
   font-size:11px;font-weight:700;color:#e6edf3;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 #agentesBadge.viejo{border-color:#7a4a1d;background:#2a1f14}
@@ -63,7 +56,7 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
 #agentesBadge button{background:#3a2027;border:1px solid #5a2a32;color:#ffc8d0;border-radius:999px;
   font-size:10px;font-weight:800;padding:3px 9px;cursor:pointer}
 #agentesBadge button:hover{background:#4a262f}
-@media(max-width:900px){#agentesBadge{left:12px;bottom:52px}#agentesBadge .ab-txt{max-width:160px}}
+@media(max-width:900px){#agentesBadge{left:12px;bottom:12px}#agentesBadge .ab-txt{max-width:160px}}
 /* ── Barra del chat: UN botón que cambia según dónde estás ───────────────────────────────
    El estado real de "hay una conversación abierta" es body.nodo-chat-open, que lo pone el puente
    del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que
@@ -77,3 +70,5 @@ body.nodo-chat-open #viewChat > div:first-child{display:none!important}
    Vuelve a la esquina de arriba a la derecha. Lo único: el borde derecho se apoya en el panel de
    chat (que arranca donde termina la tarjeta de fichas), así queda justo arriba de "Rechequear",
    que es espacio libre, y no le pisa nada al chat. Lo calcula _updaterAnclar(). */
+
+@media(max-width:900px){#trazaStrip{left:12px!important;max-width:calc(100vw - 24px)!important}}

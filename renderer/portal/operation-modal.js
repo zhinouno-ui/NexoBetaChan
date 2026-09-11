@@ -65,14 +65,17 @@ const api = {};
     el.id = 'portalJobModal';
     el.style.cssText = 'display:none;position:fixed;top:82px;left:50%;transform:translateX(-50%);z-index:99999;width:min(420px,calc(100vw - 26px));';
     el.innerHTML = `
-      <div style="max-height:68vh;overflow:auto;background:#111827;border:1px solid #2b3446;border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.45);padding:14px;color:#fff">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px">
+      <div style="display:flex;flex-direction:column;max-height:68vh;background:#111827;border:1px solid #2b3446;border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.45);padding:14px;color:#fff">
+        <div style="flex:0 0 auto;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px">
           <div>
             <div style="font-size:17px;font-weight:900">Aprobar portal</div>
             <div id="portalJobSub" class="small" style="color:#94a3b8;margin-top:3px"></div>
           </div>
           <button class="mini-btn" style="background:#374151;padding:7px 10px" type="button" onclick="cerrarPortalJobModal()">Cerrar</button>
         </div>
+        <!-- Sólo esta parte scrollea: es la que crece sola cuando llegan el vínculo, el bono y
+             las alertas. Lo de abajo (monto, billetera, botones) queda fijo. -->
+        <div id="portalJobScroll" style="flex:1 1 auto;overflow-y:auto;overflow-x:hidden;min-height:0">
         <!-- Lo que declaró el usuario (referencia, solo lectura) -->
         <div style="background:#0d1320;border:1px solid #243049;border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13px">
           <div style="color:#64748b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Lo que declaró el usuario</div>
@@ -82,8 +85,10 @@ const api = {};
           <div id="portalJobAlertas" style="margin-top:6px"></div>
         </div>
 
+        </div><!-- /portalJobScroll -->
+
         <!-- Acción del operador -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;align-items:end">
+        <div style="flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:11px;align-items:end">
           <div>
             <label style="font-weight:800">Monto a procesar</label>
             <input id="portalJobMontoAprobado" type="text" inputmode="numeric" autocomplete="off" oninput="portalCheckDiferencia()" style="width:100%;height:44px;border-color:#22c55e;font-weight:900;font-size:21px">
@@ -98,8 +103,8 @@ const api = {};
             <textarea id="portalJobObs" rows="2" style="width:100%;resize:vertical" placeholder="Ej: declaró 10.000 pero el comprobante real es 2.000"></textarea>
           </div>
         </div>
-        <div id="portalJobResultado" style="margin-top:9px"></div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <div id="portalJobResultado" style="flex:0 0 auto;margin-top:9px"></div>
+        <div style="flex:0 0 auto;display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
           <button id="portalJobParcialBtn" class="mini-btn" style="background:#7c3aed;display:none" type="button" onclick="portalJobIrParcial()" title="Pagar el retiro por partes / desde varias billeteras">💸 Parcial</button>
           <button class="mini-btn" style="background:#374151" type="button" onclick="cerrarPortalJobModal()">Cancelar</button>
           <button id="portalJobEnviarBtn" class="mini-btn green" type="button" onclick="confirmarPortalJobModal()">Aprobar</button>

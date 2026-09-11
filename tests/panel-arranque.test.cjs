@@ -999,3 +999,106 @@ test('copiar · el enlace de acceso ya no depende de prompt()', () => {
   assert.ok(!/prompt\(/.test(bundle), 'no puede quedar un prompt() como respaldo');
   assert.match(bundle, /nodoCopiar\(msg/, 'usa el camino que recupera el foco y no pierde el texto');
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COSAS QUE SE MUEVEN SOLAS
+// Todo lo de acá abajo es lo mismo: algo aparece o crece DESPUÉS de que el operador ya decidió
+// dónde iba a hacer clic, y le corre el botón de abajo del cursor. O peor: le muestra el proceso
+// de otra solicitud encima de la que está completando.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('tarjeta · al encolarse cambia cómo se presenta y no vuelve a ofrecer "Aprobar"', () => {
+  const sb = arrancarPanel();
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'tablaSolicitudesInicio' ? caja : null);
+  sb.V154P.solicitudes = [{ ID: 900001, USUARIO: 'jugadordeprueba', TIPO: 'CARGA',
+    ESTADO: 'PENDIENTE', MONTO_REAL: 2000, FECHA_CREACION: '2026-09-11T11:59:00Z' }];
+
+  sb._colaCargaEstado = {};
+  sb.V154P.solicitudesLastHtml = null;
+  sb.v154pRenderSolicitudesPortalEnInicio();
+  assert.match(caja.innerHTML, /id="v154pCard900001"/,
+    'la tarjeta lleva id: así la cola sabe que esta solicitud YA está a la vista y no la repite');
+  assert.match(caja.innerHTML, />Aprobar</, 'sin encolar, se puede aprobar');
+
+  // Misma solicitud, ahora en la cola.
+  sb._colaCargaEstado = { '900001': { estado: 'espera', pos: 1, cid: 'cc1' } };
+  sb.V154P.solicitudesLastHtml = null;
+  sb.v154pRenderSolicitudesPortalEnInicio();
+  assert.ok(!/>Aprobar</.test(caja.innerHTML),
+    'ya encolada NO se puede aprobar de nuevo: eso era el doble clic sobre la misma carga');
+  assert.match(caja.innerHTML, /en la cola/, 'y la tarjeta dice en qué estado está');
+  assert.match(caja.innerHTML, /Sacar de la cola/);
+});
+
+test('alta · crear usuario avisa Y SUENA si el teléfono ya tiene dueño', async () => {
+  const sb = arrancarPanel();
+  sb.pcOperativa = 'P1';
+  const campos = {
+    nuevoJugUsuario:  { value: 'jugadordeprueba' },
+    nuevoJugTelefono: { value: '1122334455' },
+    nuevoJugCotejo:   { innerHTML: '' }
+  };
+  sb.document.getElementById = (id) => campos[id] || null;
+  // Ese número es de otro usuario: es el caso de la captura (se creaba igual, sin decir nada).
+  sb.altaCotejarDatos = async () => ({
+    usuario:  { exacto: null, similares: [] },
+    telefono: { exacto: { usuario: 'otrojugador', telefonos: ['1122334455'], pc: 'P1' }, similares: [] }
+  });
+  let sono = 0;
+  sb.sonido = () => { sono++; };
+
+  await sb._altaNuevoCotejarYa();
+
+  assert.match(campos.nuevoJugCotejo.innerHTML, /otrojugador/,
+    'tiene que decir de quién es el número ANTES de crear la cuenta, no después');
+  assert.equal(sono, 1, 'y tiene que sonar: un cartel debajo del campo no lo ve quien mira el teclado');
+
+  await sb._altaNuevoCotejarYa();
+  assert.equal(sono, 1, 'no vuelve a sonar por el mismo dato');
+});
+
+test('el resultado de una operación no se escribe en el modal de OTRA solicitud', () => {
+  // El modal de aprobar es UNO SOLO y se reusa. Como la carga corre en segundo plano, para cuando
+  // termina el operador ya abrió el de la siguiente — y ahí le aparecía "Operando en Agentes..."
+  // y "carga completada" de la anterior, con el botón Aprobar apagado.
+  const bundle = fs.readFileSync(
+    path.join(RAIZ, 'renderer', 'generated', 'js-portal-modules.js'), 'utf8');
+  assert.match(bundle, /_esMiModal/, 'tiene que preguntarse si el modal sigue siendo el suyo');
+  // OJO: el bundle tiene OTRO getElementById('portalJobResultado') que es correcto y tiene que
+  // quedar — el que limpia el cuadro al ABRIR el modal. Lo que se sostiene acá es que la
+  // operación, que corre en segundo plano, escriba SIEMPRE a través del guard.
+  assert.match(bundle, /_pintarEn\('portalJobResultado'/,
+    'la operación escribe por el camino guardado, no derecho sobre el modal que esté abierto');
+});
+
+test('la cola no dibuja una fila si la solicitud ya está a la vista en pendientes', () => {
+  const bundle = fs.readFileSync(
+    path.join(RAIZ, 'renderer', 'generated', 'js-portal-modules.js'), 'utf8');
+  assert.match(bundle, /getElementById\('v154pCard' \+ sid\)/,
+    'se fija si la tarjeta ya está en pantalla antes de repetirla arriba de la lista');
+  assert.ok(!/_colaCarga\.map\(function\(it,i\)\{/.test(bundle),
+    'ya no mapea la cola entera sin filtrar');
+});
+
+test('la tira de proceso vive en una esquina, no flotando en el medio', () => {
+  const bundle = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
+  assert.match(bundle, /position:fixed;bottom:52px;left:84px/,
+    'abajo a la izquierda, donde no hay barra de desplazamiento ni panel de chat');
+  assert.ok(!/cssText = 'position:fixed;bottom:14px;left:50%/.test(bundle),
+    'centrada no: tapaba la tabla y se montaba a la barra de desplazamiento');
+});
+
+test('el cartel "PILOTO OPERATIVO" no se dibuja más', () => {
+  const js  = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-piloto.js'), 'utf8');
+  const css = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'css-piloto.css'), 'utf8');
+  assert.ok(!/nodoPilotoBadge/.test(js),  'no se crea');
+  assert.ok(!/nodoPilotoBadge/.test(css), 'ni queda su estilo colgado ocupando la esquina');
+});
+
+test('los botones del modal no se corren cuando llegan los chequeos', () => {
+  const css = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'css-base.css'), 'utf8');
+  assert.match(css, /#modalBody\{[^}]*overflow-y:auto/, 'scrollea el cuerpo…');
+  assert.ok(!/\.modal\{[^}]*overflow:auto/.test(css),
+    '…y no el modal entero, que es lo que empujaba los botones hacia abajo mientras se leía');
+});

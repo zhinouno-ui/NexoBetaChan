@@ -389,7 +389,29 @@ const api = {};
         // verse ACÁ, en la tarjeta, sin desplegar nada: es lo que decide a qué billetera
         // mirar antes de aprobar.
         const _bv = deps.window._billeteraVieja ? deps.window._billeteraVieja(s) : null;
-        return `<div class="v154p-card"${_bv ? ' style="border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b"' : ''}>
+        // ¿Ya está en la cola de carga? Se dice ACÁ y las acciones cambian. Antes la aprobabas,
+        // la tarjeta quedaba EXACTAMENTE igual que antes, y se aprobaba de nuevo pensando que el
+        // clic se había perdido. Lo único que tiene que cambiar al aceptar es cómo se presenta.
+        const _cola = (deps.window._colaCargaEstado || {})[String(id)] || null;
+        const _colaCorre = !!(_cola && _cola.estado === 'corriendo');
+        const _colaCol = _colaCorre ? '#22c55e' : '#7cc4ff';
+        const _borde = _cola
+          ? ` style="border-color:${_colaCol};box-shadow:inset 3px 0 0 ${_colaCol}"`
+          : (_bv ? ' style="border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b"' : '');
+        // "Ya cargada" NO va en la tarjeta: ya tiene cinco botones y es un caso raro (124 en 30
+        // días). Vive dentro del modal de rechazo, que es cuando el operador se da cuenta.
+        const _acciones = _cola
+          ? ((_colaCorre
+                ? `<button class="v154p-btn" disabled style="opacity:.55;cursor:default">⚙ Cargando…</button>`
+                : `<button class="v154p-btn" onclick="colaCargaQuitar('${_cola.cid}')" style="background:transparent;border:1px solid #7f1d1d;color:#fca5a5">Sacar de la cola</button>`)
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`)
+          : ((tomada ? `<button class="v154p-btn yellow" disabled>Tomada</button>`
+                     : `<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`)
+             + `<button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>`
+             + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
+             + `<button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`);
+        return `<div class="v154p-card" id="v154pCard${id}"${_borde}>
           <div>
             <div class="v154p-main">${deps.esc(s.USUARIO || "-")}</div>
             ${_bv ? `<div style="margin:3px 0;font-size:10.5px;font-weight:900;color:#fbbf24;background:rgba(245,158,11,.12);border:1px solid #f59e0b55;border-radius:6px;padding:2px 6px;display:inline-block">⚠ Transfirió a ${deps.esc(_bv.vieja)} · ahora ${deps.esc(_bv.actual)}</div>` : ""}
@@ -407,18 +429,10 @@ const api = {};
           </div>
           <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${deps.esc(s.TIPO || "-")}</span></div>
           <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
-          <div><span class="v154p-badge">${deps.esc(_estadoLegible(s.ESTADO))}</span></div>
-          <div class="v154p-actions">
-            ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
-            ${_esRet?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
-            <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
-            <!-- "Ya cargada" NO va acá: la tarjeta ya tiene cinco botones y este es un caso raro
-                 (124 en 30 días). Vive dentro del modal de rechazo, que es el momento en que el
-                 operador se da cuenta de que en realidad ya se la cargó. -->
-            <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
-
-          </div>
+          <div>${_cola
+            ? `<span class="v154p-badge" style="background:${_colaCorre?'rgba(34,197,94,.15)':'rgba(124,196,255,.12)'};color:${_colaCol};border:1px solid ${_colaCorre?'rgba(34,197,94,.35)':'rgba(124,196,255,.35)'}">${_colaCorre?'⚙ Cargando…':'🕒 '+_cola.pos+'º en la cola'}</span>`
+            : `<span class="v154p-badge">${deps.esc(_estadoLegible(s.ESTADO))}</span>`}</div>
+          <div class="v154p-actions">${_acciones}</div>
           ${_alertaHtml ? `<div style="grid-column:1/-1">${_alertaHtml}</div>` : ""}
         </div>`;
       }).join("");
@@ -2115,14 +2129,17 @@ const api = {};
     el.id = 'portalJobModal';
     el.style.cssText = 'display:none;position:fixed;top:82px;left:50%;transform:translateX(-50%);z-index:99999;width:min(420px,calc(100vw - 26px));';
     el.innerHTML = `
-      <div style="max-height:68vh;overflow:auto;background:#111827;border:1px solid #2b3446;border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.45);padding:14px;color:#fff">
-        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px">
+      <div style="display:flex;flex-direction:column;max-height:68vh;background:#111827;border:1px solid #2b3446;border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.45);padding:14px;color:#fff">
+        <div style="flex:0 0 auto;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:10px">
           <div>
             <div style="font-size:17px;font-weight:900">Aprobar portal</div>
             <div id="portalJobSub" class="small" style="color:#94a3b8;margin-top:3px"></div>
           </div>
           <button class="mini-btn" style="background:#374151;padding:7px 10px" type="button" onclick="cerrarPortalJobModal()">Cerrar</button>
         </div>
+        <!-- Sólo esta parte scrollea: es la que crece sola cuando llegan el vínculo, el bono y
+             las alertas. Lo de abajo (monto, billetera, botones) queda fijo. -->
+        <div id="portalJobScroll" style="flex:1 1 auto;overflow-y:auto;overflow-x:hidden;min-height:0">
         <!-- Lo que declaró el usuario (referencia, solo lectura) -->
         <div style="background:#0d1320;border:1px solid #243049;border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13px">
           <div style="color:#64748b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Lo que declaró el usuario</div>
@@ -2132,8 +2149,10 @@ const api = {};
           <div id="portalJobAlertas" style="margin-top:6px"></div>
         </div>
 
+        </div><!-- /portalJobScroll -->
+
         <!-- Acción del operador -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;align-items:end">
+        <div style="flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:11px;align-items:end">
           <div>
             <label style="font-weight:800">Monto a procesar</label>
             <input id="portalJobMontoAprobado" type="text" inputmode="numeric" autocomplete="off" oninput="portalCheckDiferencia()" style="width:100%;height:44px;border-color:#22c55e;font-weight:900;font-size:21px">
@@ -2148,8 +2167,8 @@ const api = {};
             <textarea id="portalJobObs" rows="2" style="width:100%;resize:vertical" placeholder="Ej: declaró 10.000 pero el comprobante real es 2.000"></textarea>
           </div>
         </div>
-        <div id="portalJobResultado" style="margin-top:9px"></div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <div id="portalJobResultado" style="flex:0 0 auto;margin-top:9px"></div>
+        <div style="flex:0 0 auto;display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
           <button id="portalJobParcialBtn" class="mini-btn" style="background:#7c3aed;display:none" type="button" onclick="portalJobIrParcial()" title="Pagar el retiro por partes / desde varias billeteras">💸 Parcial</button>
           <button class="mini-btn" style="background:#374151" type="button" onclick="cerrarPortalJobModal()">Cancelar</button>
           <button id="portalJobEnviarBtn" class="mini-btn green" type="button" onclick="confirmarPortalJobModal()">Aprobar</button>
@@ -3107,7 +3126,7 @@ return Object.freeze({ create, dependencies });
   else root.NodoPortalOperationExecution = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function(){
   'use strict';
-  const dependencies = Object.freeze(["_autoregistrarUsuarioSiFalta","_drexGlobalLock","_drexGlobalUnlock","_historialData","_trazaFin","_trazaInit","_trazaPaso","_watchdogTrigger","_wdForceUnlock","_wdLock","_wdUnlock","actualizarSolicitudPortal","ajustarSaldoBilletera","alert","billeteras","callDrex","cargarHistorial","cargarSolicitudesPortal","cerrarPortalJobModal","colaPendientesAdd","confirmarRetiroDuplicado","document","ensureDrexSession","esc","money","normalizar","operador","poblarManualBilletera","portalBilleteraPreferida","refreshAgent","registrarCargaEnChunior","registrarEnHistorial","registrarRetiroEnChunior","renderBillerasInicio","setTimeout","supabaseClient","toast","verificarRetiro24h","window"]);
+  const dependencies = Object.freeze(["_autoregistrarUsuarioSiFalta","_drexGlobalLock","_drexGlobalUnlock","_historialData","_trazaFin","_trazaInit","_trazaPaso","_watchdogTrigger","_wdForceUnlock","_wdLock","_wdUnlock","actualizarSolicitudPortal","ajustarSaldoBilletera","alert","billeteras","callDrex","cargarHistorial","cargarSolicitudesPortal","cerrarPortalJobModal","colaPendientesAdd","confirmarRetiroDuplicado","document","ensureDrexSession","esc","money","normalizar","operador","poblarManualBilletera","portalBilleteraPreferida","refreshAgent","registrarCargaEnChunior","registrarEnHistorial","registrarRetiroEnChunior","renderBillerasInicio","renderSolicitudesPortalEnInicio","setTimeout","supabaseClient","toast","verificarRetiro24h","window"]);
   function create(deps){
 const api = {};
   let _portalSolicitudOperacionEnCurso = false;
@@ -3183,10 +3202,38 @@ function ultimoSaldoPostUsuarioHistorial(usuario){
     return box;
   }
   function _colaCargaRender(){
+    // Estado público de la cola: la tarjeta de la solicitud lo muestra EN SU LUGAR, en vez de que
+    // la misma carga aparezca dos veces (una acá y otra en pendientes). Esa duplicación es lo que
+    // daba la sensación de que la app no estaba haciendo nada hasta que la fila se borraba sola.
+    const estado = {};
+    _colaCarga.forEach(function(it, i){
+      const sid = String((it.ctx && it.ctx.id) || '');
+      if(sid) estado[sid] = { estado: it.estado, pos: i+1, cid: it.cid };
+    });
+    try{ deps.window._colaCargaEstado = estado; }catch(_e){}
+    // Repintar la lista para que las tarjetas tomen el estado nuevo. No agrega parpadeo: el render
+    // de la lista ya no repinta si el HTML le queda igual.
+    // Por deps, no por window: el bridge lo deja acá (Object.assign(deps, service)) y requests-view
+    // se monta ANTES que este módulo, así que ya está disponible. En window vive con otro nombre.
+    try{
+      const _repintar = deps.renderSolicitudesPortalEnInicio
+                     || deps.window.v154pRenderSolicitudesPortalEnInicio;
+      if(typeof _repintar === 'function') _repintar();
+    }catch(_e){}
+
     const box = _colaCargaBox(); if(!box) return;
-    if(!_colaCarga.length){ box.innerHTML=''; box.style.display='none'; return; }
+    // Acá abajo sólo quedan las que NO están a la vista en pendientes (la lista muestra 8). Antes
+    // se dibujaban TODAS, y este bloque —que vive ARRIBA de la lista— aparecía y desaparecía
+    // empujando todo hacia abajo y de vuelta arriba, justo cuando el operador iba a apretar
+    // "Aprobar" en la tarjeta de al lado. De ahí que el clic terminara desfasado.
+    const sueltas = _colaCarga.filter(function(it){
+      const sid = String((it.ctx && it.ctx.id) || '');
+      return !(sid && deps.document.getElementById('v154pCard' + sid));
+    });
+    if(!sueltas.length){ box.innerHTML=''; box.style.display='none'; return; }
     box.style.display='block';
-    const filas = _colaCarga.map(function(it,i){
+    const filas = sueltas.map(function(it){
+      const i = _colaCarga.indexOf(it);
       const c = it.ctx || {};
       const corriendo = it.estado==='corriendo';
       const tipo = String(c.tipo||'CARGA').toUpperCase();
@@ -3207,7 +3254,7 @@ function ultimoSaldoPostUsuarioHistorial(usuario){
         + '</div>';
     }).join('');
     box.innerHTML = '<div style="font-size:11px;font-weight:800;color:#8b949e;text-transform:uppercase;'
-      + 'letter-spacing:.5px;margin:2px 2px 0">En cola para cargar · '+_colaCarga.length+'</div>' + filas;
+      + 'letter-spacing:.5px;margin:2px 2px 0">En cola para cargar · '+sueltas.length+'</div>' + filas;
   }
   // Sacar de la cola NO rechaza la solicitud: sólo la desencola. Vuelve a quedar en la
   // bandeja como estaba, para aprobarla de nuevo cuando se quiera.
@@ -3285,8 +3332,25 @@ async function _ejecutarSolicitudAhora(ctx){
 
     const {id, usuario, tipo, montoAprobado:montoAbs, bilId} = ctx;
     const bil = (deps.billeteras || []).find(b => String(b.ID_BILLETERA) === String(bilId)) || deps.portalBilleteraPreferida(ctx.solicitud);
-    const res = deps.document.getElementById('portalJobResultado');
-    const btn = deps.document.getElementById('portalJobEnviarBtn');
+    const _esMiModal = function(){
+      try{
+        const m = deps.document.getElementById('portalJobModal');
+        return !!(m && m.style.display !== 'none'
+               && Number(m.dataset && m.dataset.solicitudId) === Number(id));
+      }catch(_e){ return false; }
+    };
+    const _pintarEn = function(idEl, html){
+      if(!_esMiModal()) return;
+      const e = deps.document.getElementById(idEl);
+      if(e) e.innerHTML = html;
+    };
+    const res = { set innerHTML(v){ _pintarEn('portalJobResultado', v); } };
+    const _btnEl = function(){ return _esMiModal() ? deps.document.getElementById('portalJobEnviarBtn') : null; };
+    const btn = {
+      set disabled(v){ const e=_btnEl(); if(e) e.disabled = v; },
+      set textContent(v){ const e=_btnEl(); if(e) e.textContent = v; },
+      get style(){ const e=_btnEl(); return e ? e.style : {}; }
+    };
 
     _portalSolicitudOperacionEnCurso = true;
     if(btn){ btn.disabled = true; btn.style.opacity = '.65'; btn.textContent = 'Operando...'; }
