@@ -39,6 +39,17 @@ const api = {};
       if(bp) bp.style.display = parciales.length ? "" : "none";
     }catch(_e){}
     const visibles = pendientes.slice(0,8);
+    // Un mismo jugador con DOS solicitudes abiertas del mismo tipo. El portal lo permitía (se está
+    // corrigiendo del lado del portal), pero acá se veían como dos tarjetas sin relación entre sí
+    // — y cargar las dos es plata de verdad. La tarjeta ahora lo dice; no bloquea nada, porque a
+    // veces son dos transferencias reales.
+    const _abiertasPorJugador = {};
+    pendientes.forEach(function(x){
+      const u = String(x.USUARIO||'').toLowerCase().trim();
+      if(!u) return;
+      const k = u + '|' + String(x.TIPO||x.TIPO_SOLICITUD||'').toUpperCase();
+      _abiertasPorJugador[k] = (_abiertasPorJugador[k]||0) + 1;
+    });
 
     try{
       const stat = deps.document.getElementById("statPendientes");
@@ -150,9 +161,12 @@ const api = {};
              + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
              + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
              + `<button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`);
+        const _dup = _abiertasPorJugador[String(s.USUARIO||'').toLowerCase().trim() + '|'
+                   + String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()] || 0;
         return `<div class="v154p-card" id="v154pCard${id}"${_borde}>
           <div>
             <div class="v154p-main">${deps.esc(s.USUARIO || "-")}</div>
+            ${_dup > 1 ? `<div style="margin:3px 0;font-size:10.5px;font-weight:900;color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid #ef444455;border-radius:6px;padding:2px 6px;display:inline-block">⚠ ${_dup} solicitudes abiertas de este jugador — mirá que no sea la misma transferencia</div>` : ""}
             ${_bv ? `<div style="margin:3px 0;font-size:10.5px;font-weight:900;color:#fbbf24;background:rgba(245,158,11,.12);border:1px solid #f59e0b55;border-radius:6px;padding:2px 6px;display:inline-block">⚠ Transfirió a ${deps.esc(_bv.vieja)} · ahora ${deps.esc(_bv.actual)}</div>` : ""}
 
             <div class="v154p-small">#${id} · ${deps.fecha(s.FECHA_CREACION)} · ${deps.esc(s.ORIGEN || "PORTAL")}</div>

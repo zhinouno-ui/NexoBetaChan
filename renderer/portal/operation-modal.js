@@ -438,6 +438,14 @@ const api = {};
     }
     const d = _expedienteActualData;
     const rechTxt = d.rechazo ? `\n⛔ RECHAZO / INCIDENCIA: [${d.rechazo.codigo}] ${d.rechazo.titulo}\n📝 Mensaje enviado: ${d.rechazo.mensajeCliente}` : '';
+    // Esta ficha SE LE MANDA al jugador cuando reclama, así que no puede llevar vocabulario
+    // nuestro: "Mov. Chunior" y "Origen: LANDING" no significan nada del otro lado y lo único que
+    // generan es otra pregunta. El N° de Chunior no se pierde — sigue en la ficha en pantalla,
+    // que es donde lo usa el operador.
+    const _origen = String(d.origen||'');
+    const _origenLegible = /LANDING|PORTAL/i.test(_origen) ? 'Portal'
+                         : /MANUAL|PANEL/i.test(_origen) ? 'Carga manual'
+                         : (_origen || '—');
     const txt = `📋 EXPEDIENTE #${d.id} · ${d.tipo}
 ━━━━━━━━━━━━━━━━━━━━
 👤 Jugador: ${d.usuario || '—'}
@@ -446,24 +454,14 @@ const api = {};
 📊 Estado: ${d.estado}
 🏢 Billetera: ${d.billeteraNombre || '—'}
 ${d.tipo === 'RETIRO' ? `💳 CBU/Destino: ${d.destino || '—'}\n👤 Titular: ${d.titular || '—'}` : `👤 Titular: ${d.titular || '—'}`}
-${d.movId ? `🎲 Mov. Chunior: N° ${d.movId}` : ''}
 ${d.mensaje ? `💬 Mensaje: "${d.mensaje}"` : ''}${rechTxt}
 ━━━━━━━━━━━━━━━━━━━━
-Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
+Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
 
-    try{
-      navigator.clipboard.writeText(txt).then(()=>{
-        deps.toast('✓ Ficha completa copiada al portapapeles', 'green');
-      }).catch(()=>{
-        const ta = deps.document.createElement('textarea');
-        ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        deps.document.body.appendChild(ta); ta.select(); deps.document.execCommand('copy');
-        ta.remove();
-        deps.toast('✓ Ficha copiada', 'green');
-      });
-    }catch(_e){
-      deps.toast('No se pudo copiar automáticamente', 'yellow');
-    }
+    // Por nodoCopiar: recupera el foco antes de copiar (el panel puede estar operando en la
+    // ventana del backoffice) y, si aun así no puede, muestra el texto en vez de perderlo.
+    try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Ficha copiada' }); }
+    catch(_e){ deps.toast('No se pudo copiar automáticamente', 'yellow'); }
   };
 
   api.construirDossierCompletoHtml = function(idOrObj){
@@ -504,7 +502,12 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const id = s.ID || s.SOLICITUD_ID || s.id || (typeof idOrObj !== 'object' ? idOrObj : 0);
     const tipo = String(s.TIPO || s.TIPO_SOLICITUD || s.tipo || (itemUnified && itemUnified.tipo) || 'OPERACION').toUpperCase();
     const usuario = String(s.USUARIO || s.USUARIO_JUGADOR || s.usuario || (itemUnified && itemUnified.usuario) || '').trim();
-    const titular = String(s.TITULAR || s.NOMBRE_COMPLETO || s.titular || (meta && meta.titular) || '').trim();
+    const notas = String(s.notas || s.NOTAS || (meta && meta.notas) || '').trim();
+    // Una operación MANUAL no tiene columna TITULAR: el titular viaja DENTRO de notas, tal como
+    // lo escribe portalNotasBase ("#206911 · Titular: Fulano De Tal · Alias: ..."). Sin leerlo de
+    // ahí, la ficha mostraba "Titular: —" con el dato a la vista dos renglones más abajo.
+    const titular = String(s.TITULAR || s.NOMBRE_COMPLETO || s.titular || (meta && meta.titular)
+      || ((notas.match(/Titular:\s*([^·\n]+)/i) || [])[1] || '')).trim();
     const destino = String(s.DESTINO || s.CBU || s.cbu || s.destino || (meta && (meta.destino || meta.cbu)) || '').trim();
     const montoDecl = Number(s.MONTO_DECLARADO != null ? s.MONTO_DECLARADO : (s.monto != null ? s.monto : (itemUnified ? itemUnified.monto : 0)));
     const montoReal = Number(s.MONTO_REAL != null ? s.MONTO_REAL : (meta.monto_corregido != null ? meta.monto_corregido : montoDecl));
@@ -556,7 +559,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${d.origen}`;
     const destinoDifiere = !!_destinoNorm && _huellasBilletera.length > 0 &&
       !_huellasBilletera.some(function(h){ return h === _destinoNorm || h.indexOf(_destinoNorm) !== -1 || _destinoNorm.indexOf(h) !== -1; });
 
-    const notas = String(s.notas || s.NOTAS || (meta && meta.notas) || '').trim();
+    // (notas se declara más arriba: el titular de las manuales sale de ahí)
     // Fila de historial_ops donde hay que escribir el N si lo encontramos en Chunior.
     const histIdParaMov = String(s.historial_id || (itemUnified && itemUnified.historial_id) || (!itemUnified || itemUnified.fuente === 'OPERACION' ? (s.id || '') : '') || '');
     // La clave nueva viaja en el metadata del portal o, en las manuales, dentro de notas
@@ -1019,14 +1022,35 @@ ${stepperHtml}
 
     deps.window.expedienteAbrirChatJugador = async function(usuario, chatId){
       api.cerrarExpedienteSolicitud();
+      const u = String(usuario||'').toLowerCase().trim();
+      // Primero ir a la vista de chat: abrir la conversación sin estar en la bandeja deja la
+      // pantalla igual y parece que el botón no hizo nada.
+      try{ if(typeof deps.window.mostrarVista === 'function') deps.window.mostrarVista('chat'); }catch(_e){}
+      // La conversación se busca POR USUARIO. Antes sólo se abría si la solicitud traía chat_id,
+      // y las manuales (y muchas del portal) no lo traen: se cambiaba de pantalla, se escribía el
+      // nombre en un filtro y ahí terminaba todo. Reportado tal cual: "toco chat del jugador y me
+      // abre el apartado pero no me abre el chat con el usuario".
+      try{
+        if(u && typeof deps.window.ticketsAgrupados === 'function'){
+          const t = (deps.window.ticketsAgrupados() || []).find(function(x){
+            return String(x.usuario||'').toLowerCase().trim() === u;
+          });
+          if(t && typeof deps.window.aceptarTicketLocalStep2 === 'function'){
+            return deps.window.aceptarTicketLocalStep2(t.id);
+          }
+        }
+      }catch(_e){}
       if(chatId && typeof deps.window.abrirChat === 'function'){
         return deps.window.abrirChat(chatId);
       }
-      if(typeof deps.window.mostrarVista === 'function'){
-        deps.window.mostrarVista('chat');
-      }
+      // No tiene conversación abierta. Hay que DECIRLO: el panel todavía no puede iniciar una
+      // (ver D-73), y quedarse en silencio hace pensar que el botón está roto.
       const inputFiltro = deps.document.getElementById('filtroTexto');
       if(inputFiltro){ inputFiltro.value = usuario; }
+      try{
+        deps.toast((usuario||'Ese jugador') + ' no tiene ninguna conversación abierta — todavía '
+          + 'no se puede iniciar una desde el panel', 'yellow');
+      }catch(_e){}
     };
 
     deps.window.expedienteToggleBloqueoTitular = function(usuario, titular){

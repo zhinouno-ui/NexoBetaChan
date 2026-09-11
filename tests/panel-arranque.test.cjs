@@ -1102,3 +1102,81 @@ test('los botones del modal no se corren cuando llegan los chequeos', () => {
   assert.ok(!/\.modal\{[^}]*overflow:auto/.test(css),
     '…y no el modal entero, que es lo que empujaba los botones hacia abajo mientras se leía');
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LO QUE SALIO EXPLICANDO EL PANEL
+// Cuatro cosas que aparecieron mientras se le mostraba el panel a los operadores. Las tres
+// primeras son la misma clase de error: el panel tiene el dato y no lo usa.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('chat · "Chat Jugador" abre la conversación del jugador, no sólo el apartado', async () => {
+  const sb = arrancarPanel();
+  sb.mostrarVista = () => {};
+  sb.ticketsAgrupados = () => [{ id: 'tk9', usuario: 'jugadordeprueba' }];
+  let abierto = null;
+  sb.aceptarTicketLocalStep2 = (id) => { abierto = id; };
+
+  // Sin chat_id (es el caso de las manuales y de muchas del portal): antes se cambiaba de
+  // pantalla, se escribía el nombre en un filtro, y ahí terminaba todo.
+  await sb.expedienteAbrirChatJugador('JugadorDePrueba', '');
+
+  assert.equal(abierto, 'tk9', 'tiene que abrir la conversación de ese jugador, buscándola por usuario');
+});
+
+test('chat · si el jugador no tiene conversación, lo dice en vez de quedarse mudo', async () => {
+  const sb = arrancarPanel();
+  sb.mostrarVista = () => {};
+  sb.ticketsAgrupados = () => [];
+  let dicho = '';
+  sb.toast = (m) => { dicho = m; };
+
+  await sb.expedienteAbrirChatJugador('jugadorsinchat', '');
+
+  assert.match(dicho, /no tiene ninguna conversación abierta/i,
+    'el panel todavía no puede iniciar una: callarse hace pensar que el botón está roto');
+});
+
+test('ficha · la que se le manda al jugador trae el titular y no trae vocabulario interno', () => {
+  const sb = arrancarPanel();
+  let texto = '';
+  sb.nodoCopiar = (t) => { texto = t; return true; };
+
+  // Operación MANUAL: no tiene columna TITULAR, el titular viaja dentro de notas.
+  sb.construirDossierCompletoHtml({
+    id: 198110, tipo: 'CARGA', usuario: 'jugadordeprueba', origen: 'LANDING',
+    notas: '#206911 · Titular: Fulano De Tal · Alias: alias.demo · ARS 0.00',
+    monto: 5500, chunior_movimiento_id: 9647510, estado: 'OK'
+  });
+  sb.copiarResumenExpediente();
+
+  assert.match(texto, /Titular: Fulano De Tal/,
+    'el titular estaba en las notas y la ficha mostraba "—"');
+  assert.ok(!/chunior/i.test(texto), 'el jugador no tiene por qué leer "Chunior"');
+  assert.ok(!/landing/i.test(texto), 'ni "LANDING"');
+  assert.match(texto, /Origen: Portal/, 'se dice en castellano de dónde salió');
+});
+
+test('lista · dos solicitudes abiertas del mismo jugador quedan marcadas', () => {
+  const sb = arrancarPanel();
+  const caja = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'tablaSolicitudesInicio' ? caja : null);
+  sb._colaCargaEstado = {};
+  sb.V154P.solicitudes = [
+    { ID: 900001, USUARIO: 'jugadordeprueba', TIPO: 'CARGA', ESTADO: 'PENDIENTE',
+      MONTO_REAL: 3400, FECHA_CREACION: '2026-09-11T12:13:00Z' },
+    { ID: 900002, USUARIO: 'jugadordeprueba', TIPO: 'CARGA', ESTADO: 'PENDIENTE',
+      MONTO_REAL: 3000, FECHA_CREACION: '2026-09-11T12:12:00Z' }
+  ];
+  sb.V154P.solicitudesLastHtml = null;
+  sb.v154pRenderSolicitudesPortalEnInicio();
+
+  assert.match(caja.innerHTML, /2 solicitudes abiertas de este jugador/,
+    'cargar las dos es plata de verdad: la tarjeta tiene que avisarlo');
+
+  // Con un solo pedido no hay nada que avisar.
+  sb.V154P.solicitudes = [sb.V154P.solicitudes[0]];
+  sb.V154P.solicitudesLastHtml = null;
+  sb.v154pRenderSolicitudesPortalEnInicio();
+  assert.ok(!/solicitudes abiertas de este jugador/.test(caja.innerHTML),
+    'y no puede gritar cuando hay una sola');
+});

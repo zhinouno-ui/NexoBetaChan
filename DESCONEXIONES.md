@@ -2491,3 +2491,64 @@ operación se fuerza otra lectura. No se cambió ningún intervalo: el salto que
 layout, no el refresco. Si con esto sigue sintiéndose brusco, lo que hay que revisar es el
 `renderHistorialUnificado`, que repinta la tabla entera sin el guard de "no repintar si no cambió"
 que sí tiene la lista de pendientes.
+
+
+## D-82 · Lo que apareció explicándole el panel a las oficinas · RESUELTO
+
+El 2026-09-11 Juan le explicó el historial y el expediente a las oficinas por Discord. En esa
+charla salieron cuatro fallas — ninguna reportada antes, todas visibles apenas alguien mira la
+pantalla con ojos nuevos. Vale anotar el mecanismo: **la explicación funcionó como test**. Tres de
+las cuatro son la misma clase de error — el panel TIENE el dato y no lo usa.
+
+### 1) "Chat Jugador" abría el apartado, no la conversación
+
+Reportado textual: *"yo toco chat del jugador y me abre el apartado pero no me abre el chat con el
+usuario"*.
+
+`expedienteAbrirChatJugador` sólo abría la conversación si la solicitud traía `chat_id`. Las
+operaciones manuales no lo traen, y muchas del portal tampoco. En ese caso hacía
+`mostrarVista('chat')` y escribía el nombre en un input `#filtroTexto` — que en esa vista no
+existe. O sea: cambiaba de pantalla y nada más.
+
+Ahora busca la conversación **por usuario** en `ticketsAgrupados()` y la abre con
+`aceptarTicketLocalStep2`. Si el jugador no tiene ninguna, **lo dice**: hoy el panel no puede
+iniciar una conversación (ver D-73), y quedarse en silencio hace pensar que el botón está roto.
+
+### 2) El titular vacío en las operaciones manuales
+
+Juan lo vio en vivo: *"se ve el usuario, actualmente parece no notar el titular"*.
+
+Una operación manual no tiene columna `TITULAR`: el titular viaja **dentro de `notas`**, tal
+como lo escribe `portalNotasBase` (`"#206911 · Titular: Fulano · Alias: ..."`). La ficha leía
+`s.TITULAR`, `NOMBRE_COMPLETO` y `metadata.titular`, no encontraba nada y mostraba "—"
+mientras el dato estaba a la vista dos renglones más abajo, en el campo Notas. Ahora lo lee de ahí.
+
+### 3) La ficha que se le manda al jugador llevaba vocabulario nuestro
+
+Juan: *"no debe ver 'chunior', el titular no lo agarra ni de onda, landing es extraterrestre para
+ellos, no hace falta que lean eso"*.
+
+"Copiar Ficha" arma el texto que se le manda al jugador cuando reclama, y ese texto incluía
+`🎲 Mov. Chunior: N° 9647510` y `Origen: LANDING`. Se sacó el número de Chunior (sigue en la
+ficha en pantalla, que es donde lo usa el operador) y el origen pasa a castellano:
+LANDING/PORTAL → "Portal", MANUAL → "Carga manual".
+
+De paso, ese botón copiaba con `navigator.clipboard` directo y un `catch` que sólo avisaba:
+pasó a `nodoCopiar` (D-80), que recupera el foco y, si aun así no puede, muestra el texto en vez
+de perderlo.
+
+### 4) Dos solicitudes abiertas del mismo jugador, sin relación visible
+
+Una oficina preguntó: *"los usuarios pueden hacer 2 solicitudes a la vez ahora?"*. Sí — siempre
+pudieron. Se vio un jugador con dos CARGAS abiertas con un minuto de diferencia.
+
+El bloqueo real es del **portal** (Juan ya lo tiene resuelto ahí, sin probar). Pero del lado del
+panel esas dos solicitudes se dibujaban como dos tarjetas sin ninguna relación entre sí, y cargar
+las dos es plata de verdad. Ahora la tarjeta avisa cuántas hay abiertas de ese jugador. **No
+bloquea**: a veces son dos transferencias legítimas, y el que decide es el operador.
+
+## Nota de método
+
+Las cuatro salieron de explicar el sistema, no de usarlo. Conviene repetirlo: mostrarle el panel a
+alguien que no lo escribió encuentra en una hora lo que no aparece en semanas de operación, porque
+el que opera ya aprendió a esquivar los baches sin registrarlos como fallas.
