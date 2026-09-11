@@ -2365,3 +2365,62 @@ mano. Mismo patrón que D-76, del lado del panel.
 de oficina, que haría visibles los chats de P1 desde cualquier oficina. No se terminó de
 verificar porque hoy es discutible: `chat_sesiones` está congelada desde junio (D-74) y no se
 crean sesiones nuevas. Revisarlo cuando se decida qué generación de chat queda.
+
+
+## D-80 · Mientras el panel opera no se puede copiar el enlace de acceso · RESUELTO
+
+Reportado por Juan: "la aplicación, al estar haciendo algo, no te deja copiar el enlace del
+usuario para que ingrese ya validado". Son **dos** fallas encadenadas, y por eso no quedaba ni
+el enlace ni un aviso.
+
+### Por qué
+
+**1) El portapapeles exige foco.** `navigator.clipboard.writeText()` sólo escribe si la ventana
+lo tiene. Mientras el panel opera, abre y **enfoca** otra ventana: `main/agent-ipc.js:21-22`
+hace `win.show(); win.focus();` (y otra vez en :37), y `main/chunior-window.js:122,130-131` lo
+mismo. Con el foco en el backoffice, la escritura al portapapeles se rechaza.
+
+**2) El respaldo estaba muerto.** `jugadores-crm.js` caía en
+`catch(_e){ prompt("Copiá el enlace:", url); }`, y **prompt() no existe en Electron**. Ya estaba
+dicho en el propio código: *"⚠ Electron NO soporta prompt() (tira excepción y el botón 'no hace
+nada')"* (`conciliacion.js:697`) y *"Sin prompt() (Electron no lo soporta)"* (`chat-acciones.js:41`).
+Se coló igual justo en el botón del enlace.
+
+Resultado: fallaba el primero, el segundo no hacía nada, y el operador se quedaba sin el enlace
+**y sin enterarse**.
+
+Buscando eso aparecieron dos lugares con la misma falla, pero silenciosa:
+
+- `renderer/core/jugadores-importacion.js:292` — `copiarDatosUsuario` terminaba en `.catch(()=>{})`.
+- `renderer/portal/operation-modal.js:1012` — `expedienteCopiarTexto` no tenía `catch` ninguno.
+
+### Qué se hizo
+
+Un solo `window.nodoCopiar(texto, {etiqueta})` en `renderer/core/archivo-historial.js`, al lado
+del `portalCopiarCbu` que ya resolvía esto para el CBU. El orden importa:
+
+1. **Recupera el foco** con `ctrlElectron.refocus()` — que ya existía (`main/panel-window.js:72`,
+   agregado para recuperar el teclado después de un `confirm()` nativo). Ésta es la cura de la
+   causa real.
+2. Portapapeles moderno.
+3. `textarea` + `execCommand`, fuera de pantalla pero seleccionable.
+4. Si nada funcionó, **muestra el texto en un modal para copiarlo a mano**. Nunca `prompt()`.
+
+Y nunca dice "copiado" sin haber copiado: devuelve `false` y avisa.
+
+Enganchados al helper: el enlace de acceso, "Copiar datos" de la ficha de ingreso (que tenía el
+mismo problema de foco) y los dos que fallaban en silencio.
+
+Cubierto con 4 pruebas sobre el bundle real: que el texto no se pierda en el peor caso, que no
+mienta cuando sí copia, que no invente nada sin texto, y que no vuelva a aparecer un `prompt()`
+como respaldo.
+
+### Qué falta
+
+Quedan **otros dos botones que usan `prompt()`** y por lo tanto no hacen nada en Electron:
+
+- `renderer/extensions/validacion-cola.js:396` y `:398` — validar un usuario a mano.
+- `renderer/extensions/validacion-scope.js:185` — lo mismo.
+
+No se tocaron en este pase. Hay que reemplazarlos por un modal, como ya se hizo en el resto del
+panel.

@@ -947,3 +947,55 @@ test('D-64 · el botón de cerrar el retiro se apaga al primer clic', () => {
   assert.ok(!/onclick="_rv2Finalizar\(\)"/.test(bundle),
     'y no puede quedar ninguna versión sin apagar');
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COPIAR AUNQUE EL PANEL ESTE OPERANDO
+// El portapapeles exige foco, y mientras el panel opera enfoca la ventana del backoffice.
+// El respaldo del enlace de acceso era prompt(), que en Electron no existe: el operador se
+// quedaba sin el enlace y sin aviso.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('copiar · si no se puede copiar, el texto NO se pierde: queda a la vista', async () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  let modal = null;
+  sb.abrirModal = (titulo, cuerpo) => { modal = { titulo, cuerpo }; };
+
+  // El sandbox no tiene ni clipboard.writeText ni execCommand: es el peor caso, el mismo que
+  // se da cuando la ventana del backoffice se quedó con el foco.
+  const copio = await sb.nodoCopiar('https://portal.example/?t=abc123xyz', { etiqueta: 'Enlace copiado' });
+
+  assert.equal(copio, false, 'no puede decir que copió si no copió');
+  assert.ok(modal, 'tiene que mostrar el texto en vez de tragárselo');
+  assert.match(modal.cuerpo, /abc123xyz/, 'y el enlace tiene que estar completo ahí');
+});
+
+test('copiar · cuando sí copia, avisa con la etiqueta que le pasaron', async () => {
+  const sb = arrancarPanel();
+  let dicho = '';
+  sb.toast = (m) => { dicho = m; };
+  sb.abrirModal = () => { throw new Error('no debería abrir el modal si copió bien'); };
+  sb.navigator = { clipboard: { writeText: async () => {} } };
+
+  const copio = await sb.nodoCopiar('hola', { etiqueta: 'Enlace copiado' });
+
+  assert.equal(copio, true);
+  assert.equal(dicho, 'Enlace copiado');
+});
+
+test('copiar · sin texto no inventa nada', async () => {
+  const sb = arrancarPanel();
+  let dicho = '';
+  sb.toast = (m) => { dicho = m; };
+  assert.equal(await sb.nodoCopiar(''), false);
+  assert.match(dicho, /nada para copiar/i);
+});
+
+test('copiar · el enlace de acceso ya no depende de prompt()', () => {
+  // prompt() no existe en Electron (está dicho en conciliacion.js:697). Era el ÚNICO respaldo
+  // del botón del enlace: si el portapapeles fallaba, no pasaba absolutamente nada.
+  const bundle = fs.readFileSync(
+    path.join(RAIZ, 'renderer', 'generated', 'js-jugadores-crm.js'), 'utf8');
+  assert.ok(!/prompt\(/.test(bundle), 'no puede quedar un prompt() como respaldo');
+  assert.match(bundle, /nodoCopiar\(msg/, 'usa el camino que recupera el foco y no pierde el texto');
+});

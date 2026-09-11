@@ -99,26 +99,9 @@ window.pjRefrescarClave = async function(usuario){
 };
 
 window.pjCopiarIngreso = function(){
-  const t = window._pjTextoIngreso || "";
-  if(!t){ toast("No hay nada para copiar.","yellow"); return; }
-  // Mismo camino que el resto del panel: clipboard moderno y, si falla (file:// no es contexto
-  // seguro en Electron), textarea + execCommand. Sólo se canta "copiado" si de verdad se copió.
-  const ok = function(){ toast("Datos copiados","green"); };
-  const porTextarea = function(){
-    try{
-      const ta=document.createElement('textarea');
-      ta.value=t; ta.setAttribute('readonly','');
-      ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
-      document.body.appendChild(ta); ta.select();
-      const bien=document.execCommand('copy'); ta.remove();
-      if(bien) ok(); else toast("No se pudo copiar — copialo a mano del cuadro","red");
-    }catch(_e){ toast("No se pudo copiar — copialo a mano del cuadro","red"); }
-  };
-  try{
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(t).then(ok).catch(porTextarea);
-    } else porTextarea();
-  }catch(_e){ porTextarea(); }
+  // Va por el camino común: recupera el foco antes de copiar (el panel puede estar operando
+  // en la ventana del backoffice) y, si no se puede, muestra el texto para copiarlo a mano.
+  return window.nodoCopiar(window._pjTextoIngreso || "", { etiqueta: "Datos copiados" });
 };
 
 // PERFIL DE JUGADOR — layout de "record page" copiado de los CRM probados

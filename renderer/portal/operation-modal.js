@@ -1008,11 +1008,8 @@ ${stepperHtml}
 
   if(deps.window){
     deps.window.expedienteCopiarTexto = function(txt){
-      try{
-        navigator.clipboard.writeText(txt).then(()=>{
-          deps.toast('✓ Copiado al portapapeles', 'green');
-        });
-      }catch(_e){}
+      // Antes no tenía .catch(): si el portapapeles rechazaba, no copiaba y no avisaba.
+      try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Copiado al portapapeles' }); }catch(_e){}
     };
 
     deps.window.expedienteAbrirChatJugador = async function(usuario, chatId){

@@ -289,7 +289,8 @@ function abrirEditarUsuario(u){
 
 function copiarDatosUsuario(u){
   const txt=`Usuario: ${u.usuario}\nNombre: ${u.nombre}\nTeléfono: ${u.telefono||""}\nPC: ${u.pc_codigo||""}\nClave: ${u.clave||"12345a"}`;
-  navigator.clipboard?.writeText(txt).then(()=>toast("Datos copiados","green")).catch(()=>{});
+  // Antes: .catch(()=>{}) — si fallaba, el operador no se enteraba de nada.
+  window.nodoCopiar(txt, { etiqueta: "Datos copiados" });
 }
 
 async function resetearClaveUsuario(id, nombreUsuario){

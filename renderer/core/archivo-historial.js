@@ -352,4 +352,60 @@ function portalCopiarCbu(btn){
   }catch(_e){ porTextarea(); }
 }
 
+// Copiar de verdad, aunque el panel esté operando.
+// Dos cosas lo rompían. Una: navigator.clipboard.writeText() EXIGE que la ventana tenga el foco,
+// y mientras el panel opera abre y enfoca la ventana del backoffice o la de Chunior
+// (main/agent-ipc.js hace show()+focus()), así que el portapapeles rechaza la escritura — de ahí
+// que "mientras hace algo no te deja copiar el enlace". La otra: el respaldo del enlace de acceso
+// era prompt(), que en Electron NO existe (ya está dicho en conciliacion.js:697): fallaba el
+// primero, el segundo no hacía nada, y el operador se quedaba sin el enlace y sin aviso.
+// Orden: recuperar el foco → portapapeles → textarea+execCommand → mostrarlo para copiar a mano.
+// Nunca prompt(), y nunca cantar "copiado" sin haber copiado.
+window.nodoCopiar = async function(texto, opciones){
+  const txt = String(texto == null ? '' : texto);
+  const etiqueta = (opciones && opciones.etiqueta) || 'Copiado';
+  if(!txt){ try{ toast('No hay nada para copiar','yellow'); }catch(_e){} return false; }
+
+  // 1) El foco vuelve al panel. Sin esto el portapapeles rechaza mientras opera el backoffice.
+  try{
+    if(window.ctrlElectron && window.ctrlElectron.refocus) await window.ctrlElectron.refocus();
+  }catch(_e){}
+
+  // 2) Camino moderno.
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(txt);
+      try{ toast(etiqueta,'green'); }catch(_e){}
+      return true;
+    }
+  }catch(_e){}
+
+  // 3) Respaldo clásico: fuera de pantalla pero SELECCIONABLE (un display:none no se copia).
+  try{
+    const ta = document.createElement('textarea');
+    ta.value = txt; ta.setAttribute('readonly','');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;padding:0;border:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try{ ta.setSelectionRange(0, txt.length); }catch(_e){}
+    let copiado = false; try{ copiado = document.execCommand('copy'); }catch(_e){}
+    try{ ta.remove(); }catch(_e){}
+    if(copiado){ try{ toast(etiqueta,'green'); }catch(_e){} return true; }
+  }catch(_e){}
+
+  // 4) Último recurso: mostrarlo. Poder seleccionarlo a mano es mucho mejor que perderlo.
+  try{
+    abrirModal('📋 Copialo a mano',
+      '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">No se pudo copiar solo — pasa '
+      + 'cuando el panel está operando en otra ventana. Seleccionalo y copialo:</div>'
+      + '<textarea readonly onclick="this.select()" style="width:100%;min-height:120px;border-radius:10px;'
+      + 'padding:10px;background:#0e1525;color:#fff;border:1px solid #2d3342;resize:vertical;'
+      + 'font-family:ui-monospace,monospace;font-size:12px">' + escapeHtml(txt) + '</textarea>',
+      null, '');
+  }catch(_e){
+    try{ toast('No se pudo copiar — copialo a mano: '+txt,'red'); }catch(_x){}
+  }
+  return false;
+};
+
 // ══════════════════════════════════════════════════════════════════════════

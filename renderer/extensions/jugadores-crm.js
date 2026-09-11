@@ -141,8 +141,7 @@
     catch(e){ toast((e && e.message) || "No se pudo generar el enlace","red"); return; }
     if(!url){ toast("No se pudo generar el enlace","red"); return; }
     const msg = "Entrá por acá para " + btnTxt + ", ya validado 👇\n" + url + "\n\n(Es personal y vale por 30 minutos.)";
-    try{ await navigator.clipboard.writeText(msg); toast("Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp","green"); }
-    catch(_e){ prompt("Copiá el enlace:", url); }
+    await window.nodoCopiar(msg, { etiqueta: "Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp" });
   };
 
   window.crmFiltrar=function(){
