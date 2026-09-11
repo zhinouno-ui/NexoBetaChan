@@ -2552,3 +2552,92 @@ bloquea**: a veces son dos transferencias legítimas, y el que decide es el oper
 Las cuatro salieron de explicar el sistema, no de usarlo. Conviene repetirlo: mostrarle el panel a
 alguien que no lo escribió encuentra en una hora lo que no aparece en semanas de operación, porque
 el que opera ya aprendió a esquivar los baches sin registrarlos como fallas.
+
+
+## D-83 · ¿NODO levantó las operaciones? · MEDIDO · el número NO acompaña
+
+Pedido: comparar cargas antes y después de NODO para respaldar que NODO levanta operaciones.
+Se midió. **El dato no sostiene esa afirmación en volumen.** Queda anotado con el método completo
+para que no haya que rehacerlo, y para que nadie salga a decir en una reunión algo que la base
+contradice.
+
+### De dónde salen los números
+
+`historial_ops` **no sirve** para el "antes": esa tabla empieza cuando empieza NODO. El "antes"
+está en `agente_operaciones_importadas` (635.211 filas) — el registro del propio casino,
+importado por CSV, que existe de los dos lados de la línea.
+
+Cuatro controles de validez antes de usarla:
+
+1. **Duplicados: 0,0%.** Hay lotes que se pisan en fechas ("AGENTES - ENERO/SEPT" y varios CSV),
+   pero sobre (pc, fecha, alias, monto, tipo) hay 635.169 combinaciones únicas de 635.211 filas.
+2. **Cobertura por oficina: despareja.** Sólo **P2, P3, P4 y P5** tienen los 9 meses. P1 corta en
+   junio, P6 sólo tiene junio, P7 junio–julio, P8 tiene 22 filas. **El análisis se limita a esas
+   cuatro** — usar el total global daría una caída falsa, porque cambia la cantidad de oficinas
+   cubiertas mes a mes (4 → 5 → 7 → 5).
+3. **Días completos.** Enero a agosto tienen 31/28/31/30/31/30/31/31 días con datos en las cuatro.
+   No faltan días, así que el promedio diario es comparable.
+4. **El registro del casino captura lo que hace NODO.** En agosto las cargas OK de NODO son el
+   93% de los depósitos del casino en las mismas oficinas — la diferencia es lo que se carga a
+   mano directamente en el casino. **Septiembre hay que descartarlo**: el import corta el 4/9 y
+   ahí NODO registra 3 veces más que el casino (310%–340%), o sea el import está incompleto. La
+   primera medición incluía septiembre y ensuciaba el "después"; se rehízo cortando en agosto.
+
+### El resultado
+
+Cada oficina contra sí misma. Antes = 1/1 hasta el día que arrancó NODO. Después = ese día hasta
+el 31/8. Depósitos por día:
+
+| Oficina | Arrancó NODO | Antes | Después | Ops | Monto |
+|---|---|---|---|---|---|
+| P2 | 07/07 | 716,3 | 729,5 | **+1,9%** | +9,7% |
+| P5 | 08/07 | 213,4 | 220,4 | **+3,3%** | −12,4% |
+| P3 | 01/07 | 569,3 | 508,0 | **−10,8%** | −6,7% |
+| P4 | 24/06 | 910,7 | 713,6 | **−21,6%** | −6,9% |
+
+Dos planas y dos en baja. **No hay alza.**
+
+### Y hay algo peor, que es el hallazgo de verdad
+
+Los **jugadores activos caen fuerte**, y lo confirman **dos fuentes independientes**:
+
+- Registro del casino (P2–P5): 5.211 en junio → 4.562 en julio → **3.422 en agosto**.
+- NODO por su cuenta (P2–P5): 4.010 en julio → **3.405 en agosto**.
+
+De los 4.010 que operaron en julio, en agosto **siguieron 2.253 (56%)** y **1.757 (44%) no
+operaron en ninguna oficina**. Se probó la hipótesis de que se hubieran mudado a las oficinas
+nuevas: **cero** de esos 1.757 aparece en P6, P7 o P8. No es reacomodamiento, es pérdida.
+
+Y los jugadores nuevos vienen en baja: 4.802 vistos por primera vez en julio (inflado por la
+migración), 2.032 en agosto, 395 en los primeros 11 días de septiembre.
+
+**Salvedad honesta:** julio es un mal punto de partida porque es el mes de la migración y está
+inflado. Pero la serie del casino —que no depende de NODO— cae igual desde junio.
+
+### Lo que el dato SÍ sostiene
+
+NODO no agregó demanda. Lo que hizo, y se mide sin discusión, es **absorber el mismo trabajo con
+la misma gente y sacárselo de encima al operador**:
+
+| | Julio | Agosto | Septiembre |
+|---|---|---|---|
+| Operaciones por el portal | 63,2% | 87,5% | **94,1%** |
+| Cargadas a mano | 21.116 | 10.601 | **1.696** |
+| Operadores activos | 45 | 44 | 42 |
+| Operaciones por operador | 1.439 | 2.172 | ~2.166 (ritmo) |
+
+Los mismos ~44 operadores pasaron de 2.032 a 3.028 operaciones por día, y el trabajo manual cayó
+92%. **Ese** es el argumento defendible: no más negocio, sino el mismo negocio con muchísima menos
+carga operativa y todo registrado.
+
+### Qué habría que medir para cerrar la pregunta de verdad
+
+El diseño tiene un límite real: las cuatro oficinas adoptaron NODO en **dos semanas** (24/6 al
+8/7), así que no hay una oficina comparable que se haya quedado sin NODO en el mismo período. Sin
+ese control no se puede separar el efecto de NODO de lo que haya pasado en el mercado en julio y
+agosto. Para responderlo bien haría falta el registro del casino de una operación que NO use NODO
+en esos meses.
+
+**Prioridad real: la caída de jugadores activos.** Es un 34% en dos meses, confirmado por dos
+fuentes, y no tiene nada que ver con si NODO levanta o no operaciones. Eso es lo que hay que
+mirar primero.
