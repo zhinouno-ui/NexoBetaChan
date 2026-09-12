@@ -68,8 +68,26 @@ async function _rv2LeerSaldo(intento){
   deps._wdLock();
   try{
     const b = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    if(b && b.exists && typeof b.balance?.value==='number') st.saldoReal = b.balance.value;
-    else st.saldoFallo='ilegible';
+    // Sólo se cree un saldo LEÍDO de verdad: con dígitos en el texto y sin la sesión caída. Con la
+    // sesión inválida el casino deja la lista de fondo y el modal del saldo no abre bien: el preload
+    // devolvía 0 y el modal decía "NO TIENE FICHAS · $0" con el jugador teniendo $35.020.
+    const _raw = String((b && b.balance && b.balance.raw) || '');
+    const _confiable = !!(b && b.exists && !b.needsLogin && !b.pageError
+      && typeof b.balance?.value === 'number' && Number.isFinite(b.balance.value) && /\d/.test(_raw));
+    if(_confiable){
+      st.saldoReal = b.balance.value; st.saldoFallo = null;
+      // Y que la tarjeta de pendientes también lo sepa: de ahí sale el atajo "Retirar lo que tiene",
+      // que dependía sólo del escaneo en segundo plano y después de recargar no aparecía.
+      try{
+        deps.window._retiroSaldoCheck = deps.window._retiroSaldoCheck || {};
+        const _m = Number(st.objetivo || st.declarado || 0);
+        deps.window._retiroSaldoCheck[String(st.usuario).toLowerCase()] = {
+          saldo: b.balance.value, monto: _m, suficiente: b.balance.value + 0.5 >= _m,
+          confiable: true, ts: Date.now(), raw: _raw.trim() };
+      }catch(_e){}
+    } else {
+      st.saldoFallo = (b && (b.needsLogin || b.pageError)) ? 'sesion' : 'ilegible';
+    }
   }catch(_e){ st.saldoFallo='ilegible'; }
   finally{ deps._wdUnlock(); deps._drexGlobalUnlock(); pintar(); }
 }
@@ -156,6 +174,13 @@ api._rv2Aprobar = async function(){
     deps.toast('Portal: buscando '+st.usuario+'...', 'blue');
     deps._trazaPaso('Buscando '+st.usuario+' en Agentes...');
     const bb = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:true });
+    if(bb && (bb.needsLogin || bb.pageError)){
+      const _mot = bb.needsLogin ? 'Se cayó la sesión de Agentes' : 'Agentes devolvió una página de error';
+      deps.toast(_mot+' · no se sacó nada. Entrá de nuevo y reintentá.','red');
+      deps._trazaPaso(_mot+' · no se operó','err');
+      deps._trazaFin('err');
+      return;
+    }
     if(!bb || !bb.exists){
       deps.toast('Usuario '+st.usuario+' no encontrado en Agentes.','red');
       deps._trazaPaso(st.usuario+' no existe en Agentes','err');
@@ -223,7 +248,8 @@ api._rv2Aprobar = async function(){
   // el modal quedaba congelado en el último paso de la traza y no se registraba nada — ni en
   // historial_ops ni en la solicitud. Pasó con un parcial de $500.000 (sol. #198680).
   try{
-    await deps._rv2Finalizar();
+    // CON el estado: el modal ya se cerró arriba (cerrarRetiroV2) y el global está en null.
+    await deps._rv2Finalizar(st);
   }catch(e){
     const _d = (e && e.message) || String(e);
     try{ deps._trazaPaso('FALLÓ EL CIERRE: '+_d, 'err'); }catch(_e){}

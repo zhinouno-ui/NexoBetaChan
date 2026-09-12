@@ -2749,3 +2749,85 @@ Dos cosas distintas en las capturas, ninguna tocada:
   anti-falso-negativo); si no, reintenta y termina en error técnico. O sea que el casino dijo que
   no está. Lo más probable es que el usuario de prueba exista en el **otro** entorno (Juan
   alternó entre BET300 y Drex). No se puede confirmar sin el casino.
+
+
+## D-85 · Segunda ronda del 12/09 — el parcial otra vez, la sesión de Drex, los íconos · RESUELTO salvo lo marcado
+
+Juan volvió a probar el parcial sobre la solicitud de prueba y le volvió a pasar lo mismo:
+*"vuelve a ser el mismo problema anterior, la verdad una vergüenza"*. Tenía razón.
+
+### "Se perdió el estado del retiro" — el camino que D-84 no cubrió
+
+D-84 arregló la llamada al cierre en el camino de **"confirmar una por una"** (`_rv2Confirmar`).
+Juan pagó con esa casilla **destildada**, que es el camino por defecto y es **otro código**:
+`_rv2Aprobar` cierra el modal apenas saca las fichas (`cerrarRetiroV2()` pone el estado global en
+`null`, línea 134) y veinte segundos después, tras anotar en Chunior y debitar, llamaba al cierre
+**sin pasarle el estado** (línea 226). Se arregló una llamada sin buscar las demás.
+
+Esta vez se verificó el cuerpo **entero** del cierre (usa el `st` que recibe en todo momento) y la
+prueba nueva no mira una línea: exige que **ninguna** llamada al cierre quede sin el estado.
+
+Además, a pedido de Juan, **se sacó "Confirmar una por una"**: no aportaba y era justamente un
+segundo camino de código para lo mismo.
+
+### "Pagarle todo lo que tiene" no cambiaba la solicitud
+
+En el modal, el botón cambiaba **lo que se paga ahora** pero no **el total de la deuda**, que quedaba
+en lo declarado ($50.000). El cierre calculaba contra eso y dejaba un parcial fantasma por plata que
+el jugador no tiene. Ahora corrige el total y lo escribe en la solicitud (`monto_corregido`), como
+ya hacía el atajo de la tarjeta.
+
+Ese atajo de la tarjeta ("✔ Retirar $X") sólo aparecía si el escaneo en segundo plano había leído
+el saldo de ese jugador; después de recargar el panel no aparecía. Ahora también lo alimenta la
+lectura que hace el modal.
+
+### "NO TIENE FICHAS · $0" con la sesión caída — Juan: *"miente"*
+
+Dos fallas encadenadas:
+
+- **El preload de Drex miraba sólo el primer modal.** `detectarModalSesionInvalida` hacía
+  `querySelector` por selector. Con el modal del saldo del jugador abierto hay **dos**
+  `ReactModal`: agarraba el del jugador, el texto no coincidía, y el de *"session is invalid"*
+  —que estaba encima— pasaba de largo. Ahora revisa todos. (Juan pasó el HTML exacto del modal.)
+- **El panel creía cualquier número.** `_rv2LeerSaldo` tomaba `balance.value` sin mirar si la
+  sesión estaba caída ni si el texto tenía dígitos. Ahora con la sesión caída dice *"se cayó la
+  sesión de Agentes"* en vez de *"no tiene fichas"*, y al pagar dice lo mismo en vez de *"no existe"*.
+
+### El modal de ingreso no aparecía estando en el login de Drex
+
+`ensureDrexSession` sólo abre el modal si el preload dice `needsLogin`. `pageNeedsLogin` daba la
+sesión por buena apenas encontraba `#searchButton` **en el DOM**, sin mirar si se ve. Drex es una
+SPA y puede dejar la búsqueda montada pero oculta al mandarte al login. Ahora exige que sea visible.
+Se verificó que `estadoPagina` → `status()` → `pageNeedsLogin()` es el camino que usa el panel.
+
+**Lo que no se pudo verificar:** contra la pantalla de login real de Drex, porque desde acá no hay
+casino. Si con esto sigue sin abrirse, hace falta el HTML de esa pantalla, igual que el del modal.
+
+### Los íconos de la barra salían como "ðŸšª"
+
+Son emojis en `content:` de `base.css`. Los archivos estaban **bien**: UTF-8 válido, sin doble
+codificación, el `.htm` declarando UTF-8 dos veces. Fue la app la que leyó la hoja de estilos como
+Windows-1252. No se encontró el disparador (Electron es el mismo 32.3.3). El arreglo no depende de
+encontrarlo: el build declara `@charset "UTF-8"` en la primera línea de cada CSS que genera, y los
+ocho emojis de `content:` pasaron a escapes (`\\1F6AA`), que son ASCII puro.
+
+(Se descartó en el camino que los `.js` tuvieran el mismo problema: leídos como Windows-1252,
+ninguno se rompe.)
+
+### La solicitud de prueba quedó inconsistente · ABIERTO — decisión de Juan
+
+La #207577 (usuario de prueba, retiro de $50.000) figura en `ERROR_OPERATIVO` y **sin ningún pago
+registrado** (`retiro_parcial` vacío). Pero se pagaron **dos veces**, las dos con el bug de arriba:
+
+| Fecha | Monto | Chunior | Desde |
+|---|---|---|---|
+| 11/09 | $25.000 | N° 9648653 | SALVATIERRA X |
+| 12/09 | $1 | N° 9655726 | SALVATIERRA X |
+
+Si alguien la reintenta así, paga los $50.000 enteros encima. **No se tocó**: registrar $25.001 de
+progreso es escribir estado de plata, y aunque sea una cuenta de prueba, es decisión de Juan.
+
+### El instalador 1.2.1 compilado antes de esto quedó viejo
+
+Se había compilado con el parcial todavía roto y los íconos rotos. Se recompila con esto; los
+archivos anteriores de `dist/` no se tienen que subir.

@@ -1324,3 +1324,91 @@ test('chat · la ficha del jugador tiene la puerta para escribirle', () => {
   assert.match(b, /💬 Mensaje<\/button>/);
   assert.match(b, /onclick="nodoChatNuevo\(/);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LOS ICONOS NO DEPENDEN DE LA CODIFICACION
+// La app leyó css-base.css como Windows-1252 y los íconos de la barra salieron como "ðŸšª".
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('estilos · cada hoja generada declara UTF-8 y no tiene emojis crudos en content:', () => {
+  const dir = path.join(RAIZ, 'renderer', 'generated');
+  const hojas = fs.readdirSync(dir).filter(x => x.endsWith('.css'));
+  assert.ok(hojas.length > 0);
+  for (const f of hojas) {
+    const css = fs.readFileSync(path.join(dir, f), 'utf8');
+    assert.ok(css.startsWith('@charset "UTF-8";'),
+      f + ': sin @charset en la primera línea, la codificación la adivina el navegador');
+    const crudos = css.match(/content:\s*"[^"]*[^\x00-\x7F][^"]*"/g) || [];
+    assert.deepEqual(crudos, [],
+      f + ': un emoji crudo en content: se rompe si la hoja se lee mal — va como escape (\\1F6AA)');
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EL CAMINO QUE D-84 NO CUBRIO
+// D-84 arregló "se perdió el estado" en el camino de "confirmar una por una". Juan pagó con esa
+// casilla destildada —otro camino— y volvió a pasar. Estas pruebas miran TODOS los caminos.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('parcial · NINGÚN camino llama al cierre sin pasarle el estado', () => {
+  const b = _bundlePortal();
+  assert.equal((b.match(/await deps\._rv2Finalizar\(\)/g) || []).length, 0,
+    'cualquier llamada sin estado vuelve a buscarlo en el global, que cerrar el modal pone en null');
+  assert.ok((b.match(/await deps\._rv2Finalizar\(st\)/g) || []).length >= 2,
+    'el camino directo y el de confirmar tienen que pasarlo');
+});
+
+test('parcial · ya no existe "Confirmar una por una"', () => {
+  assert.ok(!/Confirmar una por una<\/label>/.test(_bundlePortal()),
+    'Juan lo pidió: no aportaba y era un segundo camino de código para lo mismo');
+});
+
+test('parcial · "pagarle todo lo que tiene" corrige el TOTAL y lo escribe en la solicitud', () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  let escrito = null;
+  sb.actualizarSolicitudPortal = (id, estado, extra) => { escrito = { id, estado, extra }; return Promise.resolve({}); };
+  sb._retiroV2 = { id: 900001, usuario: 'jugadordeprueba', declarado: 50000, objetivo: 50000,
+    totalReal: 50000, _metaTotal: null, yaPagado: 0, sel: {}, montos: {}, hechas: {},
+    fase: 'setup', saldoReal: 35020, modoParcial: true };
+
+  sb._rv2AjustarASaldo(35020);
+
+  assert.equal(sb._retiroV2.totalReal, 35020,
+    'si el total queda en 50.000, el cierre deja 14.980 "pendientes" que el jugador no tiene');
+  assert.ok(escrito, 'y la solicitud tiene que enterarse');
+  assert.equal(escrito.extra.monto_corregido, 35020);
+});
+
+test('parcial · un saldo leído con la sesión caída no se cree', () => {
+  const b = _bundlePortal();
+  assert.match(b, /!b\.needsLogin && !b\.pageError/,
+    'con la sesión inválida el preload devolvía 0 y el modal decía "NO TIENE FICHAS"');
+  assert.match(b, /Se cayó la sesión de Agentes\. Entrá de nuevo y reabrí el retiro\./);
+});
+
+test('Drex · detecta "session is invalid" aunque haya OTRO modal abierto antes', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'agent-preload.js'), 'utf8');
+  const m = src.match(/function detectarModalSesionInvalida\(\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'no encontré la función en el preload');
+  const detectar = new Function('document', m[0] + '\nreturn detectarModalSesionInvalida();');
+
+  // Lo que había en pantalla: el modal del saldo del jugador, y ENCIMA el de sesión inválida.
+  const delJugador = { textContent: 'Saldo de jugadordeprueba · ARS 35.020' };
+  const invalida   = { textContent: 'session is invalid La session es invalida, redireccionamos al login Aceptar' };
+  const doc = {
+    querySelector:    (s) => (s === '.ReactModal__Content' ? delJugador : null),
+    querySelectorAll: (s) => (s === '.ReactModal__Content' ? [delJugador, invalida] : [])
+  };
+  assert.equal(detectar(doc), invalida,
+    'mirando sólo el primero, agarraba el del jugador y el de sesión inválida pasaba de largo');
+});
+
+test('Drex · un botón de búsqueda oculto no cuenta como "estás adentro"', () => {
+  // Con el botón en el DOM pero oculto (la SPA lo deja montado al mandarte al login), el preload
+  // daba la sesión por buena y el panel no abría nunca el modal de ingreso.
+  const src = fs.readFileSync(path.join(RAIZ, 'agent-preload.js'), 'utf8');
+  assert.match(src, /const hasSearch = isVisible\(document\.querySelector\(SELECTORS\.searchButton\)\)/);
+  assert.ok(!/const hasSearch = document\.querySelector\(SELECTORS\.searchButton\) \|\|/.test(src),
+    'un querySelector pelado encuentra el botón aunque no se vea');
+});

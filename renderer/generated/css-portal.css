@@ -1,3 +1,4 @@
+@charset "UTF-8";
 
 .v154p-card{border:1px solid var(--line);border-radius:14px;background:#10131a;padding:10px;margin-bottom:8px;display:grid;grid-template-columns:1.2fr .6fr .7fr .9fr auto;gap:10px;align-items:center}
 .v154p-main{font-weight:900;color:#fff}
@@ -13,7 +14,7 @@
 body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions .v154p-btn{opacity:.35;pointer-events:none}
 body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions{position:relative;opacity:1}
 body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{
-  content:"⏳ operando…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  content:"\23F3\0020operando\2026";   /* ⏳ operando… — en escapes, por lo mismo que la barra */position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(13,17,23,.86);border-radius:9px;font-size:11px;font-weight:800;color:#f5c518;
   letter-spacing:.02em}
 body.op-portal-en-curso .v154p-card.v154p-operando{border-color:rgba(245,197,24,.5)}

@@ -556,15 +556,17 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     font-size:17px;
     line-height:1;
   }
-  /* Íconos: antes eran glifos tipográficos (⌂ ⇩ ▬ ✉ ★ ↵) que no se leían como nada.
-     Ahora el mismo emoji que ya está en el texto del botón. */
-  #navInicio::before{content:"🏠"}
-  #navSolicitudes::before{content:"📋"}
-  #navBilleteras::before{content:"💳"}
-  #navChat::before{content:"💬"}
-  #navJugadores::before{content:"🏅"}
-  #navAuto::before{content:"⚡"}
-  .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"🚪"}
+  /* Íconos: antes eran glifos tipográficos que no se leían como nada. Ahora el mismo emoji que
+     ya está en el texto del botón — escrito como ESCAPE (\1F3E0 = casa, etc.), no crudo: un emoji
+     crudo en content: se rompe si la hoja se lee con otra codificación, y pasó ("ðŸšª").
+     1F3E0 🏠 · 1F4CB 📋 · 1F4B3 💳 · 1F4AC 💬 · 1F3C5 🏅 · 26A1 ⚡ · 1F6AA 🚪 */
+  #navInicio::before{content:"\1F3E0"}
+  #navSolicitudes::before{content:"\1F4CB"}
+  #navBilleteras::before{content:"\1F4B3"}
+  #navChat::before{content:"\1F4AC"}
+  #navJugadores::before{content:"\1F3C5"}
+  #navAuto::before{content:"\26A1"}
+  .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"\1F6AA"}
   /* Globito con el nombre: el texto del botón está en color:transparent + font-size:0, así que
      sin esto la barra angosta era pura adivinanza. Sale del aria-label (una sola fuente). */
   .sidebar > .nav-btn::after{

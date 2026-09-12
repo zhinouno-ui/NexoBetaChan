@@ -1296,6 +1296,22 @@ api._rv2AjustarASaldo = function(montoFijo){
   }
   if(!(nuevo>0)) return;
   st.objetivo = nuevo;
+  // Esto cambia la DEUDA, no sólo lo que se paga ahora. El total quedaba en lo declarado
+  // ($50.000): el cierre calculaba contra eso y dejaba un parcial fantasma por la diferencia que el
+  // jugador no tiene. Se corrige el total y se escribe en la solicitud, igual que el atajo de la
+  // tarjeta — que era el único que lo hacía.
+  st.totalReal = (Number(st.yaPagado)||0) + nuevo;
+  st._metaTotal = st.totalReal;
+  try{
+    const S=(deps.window.V154P&&deps.V154P.solicitudes)||[];
+    const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(st.id); });
+    if(s) s.MONTO_REAL = st.totalReal;
+    const _p = deps.window.actualizarSolicitudPortal(String(st.id), String((s&&s.ESTADO)||'PENDIENTE'), {
+      monto_corregido: st.totalReal, monto_declarado_original: st.declarado, motivo_correccion: 'todo',
+      operador: (deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
+    });
+    if(_p && typeof _p.catch === 'function') _p.catch(function(){});
+  }catch(_e){}
   st.sel={}; st.montos={};
   try{
     const rep = deps.recomendarRepartoRetiro(nuevo);
@@ -1429,6 +1445,7 @@ function _rv2Veredicto(){
   if(st.saldoReal==null && st.saldoFallo)
     return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
       det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
+         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Entrá de nuevo y reabrí el retiro.'
                                      : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
   if(st.saldoReal==null)
     return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
@@ -1591,7 +1608,8 @@ function _rv2Render(){
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
-    + '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#6b7280;cursor:pointer" title="Te va confirmando billetera por billetera mientras hacés las transferencias, en vez de todas juntas al final"><input type="checkbox" id="rv2ConfCada" style="width:13px;height:13px"> Confirmar una por una</label>'
+    // ("Confirmar una por una" se sacó a pedido de Juan: no aportaba y era un segundo camino de
+    //  código para lo mismo — un arreglo cubría uno y el otro seguía roto.)
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">'
     +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9" onclick="cerrarRetiroV2()">Cancelar</button>'
     +   '<button class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'
@@ -1678,8 +1696,26 @@ async function _rv2LeerSaldo(intento){
   deps._wdLock();
   try{
     const b = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    if(b && b.exists && typeof b.balance?.value==='number') st.saldoReal = b.balance.value;
-    else st.saldoFallo='ilegible';
+    // Sólo se cree un saldo LEÍDO de verdad: con dígitos en el texto y sin la sesión caída. Con la
+    // sesión inválida el casino deja la lista de fondo y el modal del saldo no abre bien: el preload
+    // devolvía 0 y el modal decía "NO TIENE FICHAS · $0" con el jugador teniendo $35.020.
+    const _raw = String((b && b.balance && b.balance.raw) || '');
+    const _confiable = !!(b && b.exists && !b.needsLogin && !b.pageError
+      && typeof b.balance?.value === 'number' && Number.isFinite(b.balance.value) && /\d/.test(_raw));
+    if(_confiable){
+      st.saldoReal = b.balance.value; st.saldoFallo = null;
+      // Y que la tarjeta de pendientes también lo sepa: de ahí sale el atajo "Retirar lo que tiene",
+      // que dependía sólo del escaneo en segundo plano y después de recargar no aparecía.
+      try{
+        deps.window._retiroSaldoCheck = deps.window._retiroSaldoCheck || {};
+        const _m = Number(st.objetivo || st.declarado || 0);
+        deps.window._retiroSaldoCheck[String(st.usuario).toLowerCase()] = {
+          saldo: b.balance.value, monto: _m, suficiente: b.balance.value + 0.5 >= _m,
+          confiable: true, ts: Date.now(), raw: _raw.trim() };
+      }catch(_e){}
+    } else {
+      st.saldoFallo = (b && (b.needsLogin || b.pageError)) ? 'sesion' : 'ilegible';
+    }
   }catch(_e){ st.saldoFallo='ilegible'; }
   finally{ deps._wdUnlock(); deps._drexGlobalUnlock(); pintar(); }
 }
@@ -1766,6 +1802,13 @@ api._rv2Aprobar = async function(){
     deps.toast('Portal: buscando '+st.usuario+'...', 'blue');
     deps._trazaPaso('Buscando '+st.usuario+' en Agentes...');
     const bb = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:true });
+    if(bb && (bb.needsLogin || bb.pageError)){
+      const _mot = bb.needsLogin ? 'Se cayó la sesión de Agentes' : 'Agentes devolvió una página de error';
+      deps.toast(_mot+' · no se sacó nada. Entrá de nuevo y reintentá.','red');
+      deps._trazaPaso(_mot+' · no se operó','err');
+      deps._trazaFin('err');
+      return;
+    }
     if(!bb || !bb.exists){
       deps.toast('Usuario '+st.usuario+' no encontrado en Agentes.','red');
       deps._trazaPaso(st.usuario+' no existe en Agentes','err');
@@ -1833,7 +1876,8 @@ api._rv2Aprobar = async function(){
   // el modal quedaba congelado en el último paso de la traza y no se registraba nada — ni en
   // historial_ops ni en la solicitud. Pasó con un parcial de $500.000 (sol. #198680).
   try{
-    await deps._rv2Finalizar();
+    // CON el estado: el modal ya se cerró arriba (cerrarRetiroV2) y el global está en null.
+    await deps._rv2Finalizar(st);
   }catch(e){
     const _d = (e && e.message) || String(e);
     try{ deps._trazaPaso('FALLÓ EL CIERRE: '+_d, 'err'); }catch(_e){}

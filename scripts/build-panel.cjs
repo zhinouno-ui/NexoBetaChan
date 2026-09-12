@@ -58,7 +58,12 @@ function assemble(root = ROOT) {
       if(tag !== block.type) throw new Error(`Tipo de etiqueta incorrecto: ${id}`);
       if(block.inline) return `<${tag}${attributes}>${block.content}</${tag}>`;
       const relative = 'renderer/generated/' + id.replace(':', '-') + (tag === 'script' ? '.js' : '.css');
-      assets.set(inside(root, relative), block.content);
+      // Una hoja de estilos sin BOM ni @charset se decodifica con lo que el navegador ADIVINE, y
+      // la app de escritorio adivinó Windows-1252: los íconos de la barra (emojis en content:)
+      // salían como "ðŸšª". Declararlo en la primera línea es la forma estándar de que no dependa
+      // de nada. (Los .js no lo necesitan: se verificó que ninguno se rompe leído como 1252.)
+      assets.set(inside(root, relative),
+        tag === 'style' ? '@charset "UTF-8";\n' + block.content : block.content);
       // Scripts clásicos y bloqueantes: las extensiones conservan su orden y sus ids.
       return tag === 'script' ? `<script${attributes} src="${relative}"></script>`
         : `<link${attributes} rel="stylesheet" href="${relative}">`;

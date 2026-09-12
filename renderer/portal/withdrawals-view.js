@@ -265,6 +265,22 @@ api._rv2AjustarASaldo = function(montoFijo){
   }
   if(!(nuevo>0)) return;
   st.objetivo = nuevo;
+  // Esto cambia la DEUDA, no sólo lo que se paga ahora. El total quedaba en lo declarado
+  // ($50.000): el cierre calculaba contra eso y dejaba un parcial fantasma por la diferencia que el
+  // jugador no tiene. Se corrige el total y se escribe en la solicitud, igual que el atajo de la
+  // tarjeta — que era el único que lo hacía.
+  st.totalReal = (Number(st.yaPagado)||0) + nuevo;
+  st._metaTotal = st.totalReal;
+  try{
+    const S=(deps.window.V154P&&deps.V154P.solicitudes)||[];
+    const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(st.id); });
+    if(s) s.MONTO_REAL = st.totalReal;
+    const _p = deps.window.actualizarSolicitudPortal(String(st.id), String((s&&s.ESTADO)||'PENDIENTE'), {
+      monto_corregido: st.totalReal, monto_declarado_original: st.declarado, motivo_correccion: 'todo',
+      operador: (deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
+    });
+    if(_p && typeof _p.catch === 'function') _p.catch(function(){});
+  }catch(_e){}
   st.sel={}; st.montos={};
   try{
     const rep = deps.recomendarRepartoRetiro(nuevo);
@@ -398,6 +414,7 @@ function _rv2Veredicto(){
   if(st.saldoReal==null && st.saldoFallo)
     return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
       det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
+         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Entrá de nuevo y reabrí el retiro.'
                                      : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
   if(st.saldoReal==null)
     return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
@@ -560,7 +577,8 @@ function _rv2Render(){
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
-    + '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#6b7280;cursor:pointer" title="Te va confirmando billetera por billetera mientras hacés las transferencias, en vez de todas juntas al final"><input type="checkbox" id="rv2ConfCada" style="width:13px;height:13px"> Confirmar una por una</label>'
+    // ("Confirmar una por una" se sacó a pedido de Juan: no aportaba y era un segundo camino de
+    //  código para lo mismo — un arreglo cubría uno y el otro seguía roto.)
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">'
     +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9" onclick="cerrarRetiroV2()">Cancelar</button>'
     +   '<button class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'

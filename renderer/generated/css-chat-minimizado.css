@@ -1,3 +1,4 @@
+@charset "UTF-8";
 
 /* Minimizar la bandeja de chat (solo desktop): oculta el panel y el main ocupa todo el ancho,
    para ver bien el historial. Se restaura tocando "Chat" en el menú. No afecta a mobile. */

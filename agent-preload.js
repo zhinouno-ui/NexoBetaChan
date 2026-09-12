@@ -450,10 +450,17 @@ function findSearchInput() {
 //  - .ReactModalContent  (versión nueva, texto "Invalid session", botón "Cerrar")
 //  - .card-alert         (fallback por si encapsula el modal)
 function detectarModalSesionInvalida() {
+  // TODOS los que coincidan, no el primero. Con el modal del jugador abierto (el del saldo) hay DOS
+  // ReactModal: querySelector devolvía el del jugador, el texto no coincidía, y el de "session is
+  // invalid" —que estaba encima— pasaba de largo. El panel seguía leyendo como si nada y el saldo
+  // salía $0. Texto real del modal (Juan, 12/09): <h4>session is invalid</h4> "La session es
+  // invalida, redireccionamos al login" + botón Aceptar.
   const selectores = ['.ReactModal__Content', '.ReactModalContent', '.card-alert', '[role="dialog"]'];
+  const re = /invalid session|session is invalid|la sesi[oó]n es inv[aá]lida|la session es invalida/i;
   for (const sel of selectores) {
-    const el = document.querySelector(sel);
-    if (el && /invalid session|session is invalid/i.test(el.textContent || '')) return el;
+    for (const el of document.querySelectorAll(sel)) {
+      if (re.test(el.textContent || '')) return el;
+    }
   }
   return null;
 }
@@ -507,7 +514,11 @@ function pageNeedsLogin() {
   }
 
   // Botón "ENTRAR" visible sin botón de búsqueda = pantalla de login
-  const hasSearch = document.querySelector(SELECTORS.searchButton) || firstVisible(SELECTORS.playerAlias);
+  // El botón de búsqueda tiene que estar VISIBLE. Drex es una SPA: al mandarte al login puede dejar
+  // la búsqueda montada pero oculta, y con un querySelector pelado el preload daba la sesión por
+  // buena — el panel nunca abría el modal de ingreso aunque estuvieras en la pantalla de login
+  // (reportado por Juan el 12/09). isVisible(null) da false, así que sin botón sigue igual.
+  const hasSearch = isVisible(document.querySelector(SELECTORS.searchButton)) || firstVisible(SELECTORS.playerAlias);
   if (hasSearch) return false;
 
   const entrarBtn = Array.from(document.querySelectorAll('button')).find(btn => /entrar|ingresar|login|iniciar|sign in/i.test(btn.textContent || ''));
