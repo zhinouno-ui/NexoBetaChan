@@ -171,7 +171,7 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .user-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line-2);color:var(--gold-2);border-radius:10px;padding:8px 13px;font-size:13px;font-weight:800;margin-bottom:14px}
 .form-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
 /* Aclaración bajo un campo que se presta a confusión. Chica y gris: guía sin gritar. */
-.campo-ayuda{font-size:11.5px;color:#8b8b97;margin:-6px 0 12px;padding-left:2px}
+.campo-ayuda{font-size:12.5px;color:#b8bac7;margin:6px 0 12px;padding-left:2px;line-height:1.45}
 /* El botón de enviar quedaba a 187px por debajo del pliegue: había que descubrir que se
    scrollea. Pegado al fondo del área que scrollea (no a la ventana), así nunca tapa la barra
    de abajo. El degradado deja ver que hay contenido pasando por detrás. */
@@ -200,7 +200,7 @@ textarea{resize:vertical;min-height:76px}
    sabe si cuenta. Por eso: texto en blanco pleno (es un valor real, no una
    sugerencia), un fondo verde muy tenue y la marca "✓ Guardado" adentro del
    campo. Al tocarlo se vacía y todo eso desaparece: queda un campo común. */
-.titular-wrap{position:relative}
+.titular-wrap{position:relative;margin-bottom:8px}
 .titular-wrap input{margin-bottom:0}
 input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.42);
   color:#fff;font-weight:700;padding-right:104px}
@@ -212,8 +212,8 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
   color:var(--gold-2);border-radius:10px;padding:0 14px;font-size:13px;font-weight:800;
   cursor:pointer;font-family:inherit;white-space:nowrap}
 .titular-cambiar:active{transform:translateY(-50%) scale(.94)}
-.titular-aviso{font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,.09);
-  border:1px solid rgba(251,191,36,.28);border-radius:9px;padding:7px 9px;margin:8px 0 0}
+.titular-aviso{font-size:12px;color:#fbbf24;background:rgba(251,191,36,.09);
+  border:1px solid rgba(251,191,36,.28);border-radius:9px;padding:8px 10px;margin:8px 0 10px;line-height:1.4}
 .muted-line{color:var(--muted);font-size:13px;padding:8px 0}
 .welcome-txt{font-size:13.5px;color:#c9c9d2;line-height:1.55}
 
@@ -2280,7 +2280,7 @@ function titularLimpiarParaOtro(){
   const btn=$("titularCambiar"); if(btn) btn.style.display="none";
   const pie=$("titularPie");
   if(pie){
-    pie.innerHTML='Escribí el titular de la cuenta desde la que transferiste. '
+    pie.innerHTML='<div style="margin-bottom:6px">Escribí el titular de la cuenta desde la que transferiste.</div>'
       +'<button class="link-btn" onclick="titularRestaurarPrevio()">↩ Volver a «'+esc(previo)+'»</button>';
   }
   try{ el.focus(); }catch(_e){}
