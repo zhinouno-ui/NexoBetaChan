@@ -2908,3 +2908,32 @@ dígito cambiado, y si no tiene 10 dígitos), cuál es el registrado, un botón 
 
 Y cuando el teléfono de verdad **no se parece** al registrado, el pie ya no dice "no coincide": dice
 que tiene otro teléfono registrado y que hay que **preguntarle cuál usa ahora antes de validar**.
+
+
+## D-88 · El jugador veía el monto viejo y nunca le decían por qué cambió · RESUELTO en el código
+
+Después de D-86 el **panel** mostraba bien el total corregido ($5.000 de $35.019), pero el
+**portal** le seguía diciendo al jugador *"Pagado $5.000 / $50.000 · faltan $45.000"*. Y aunque
+lo mostrara bien, el jugador vería un número distinto del que pidió sin ninguna explicación.
+Juan: *"se debe de poder ajustar y dar la razón del por qué se ajusta el monto"*.
+
+El progreso que ve el jugador sale de **otra** función, `landing_retiro_progreso`, que tomaba el
+total guardado o lo declarado y nunca `monto_corregido`. Se arregló en tres tramos:
+
+- **Panel.** Si el total del retiro queda distinto de lo que el jugador **pidió** (se usa
+  `MONTO_DECLARADO`: `MONTO_REAL` ya viene corregido), aparece **"Motivo del ajuste"** con un
+  texto sugerido que se puede editar (*"Tenías $X en fichas y pediste $Y: te pagamos todo lo que
+  tenías"*, *"Al monto le sobraba un cero"*…). No redibuja el modal ni pisa lo que escribe el
+  operador. Se guarda en la solicitud (`motivo_ajuste` + `monto_declarado_original`), y al pagar
+  va **una sola vez** en el mensaje del chat.
+- **Base.** `landing_retiro_progreso` usa el monto corregido y devuelve una columna nueva
+  `ajuste` (pidió / corregido / motivo). Las correcciones viejas sin motivo escrito lo toman del
+  tipo que ya estaba guardado (`motivo_correccion`). Migración
+  `retiro_progreso_monto_corregido_y_motivo`: se recreó la función (cambió su forma) y se
+  re-otorgó el permiso del portal.
+- **Portal.** Debajo del progreso: *"📝 Ajustamos el monto a $X (pediste $Y)"* y el motivo. Se
+  muestra aunque todavía no haya pagos, y "Te lo estamos pagando por partes" sólo aparece si hubo
+  alguno.
+
+**El archivo `Portal` cambió en este repo: hay que publicarlo** para que los jugadores lo vean.
+Mientras tanto, el portal publicado ya recibe el total corregido (la columna nueva la ignora).

@@ -439,12 +439,24 @@ const _rv2FinalizarInterno = async function(stCapturado){
         + ((_rp&&_rp.detail)||'') + '\n\nEl usuario no va a ver el descuento hasta que se registre. Anotalo a mano.'); }catch(_e){}
     }
   }
+  // Monto ajustado: el total quedó distinto de lo que PIDIÓ el jugador. Va la corrección con su
+  // MOTIVO, que el portal le muestra debajo del progreso y se le avisa una vez por chat (D-88).
+  const _decOrig = Number(st.declaradoOriginal || st.declarado || 0);
+  const _ajustado = _decOrig > 0 && Math.abs(Number(montoTotal||0) - _decOrig) > 0.5;
+  const _motivoAjuste = _ajustado
+    ? (String(st.motivoAjuste||'').trim() || ('Pediste '+deps.money(_decOrig)+' y el retiro quedó en '+deps.money(montoTotal)+'.'))
+    : '';
   try{
     const _extra = {
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
       operador:(deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
     };
+    if(_ajustado){
+      _extra.monto_corregido = montoTotal;
+      _extra.monto_declarado_original = _decOrig;
+      _extra.motivo_ajuste = _motivoAjuste;
+    }
     // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
     if((!completo || _hayProgreso) && (!_rp || !_rp.ok)) _extra.retiro_parcial = { pagado:pagadoAcum, total:montoTotal, restante:restante };
     // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
@@ -467,7 +479,10 @@ const _rv2FinalizarInterno = async function(stCapturado){
       ? '✅ Completamos tu retiro. Te transferimos '+deps.money(total)+'. ¡Listo!'
       : '💸 Te transferimos '+deps.money(total)+' de tu retiro · restan '+deps.money(restante)+'. El resto en cuanto se libere otra billetera.';
     // La solicitud ya está en su estado final (PAGADA/EN_PROCESO) → se lo pasamos explícito.
-    await deps.notificarUsuarioEnChat(st.usuario, (st.obs?st.obs+'\n':'')+msg, st.id, _estadoFinal);
+    // El motivo va UNA vez: si ya se le dijo este mismo motivo, no se repite en cada cuota.
+    const _avisarAjuste = _ajustado && _motivoAjuste && _motivoAjuste !== String(st._motivoAvisado||'');
+    const _pre = _avisarAjuste ? ('📝 Ajustamos tu retiro a '+deps.money(montoTotal)+'. '+_motivoAjuste+'\n') : '';
+    await deps.notificarUsuarioEnChat(st.usuario, _pre+(st.obs?st.obs+'\n':'')+msg, st.id, _estadoFinal);
   }catch(_e){}
   // Canal EXTRA: push directo con título/cuerpo claros del parcial (no depende del chat_thread).
   try{ notificarRetiroParcialPush(st.usuario, total, pagadoAcum, montoTotal, completo); }catch(_e){}

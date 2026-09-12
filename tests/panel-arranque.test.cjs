@@ -1513,3 +1513,60 @@ test('cotejo · un teléfono que NO se parece al registrado dice qué hacer', ()
   assert.ok(!/mal tipeado/i.test(out.html), 'no es un error de tipeo: son números distintos');
   assert.match(out.html, /Preguntale cuál usa ahora antes de validar/);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AJUSTAR EL MONTO Y DECIR POR QUE
+// Juan: "se debe de poder ajustar y dar la razón del por qué se ajusta el monto".
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _panelConRetiro(solicitud) {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  const modal = { innerHTML: '', style: {} };
+  sb.document.getElementById = (id) => (id === 'retiroV2Modal' ? modal : null);
+  sb.V154P.solicitudes = [solicitud];
+  return { sb, modal };
+}
+
+test('ajuste · con el monto corregido, el modal pide el motivo y ya lo sugiere', () => {
+  const { sb, modal } = _panelConRetiro({ ID: 900001, USUARIO: 'jugadordeprueba', TIPO: 'RETIRO',
+    ESTADO: 'EN_PROCESO', MONTO_REAL: 35019, MONTO_DECLARADO: 50000,
+    METADATA: { monto_corregido: 35019, monto_declarado_original: 50000 } });
+
+  sb.abrirModalRetiroV2(900001);
+
+  assert.match(modal.innerHTML, /MOTIVO DEL AJUSTE/, 'el total quedó distinto de lo que pidió: hay que decir por qué');
+  assert.match(modal.innerHTML, /50\.000/, 'y se ve cuánto había pedido');
+  assert.match(modal.innerHTML, /quedó en/, 'con un motivo sugerido que se puede editar');
+});
+
+test('ajuste · sin corrección no aparece el campo', () => {
+  const { sb, modal } = _panelConRetiro({ ID: 900002, USUARIO: 'jugadordeprueba', TIPO: 'RETIRO',
+    ESTADO: 'PENDIENTE', MONTO_REAL: 50000, MONTO_DECLARADO: 50000, METADATA: {} });
+  sb.abrirModalRetiroV2(900002);
+  assert.ok(!/MOTIVO DEL AJUSTE/.test(modal.innerHTML));
+});
+
+test('ajuste · lo que escribe el operador queda, y no lo pisa el sugerido', () => {
+  const { sb } = _panelConRetiro({ ID: 900003, USUARIO: 'jugadordeprueba', TIPO: 'RETIRO',
+    ESTADO: 'EN_PROCESO', MONTO_REAL: 35019, MONTO_DECLARADO: 50000, METADATA: { monto_corregido: 35019 } });
+  sb.abrirModalRetiroV2(900003);
+  sb._rv2SetMotivoAjuste('Tenías menos fichas de las que pediste');
+  assert.equal(sb._retiroV2.motivoAjuste, 'Tenías menos fichas de las que pediste');
+  assert.equal(sb._retiroV2._motivoEditado, true);
+});
+
+test('ajuste · al cerrar se guarda el motivo y se le avisa una sola vez', () => {
+  const b = _bundlePortal();
+  assert.match(b, /_extra\.motivo_ajuste = _motivoAjuste/, 'la solicitud guarda el motivo');
+  assert.match(b, /Ajustamos tu retiro a/, 'y va en el mensaje del chat');
+  assert.match(b, /_motivoAjuste !== String\(st\._motivoAvisado/, 'una vez: no en cada cuota');
+});
+
+test('portal · muestra el monto ajustado y el motivo, aunque todavía no haya pagos', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'Portal'), 'utf8');
+  assert.match(src, /let aj=prog\.ajuste;/);
+  assert.match(src, /Ajustamos el monto a/);
+  assert.match(src, /\(!\(pagado>0\) && !ajusteHtml\)/, 'sin pagos pero con ajuste, igual se muestra');
+  assert.match(src, /\.rp-ajuste\{/);
+});

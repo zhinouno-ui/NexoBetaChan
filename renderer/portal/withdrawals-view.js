@@ -121,7 +121,13 @@ api.abrirModalRetiroV2 = function(id, opts){
     totalReal:(meta.monto_total!=null?Number(meta.monto_total):declarado),
     fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{},
     // Modo parcial explícito: por el botón "Parcial" o porque ya hay un parcial en curso.
-    modoParcial: !!((opts&&opts.modoParcial) || Number(meta.monto_pagado||0) > 0)
+    modoParcial: !!((opts&&opts.modoParcial) || Number(meta.monto_pagado||0) > 0),
+    // Lo que el jugador PIDIÓ, sin corregir: MONTO_REAL ya viene con la corrección aplicada. Con esto
+    // se sabe si el monto quedó ajustado y hay que decirle por qué (D-88).
+    declaradoOriginal: Number(meta.monto_declarado_original) || Number(s.MONTO_DECLARADO) || declarado,
+    motivoAjuste: (meta.motivo_ajuste != null && String(meta.motivo_ajuste).trim()) ? String(meta.motivo_ajuste) : null,
+    _motivoEditado: !!(meta.motivo_ajuste != null && String(meta.motivo_ajuste).trim()),
+    _motivoAvisado: String(meta.motivo_ajuste || '')
   };
   // SIN pre-selección: los montos arrancan en 0 y los pone el operador. Pre-seleccionar el reparto
   // sugerido hacía que se pagara de más sin querer — un retiro de 1M salió por 821.778 porque el
@@ -271,12 +277,14 @@ api._rv2AjustarASaldo = function(montoFijo){
   // tarjeta — que era el único que lo hacía.
   st.totalReal = (Number(st.yaPagado)||0) + nuevo;
   st._metaTotal = st.totalReal;
+  st._motivoEditado = false;      // el motivo sugerido se recalcula con el total nuevo
   try{
     const S=(deps.window.V154P&&deps.V154P.solicitudes)||[];
     const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(st.id); });
     if(s) s.MONTO_REAL = st.totalReal;
     const _p = deps.window.actualizarSolicitudPortal(String(st.id), String((s&&s.ESTADO)||'PENDIENTE'), {
-      monto_corregido: st.totalReal, monto_declarado_original: st.declarado, motivo_correccion: 'todo',
+      monto_corregido: st.totalReal, monto_declarado_original: (st.declaradoOriginal||st.declarado), motivo_correccion: 'todo',
+      motivo_ajuste: _rv2MotivoSugerido(st),
       operador: (deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
     });
     if(_p && typeof _p.catch === 'function') _p.catch(function(){});
@@ -317,6 +325,7 @@ api._rv2InputTotal = function(el){
   const falta=Math.max(0, raw-Number(st.yaPagado||0));
   st.objetivo=falta;                                   // lo que se paga ahora sigue a la deuda
   try{ const d=deps.document.getElementById('rv2Deuda'); if(d) d.innerHTML=_rv2DeudaTxt(); }catch(_e){}
+  _rv2PintarMotivo();
   _rv2ActualizarTotal();
 };
 api._rv2SetObjetivo = function(val){ const st=deps.withdrawalState.current; if(!st) return; st.objetivo = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
@@ -484,6 +493,46 @@ api._rv2ToggleDetalle=function(){
   d.style.display = abierto ? 'none' : 'block';
   if(t) t.textContent = abierto ? '▸ Cambiar billeteras, monto o pagar sólo una parte' : '▾ Ocultar el detalle';
 };
+// ── Motivo del ajuste del monto (D-88) ─────────────────────────────────────────────────────
+// Cuando el total queda distinto de lo que pidió el jugador, el operador escribe (o acepta) el
+// motivo. Se guarda en la solicitud, el portal lo muestra debajo del progreso y va UNA vez por chat.
+function _rv2MotivoSugerido(st){
+  const dec = Number(st.declaradoOriginal||0), tot = Number(st.totalReal||0);
+  if(!(dec>0) || !(tot>0)) return '';
+  if(dec > tot && Math.abs(dec - tot*10) <= 0.5)
+    return 'Al monto le sobraba un cero: pediste '+deps.money(dec)+' y es '+deps.money(tot)+'.';
+  const fichas = (st.saldoReal!=null) ? Number(st.saldoReal) + Number(st.yaPagado||0) : null;
+  if(fichas!=null && tot < dec && Math.abs(fichas - tot) <= 0.5)
+    return 'Tenías '+deps.money(fichas)+' en fichas y pediste '+deps.money(dec)+': te pagamos todo lo que tenías.';
+  return 'Pediste '+deps.money(dec)+' y el retiro quedó en '+deps.money(tot)+'.';
+}
+function _rv2AjusteVisible(st){
+  const dec = Number(st.declaradoOriginal||0), tot = Number(st.totalReal||0);
+  return dec > 0 && tot > 0 && Math.abs(tot - dec) > 0.5;
+}
+function _rv2MotivoAjusteHtml(){
+  const st = deps.withdrawalState.current; if(!st || !_rv2AjusteVisible(st)) return '';
+  if(!st._motivoEditado) st.motivoAjuste = _rv2MotivoSugerido(st);
+  return '<div style="margin-top:8px"><label style="font-weight:800">MOTIVO DEL AJUSTE '
+    + '<span class="small" style="color:#8b949e;font-weight:600">(lo ve el jugador · había pedido '+deps.money(st.declaradoOriginal)+')</span></label>'
+    + '<input id="rv2MotivoAjuste" type="text" maxlength="200" value="'+deps.escapeHtml(st.motivoAjuste||'')+'" oninput="_rv2SetMotivoAjuste(this.value)" '
+    + 'placeholder="Por qué cambia el monto" style="width:100%;height:40px;background:#161b22;border:1.5px solid rgba(245,197,24,.45);color:#f0f6fc;border-radius:9px;font-size:13px;padding:0 11px;margin-top:4px"></div>';
+}
+// Sólo repinta la caja del motivo, y nunca mientras el operador está escribiendo en ella.
+function _rv2PintarMotivo(){
+  try{
+    const mb = deps.document.getElementById('rv2MotivoBox'); if(!mb) return;
+    const ae = deps.document.activeElement;
+    if(ae && ae.id === 'rv2MotivoAjuste') return;
+    mb.innerHTML = _rv2MotivoAjusteHtml();
+  }catch(_e){}
+}
+api._rv2SetMotivoAjuste = function(v){
+  const st = deps.withdrawalState.current; if(!st) return;
+  st.motivoAjuste = String(v||'').slice(0,200);
+  st._motivoEditado = true;
+};
+
 function _rv2Render(){
   const st = deps.withdrawalState.current; if(!st) return;
   const el = _rv2Modal();
@@ -574,6 +623,7 @@ function _rv2Render(){
            + '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'))
     + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">¿Con qué billetera pagás? <span class="small" style="color:#8b949e;font-weight:400">(elegí la que quieras · <span style="color:#f5c518">sugerida</span> = la que recomienda el panel)</span></div>'
     + filasBil
+    + '<div id="rv2MotivoBox">'+_rv2MotivoAjusteHtml()+'</div>'
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'

@@ -313,6 +313,10 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .rp-list{margin-top:11px;display:flex;flex-direction:column;gap:5px}
 .rp-cierre{margin-top:11px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);font-size:12.5px;line-height:1.5}
 .rp-cierre-nota{margin-top:6px;font-style:italic;color:var(--gold-2)}
+/* Monto ajustado por el operador, con su motivo (D-88). */
+.rp-ajuste{margin-top:11px;padding:10px 12px;border-radius:10px;background:rgba(245,197,24,.07);border:1px solid rgba(245,197,24,.28);font-size:12.5px;line-height:1.5}
+.rp-ajuste-de{color:var(--muted);font-weight:600}
+.rp-ajuste-motivo{margin-top:4px;color:var(--gold-2)}
 .rp-item{display:flex;justify-content:space-between;gap:8px;font-size:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
 .rp-item .rp-m{font-weight:800;color:var(--green);white-space:nowrap}
 .rp-item .rp-f{color:var(--muted)}
@@ -1586,7 +1590,13 @@ async function cargarProgresoRetiro(){
   if(!prog || prog.ok===false) return;
   const total=Number(prog.total||0), pagado=Number(prog.pagado||0);
   let pct=Number(prog.pct||0); if(pct<0)pct=0; if(pct>100)pct=100;
-  if(!(total>0) || !(pagado>0)){ box.innerHTML=""; return; }   // sin parciales aún → sin barra
+  // Monto ajustado por el operador, con su motivo (D-88). Se muestra aunque todavía no haya pagos:
+  // es justo cuando el jugador ve un número distinto del que pidió y necesita saber por qué.
+  let aj=prog.ajuste; if(typeof aj==="string"){ try{aj=JSON.parse(aj);}catch(_e){aj=null;} }
+  const ajusteHtml=(aj && (aj.motivo || aj.corregido))
+    ? `<div class="rp-ajuste"><b>📝 Ajustamos el monto a ${_money(Number(aj.corregido||total))}</b>${aj.declarado?` <span class="rp-ajuste-de">(pediste ${_money(Number(aj.declarado))})</span>`:""}${aj.motivo?`<div class="rp-ajuste-motivo">${esc(aj.motivo)}</div>`:""}</div>`
+    : "";
+  if(!(total>0) || (!(pagado>0) && !ajusteHtml)){ box.innerHTML=""; return; }   // sin parciales ni ajuste → sin barra
 
   // Cierre a mano: el operador terminó la operación aunque quedara plata sin pagar. Sin esto
   // el portal seguía mostrando "faltan $25.000" para siempre, sin decir que ya había cerrado
@@ -1598,6 +1608,7 @@ async function cargarProgresoRetiro(){
     box.innerHTML=`<div class="rp-wrap">
       <div class="rp-top"><span>Cobrado</span><span class="rp-nums">${_money(pagado)} / ${_money(total)}</span></div>
       <div class="rp-track"><div class="rp-fill" style="width:${pct}%"></div></div>
+      ${ajusteHtml}
       <div class="rp-cierre">
         <b>Este retiro se cerró.</b>
         ${cierre.etiqueta?`<div>${esc(cierre.etiqueta)}</div>`:""}
@@ -1611,8 +1622,10 @@ async function cargarProgresoRetiro(){
     if(pagado>last){ localStorage.setItem(k,String(pagado));
       if(last>0) toast("💸 Pago parcial: +"+_money(pagado-last)+" · van "+_money(pagado)+" de "+_money(total)); }
   }catch(_e){}
-  try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); if(h)h.textContent="Retiro en proceso";
-       const sub=s&&s.querySelector(".estado-sub"); if(sub)sub.textContent="Te lo estamos pagando por partes"; }catch(_e){}
+  // "Te lo estamos pagando por partes" sólo si ya hubo un pago: con el monto ajustado y sin pagos
+  // todavía, el cartel mentía.
+  if(pagado>0){ try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); if(h)h.textContent="Retiro en proceso";
+       const sub=s&&s.querySelector(".estado-sub"); if(sub)sub.textContent="Te lo estamos pagando por partes"; }catch(_e){} }
   let pagos=prog.pagos; if(typeof pagos==="string"){ try{pagos=JSON.parse(pagos);}catch(_e){pagos=[];} } if(!Array.isArray(pagos)) pagos=[];
   const lista=pagos.slice().reverse().map(p=>{
     const m=_money(Number(p.monto||0));
@@ -1623,6 +1636,7 @@ async function cargarProgresoRetiro(){
     <div class="rp-top"><span>Pagado</span><span class="rp-nums">${_money(pagado)} / ${_money(total)}</span></div>
     <div class="rp-track"><div class="rp-fill" style="width:${pct}%"></div></div>
     <div class="rp-pct">${pct}% · faltan ${_money(Math.max(total-pagado,0))}</div>
+    ${ajusteHtml}
     ${lista?`<div class="rp-list">${lista}</div>`:""}
   </div>`;
 }
