@@ -298,6 +298,12 @@ const api = {};
       const bc = deps.document.getElementById("btnParcialesCount");
       if(bc) bc.textContent = String(parciales.length);
       if(bp) bp.style.display = parciales.length ? "" : "none";
+      // El mismo botón en el centro de control, que trae sólo el turno actual: un parcial de ayer no
+      // aparecía en ningún lado ("tenía una parte para el retiro parcial, no sé por qué no aparece más").
+      const bcc = deps.document.getElementById("btnParcialesCC");
+      const bccN = deps.document.getElementById("btnParcialesCCCount");
+      if(bccN) bccN.textContent = String(parciales.length);
+      if(bcc) bcc.style.display = parciales.length ? "" : "none";
     }catch(_e){}
     const visibles = pendientes.slice(0,8);
     // Un mismo jugador con DOS solicitudes abiertas del mismo tipo. El portal lo permitía (se está

@@ -98,7 +98,11 @@ window._retiroParcialInfo = function(s){
     // escribe el panel). Si un pago quedó registrado en uno solo, los números no coinciden y el
     // retiro se ve "a medio pagar" aunque esté saldado. Guardamos el otro para poder avisarlo.
     pagadoAlt = Math.abs(Number(m.monto_pagado!=null ? m.monto_pagado : pagado)||0);
-    total = Number(rp.total)||0;
+    // Si el operador CORRIGIÓ el monto ("pagarle todo lo que tiene"), esa es la deuda. La RPC
+    // guardaba el total viejo y la caja decía "falta $45.000 de $50.000" con la solicitud ya
+    // corregida a $35.019 (D-86). La corrección manda; la RPC ya se arregló igual.
+    const _corr = Number(m.monto_corregido)||0;
+    total = _corr > 0 ? _corr : (Number(rp.total)||0);
   }catch(_e){}
   if(!(total>0)) total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   if(total>0 && pagado>total) pagado=total;

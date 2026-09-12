@@ -280,12 +280,18 @@
               <div class="sol-topbar-sub">Control operativo de cargas, retiros y movimientos del turno.</div>
             </div>
 
+            <!-- Operaciones de hoy desde las 00: en el medio de la barra (pedido de Juan). -->
+            <div id="solOpsHoy" class="sol-ops-hoy" title="Cargas y retiros confirmados de esta oficina desde las 00:00">📊 — operaciones desde las 00</div>
+
             <div class="sol-topbar-actions">
               <div class="sol-search-wrap">
                 <span class="sol-search-ico">🔍</span>
                 <input id="filtroTexto" type="text" placeholder="Buscar jugador, N° de movimiento, CBU, tel..." oninput="renderSolicitudes()" autocomplete="off">
                 <button type="button" class="sol-search-clear" onclick="limpiarFiltrosSolicitudes()" title="Limpiar búsqueda">✕</button>
               </div>
+              <!-- El centro de control trae sólo el turno actual: un parcial de ayer no aparecía en ningún
+                   lado. Este botón abre la misma caja que el de la pantalla de inicio. -->
+              <button type="button" id="btnParcialesCC" class="sol-btn-refresh" onclick="verRetirosParciales()" title="Retiros que se están pagando por partes" style="display:none;background:#7c3aed;border-color:#7c3aed;color:#fff">💸 Parciales <b id="btnParcialesCCCount">0</b></button>
               <button type="button" class="sol-btn-refresh" onclick="cargarSolicitudesPortal(true)" title="Refrescar solicitudes ahora">
                 <span>🔄</span> <b>Refrescar</b>
               </button>

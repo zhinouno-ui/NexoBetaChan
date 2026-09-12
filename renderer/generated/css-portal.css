@@ -955,3 +955,12 @@ body.op-portal-en-curso .v154p-card.v154p-operando .v154p-actions::after{animati
 
 
 
+
+/* Operaciones de hoy desde las 00, en el medio de la barra del centro de control. La barra ya es
+   flex con space-between: con tres hijos, éste queda centrado entre el título y los botones. */
+.sol-ops-hoy{display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;
+  background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.28);color:#cbd5e1;font-size:12.5px;
+  font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.sol-ops-hoy b{color:#fff;font-size:16px}
+.sol-ops-hoy .c{color:#22c55e}
+.sol-ops-hoy .r{color:#fb923c}

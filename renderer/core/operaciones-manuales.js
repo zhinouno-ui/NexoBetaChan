@@ -830,7 +830,13 @@ async function _ejecutarBlanqueoClave(usuario, opciones){
     const ok = r && r.ok !== false;
     await registrarEnHistorial({usuario, tipo:'RESET_CLAVE', monto:0, origen:'MANUAL', estado: ok ? 'OK' : 'ERROR', notas:'clave → '+clave});
     if(ok){
-      if(resEl) resEl.innerHTML = '<div class="ok-box">🔑 Clave de <b>'+escapeHtml(usuario)+'</b> blanqueada → <b>'+escapeHtml(clave)+'</b></div>';
+      // Tocarlo copia usuario y clave, listos para pegarle al jugador (pedido de Juan). El handler se
+      // asigna por JS y no en un onclick="" armado con el texto: un usuario con comillas lo rompía.
+      if(resEl){
+        resEl.innerHTML = '<div class="ok-box" role="button" tabindex="0" title="Tocá para copiar usuario y clave" style="cursor:pointer">🔑 Clave de <b>'+escapeHtml(usuario)+'</b> blanqueada → <b>'+escapeHtml(clave)+'</b> <span style="opacity:.65;font-size:11px">· tocá para copiar</span></div>';
+        const _caja = resEl.firstElementChild || resEl.firstChild;
+        if(_caja) _caja.onclick = function(){ window.nodoCopiar('Usuario: '+usuario+'\nClave: '+clave, { etiqueta:'Usuario y clave copiados' }); };
+      }
       toast("Clave de "+usuario+" blanqueada → "+clave, "green");
     } else {
       if(resEl) resEl.innerHTML = '<div class="err-box">❌ Error al cambiar clave: '+escapeHtml(r?.message||'falló')+'</div>';

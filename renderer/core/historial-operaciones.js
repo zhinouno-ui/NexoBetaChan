@@ -157,6 +157,32 @@ window.setHistorialPeriodo = async function(clave){
   await cargarHistorial();
 };
 
+// ── Operaciones de hoy desde las 00 (centro de control) ──────────────────────
+// Cuenta con head:true (no trae filas) y con el MISMO filtro de oficina que el historial. No sale
+// del historial ya cargado porque esa ventana es "el turno" o "12 h", no "desde las 00".
+window.solOpsHoyRefrescar = async function(){
+  const el = document.getElementById('solOpsHoy'); if(!el) return;
+  try{
+    // Sin operador logueado no se cuenta: pcAliasesHist() cae a ["P1"] y contaría otra oficina.
+    const op = (window.operador && (window.operador.usuario||window.operador.nombre))
+            || (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre));
+    if(!op) return;
+    const pcs = (typeof pcAliasesHist === 'function') ? pcAliasesHist() : [];
+    if(!pcs || !pcs.length) return;
+    const desde = inicioDiaArgentina().toISOString();
+    const contar = function(tipo){
+      return supabaseClient.from('historial_ops').select('id', { count:'exact', head:true })
+        .in('pc_codigo', pcs).gte('created_at', desde).eq('estado','OK').eq('tipo', tipo);
+    };
+    const res = await Promise.all([contar('CARGA'), contar('RETIRO')]);
+    if((res[0] && res[0].error) || (res[1] && res[1].error)) return;
+    const c = Number(res[0] && res[0].count)||0, r = Number(res[1] && res[1].count)||0;
+    el.innerHTML = '📊 <b>'+(c+r)+'</b> operaciones desde las 00'
+      + ' <span class="c">⬆ '+c+'</span> <span class="r">⬇ '+r+'</span>';
+  }catch(_e){}
+};
+try{ setInterval(function(){ try{ window.solOpsHoyRefrescar(); }catch(_e){} }, 60000); }catch(_e){}
+
 async function cargarHistorial(){
   _historialCargado = true;
   const el = document.getElementById("historialTable");
@@ -182,6 +208,7 @@ async function cargarHistorial(){
   _historialData = data || [];
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
+  try{ window.solOpsHoyRefrescar(); }catch(_e){}
 
   // CRM · Sembrar la base LOCAL de JUGADORES desde historial_ops (FUENTE PRINCIPAL).
   // Muchos usuarios cargaron desde OTRA máquina/turno, o su solicitud del portal ya salió de la

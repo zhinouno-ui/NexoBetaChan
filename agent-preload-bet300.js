@@ -12,7 +12,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 const BASE_URL = 'https://agentesbet.io/';
 const CLAVE_ESTANDAR = '12345a';      // clave fija para crear jugador y blanquear (a pedido)
 const DEFAULT_TIMEOUT = 18000;
-const STEP_DELAY = 180;
+const STEP_DELAY = 300;
+// Retiro: pausa A LA VISTA antes de apretar "Enviar". Juan (12/09): "busca, espera, busca de nuevo,
+// espera y retira de la nada rapidísimo… hay que darle un tiempo". También es margen real para el
+// ⛔ Cancelar, que se chequea justo después. En la carga no se agrega: pasan cientos por día.
+const PAUSA_ANTES_DE_ENVIAR_RETIRO = 1200;
 
 function delay(ms = STEP_DELAY) { return new Promise(r => setTimeout(r, ms)); }
 function now() { return Date.now(); }
@@ -287,7 +291,9 @@ function pageIsBlocked() {
       findActiveModal()
     );
     if (hasApp) return false;
-    const errRe = /request blocked|access denied|forbidden|service unavailable|bad gateway|gateway timeout|just a moment|attention required|checking your browser|502|503|504/i;
+    // Sin "502|503|504" sueltos: cualquier saldo o N° de movimiento con esos dígitos hacía que la
+    // página "pareciera" un error del servidor, y buscarUsuario devolvía error sin reintentar.
+    const errRe = /request blocked|access denied|forbidden|service unavailable|bad gateway|gateway timeout|just a moment|attention required|checking your browser/i;
     const body = (document.body && (document.body.innerText || document.body.textContent) || '').slice(0, 2500);
     return errRe.test(body) || errRe.test(document.title || '');
   } catch (_) { return false; }
@@ -335,7 +341,13 @@ async function recuperarFlujoPendiente() {
   return status();
 }
 async function ensureReady() {
-  if (pageIsBlocked()) return status();
+  // La SPA tarda en montar: un "bloqueado" en el primer instante casi siempre es "todavía no
+  // dibujó". Antes se devolvía error de una y buscarUsuario ni llegaba a sus reintentos. Juan
+  // (12/09): "no esperó a que se dibujaran los botones de búsqueda y ya dio error… no reintentó".
+  if (pageIsBlocked()) {
+    await waitFor(() => !pageIsBlocked() || pageNeedsLogin(), 8000, 200, 'ensureReady-montar').catch(() => {});
+    if (pageIsBlocked()) return status();
+  }
   await recuperarFlujoPendiente();
   if (pageNeedsLogin() || pageIsBlocked()) return status();
   // Si otro flujo ya está navegando al inicio, ESPERAMOS a que termine (una carga forzada no se
@@ -608,7 +620,14 @@ async function buscarUsuario(usuario, options = {}) {
   if (!usuario || String(usuario).trim().length < 3) {
     throw new Error('El usuario debe tener al menos 3 caracteres.');
   }
-  const ready = await ensureReady();
+  let ready = await ensureReady();
+  // Página "de error" al arrancar: antes se devolvía de una, sin reintentar. Se intenta volver a la
+  // pantalla de búsqueda UNA vez antes de rendirse.
+  if (ready.pageError && !ready.needsLogin) {
+    try { await _asegurarInicio(); } catch (_) {}
+    await delay(600);
+    ready = await ensureReady();
+  }
   if (ready.needsLogin || ready.pageError) return ready;
 
   const wanted = String(usuario).trim();
@@ -797,6 +816,16 @@ async function aplicarMonto(tipo, amount, options = {}) {
     throw new Error('El botón "Enviar" siguió deshabilitado tras 6s (¿monto inválido o campo obligatorio vacío?). NO se envió nada.');
   }
 
+  if (tipo === 'retiro') {
+    await delay(PAUSA_ANTES_DE_ENVIAR_RETIRO);
+    // Vue pudo re-renderizar el modal durante la pausa: se re-busca el botón antes de usarlo.
+    const _re = findByText(/^enviar$/i, 'button, .v-btn', findActiveModal() || m.modal);
+    if (_re) enviar = _re;
+    if (!enviar || botonDeshabilitado(enviar)) {
+      await cerrarModalActual();
+      throw new Error('El botón "Enviar" dejó de estar disponible durante la pausa. NO se envió nada.');
+    }
+  }
   // Observer ANTES del click: solo cuenta el snackbar que aparezca DESPUÉS de enviar.
   // (Si leyéramos el snackbar visible, podríamos agarrar el de la operación anterior
   //  —Vuetify los deja ~5s— y reportar un ERROR_OPERATIVO falso.)
@@ -1083,7 +1112,17 @@ async function _asegurarInicio() {
     await waitFor(() => findSearchInput() || findMenuItem(/control de agentes/i) || firstVisible('.v-list-item'), 10000, 150, 'inicio-mount').catch(() => {});
     if (findSearchInput()) return true;
     // ir a "Control de agentes" por el menú (sin recargar); si no está el menú, recién ahí por URL
-    const item = findMenuItem(/control de agentes/i) || findByText(/control de agentes/i, '.v-list-item, a, button, [role="option"]');
+    let item = findMenuItem(/control de agentes/i) || findByText(/control de agentes/i, '.v-list-item, a, button, [role="option"]');
+    // "Control de agentes" puede estar ADENTRO de un grupo "Agentes" plegado — así estaba la ventana
+    // que vio Juan el 12/09, parada en "Buscar jugadores" con el campo MUI que no es el buscador que
+    // este preload sabe leer. Se despliega el grupo y se vuelve a buscar la opción.
+    if (!item) {
+      const grupo = findByText(/^agentes\W*$/i, '.v-list-item, .v-list-group__header, [role="button"], a, button, li');
+      if (grupo) {
+        clickElement(grupo); await delay(500);
+        item = findMenuItem(/control de agentes/i) || findByText(/control de agentes/i, '.v-list-item, a, button, [role="option"]');
+      }
+    }
     if (item) { clickElement(item); await delay(400); }
     else { try { location.assign(BASE_URL); } catch (_) {} }
     await waitFor(findSearchInput, 12000, 150, 'inicio-buscador').catch(() => {});

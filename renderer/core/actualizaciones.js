@@ -67,7 +67,14 @@ function _updaterAnclar(){
   try{
     const chat=document.getElementById("viewChat");
     let right=12;
-    if(chat){
+    // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
+    // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Juan
+    // lo pidió dos veces; la primera se entendió mal y se movió la tira de proceso en vez de esto.
+    // Sin el chat a la vista, el cartel va a la esquina.
+    const login=document.getElementById("loginView");
+    let enLogin=false;
+    try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
+    if(chat && !enLogin){
       const r=chat.getBoundingClientRect();
       if(r.width>0 && r.right>window.innerWidth-60) right=Math.round(window.innerWidth-r.left)+14;
     }

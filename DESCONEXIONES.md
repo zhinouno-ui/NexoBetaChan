@@ -2831,3 +2831,62 @@ progreso es escribir estado de plata, y aunque sea una cuenta de prueba, es deci
 
 Se había compilado con el parcial todavía roto y los íconos rotos. Se recompila con esto; los
 archivos anteriores de `dist/` no se tienen que subir.
+
+
+## D-86 · Tercera ronda del 12/09 — versión en el login, búsqueda de BET300, total del parcial · RESUELTO en el código
+
+Lo que Juan confirmó que **ya anda**: iniciar un chat desde el panel, y "pagarle todo lo que tiene"
+corrigiendo el monto de la solicitud.
+
+### El cartel de versión en el medio del login
+
+Juan lo había pedido antes (*"al lanzar la aplicación debe quedar en una esquina, no flotando en el
+medio"*) y **se entendió mal**: se movió la tira de proceso en vez del cartel de versión. El cartel
+se engancha al borde del panel de chat (`_updaterAnclar`), y en la pantalla de login el chat está
+tapado pero sigue midiendo: el cartel quedaba en el medio. Ahora, con el login a la vista, va a la
+esquina.
+
+### La búsqueda de BET300: *"no esperó… dio error… no reintentó"*
+
+`buscarUsuario` tiene tres reintentos, pero **antes** del bucle `ensureReady` preguntaba "¿página
+bloqueada?" y, si sí, devolvía error sin reintentar. Y la pregunta estaba mal hecha: `pageIsBlocked`
+buscaba en el texto de la página los números **`502`, `503` y `504` sueltos**, así que cualquier
+saldo o N° de movimiento con esos dígitos hacía que la página "pareciera" un error del servidor. El
+preload de Drex ya había sacado esa trampa; el de BET300 no.
+
+Arreglos: sin números sueltos; `ensureReady` espera hasta 8 s a que la pantalla monte antes de
+concluir "bloqueada"; `buscarUsuario` vuelve a la pantalla de búsqueda una vez antes de rendirse; y
+`_asegurarInicio` despliega un grupo "Agentes" plegado si "Control de agentes" está adentro.
+
+**El campo MUI que pasó Juan** es de la pantalla "Buscar jugadores" (con el selector "bet300.club"),
+no del buscador de "Control de agentes" que este preload sabe leer — ahí anduvo al segundo intento.
+El arreglo no es escribir en ese campo (los resultados de esa pantalla no son legibles para el
+preload) sino volver a la pantalla correcta. **No se pudo verificar contra el casino.**
+
+### El ritmo del retiro
+
+*"Busca, espera, busca de nuevo, espera y retira de la nada rapidísimo."* Pausa de 1,2 s **a la
+vista** antes de apretar "Enviar" en los retiros —también es margen real para el ⛔ Cancelar— y se
+re-busca el botón después de la pausa. En la carga no se agregó: pasan cientos por día.
+
+### El parcial no tomaba el monto corregido
+
+`landing_retiro_registrar_parcial` calculaba el total con el total ya guardado o la columna `monto`
+—lo que el jugador declaró—, nunca con `monto_corregido`. Con la solicitud corregida a $35.019, el
+primer pago guardó `total = 50.000` y la caja dijo "falta $45.000". Se arregló la función (migración
+`retiro_parcial_respeta_monto_corregido`: manda la corrección) y la caja del panel.
+
+La #207577 sigue con `retiro_parcial.total = 50.000` guardado hasta el próximo pago, pero el panel
+ya muestra $35.019. **Sigue abierto** lo de D-85: los $25.001 pagados sin registrar.
+
+### Los parciales "desaparecieron" del centro de control
+
+No se borró nada: el centro de control trae **sólo el turno actual**, y un parcial de ayer no entra
+en esa ventana. Un retiro a medio pagar es trabajo pendiente: ahora tiene su botón **💸 Parciales**
+en la barra del centro de control, igual que en la pantalla de inicio.
+
+### Pedidos nuevos
+
+- **Operaciones desde las 00** en el medio de la barra del centro de control: cargas y retiros OK
+  de la oficina desde las 00:00, contados en el servidor con el mismo filtro que el historial.
+- **El cartel de la clave blanqueada se copia al tocarlo** (usuario y clave, listos para el jugador).

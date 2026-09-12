@@ -2525,7 +2525,13 @@ async function _ejecutarBlanqueoClave(usuario, opciones){
     const ok = r && r.ok !== false;
     await registrarEnHistorial({usuario, tipo:'RESET_CLAVE', monto:0, origen:'MANUAL', estado: ok ? 'OK' : 'ERROR', notas:'clave → '+clave});
     if(ok){
-      if(resEl) resEl.innerHTML = '<div class="ok-box">🔑 Clave de <b>'+escapeHtml(usuario)+'</b> blanqueada → <b>'+escapeHtml(clave)+'</b></div>';
+      // Tocarlo copia usuario y clave, listos para pegarle al jugador (pedido de Juan). El handler se
+      // asigna por JS y no en un onclick="" armado con el texto: un usuario con comillas lo rompía.
+      if(resEl){
+        resEl.innerHTML = '<div class="ok-box" role="button" tabindex="0" title="Tocá para copiar usuario y clave" style="cursor:pointer">🔑 Clave de <b>'+escapeHtml(usuario)+'</b> blanqueada → <b>'+escapeHtml(clave)+'</b> <span style="opacity:.65;font-size:11px">· tocá para copiar</span></div>';
+        const _caja = resEl.firstElementChild || resEl.firstChild;
+        if(_caja) _caja.onclick = function(){ window.nodoCopiar('Usuario: '+usuario+'\nClave: '+clave, { etiqueta:'Usuario y clave copiados' }); };
+      }
       toast("Clave de "+usuario+" blanqueada → "+clave, "green");
     } else {
       if(resEl) resEl.innerHTML = '<div class="err-box">❌ Error al cambiar clave: '+escapeHtml(r?.message||'falló')+'</div>';
@@ -2762,7 +2768,14 @@ function _updaterAnclar(){
   try{
     const chat=document.getElementById("viewChat");
     let right=12;
-    if(chat){
+    // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
+    // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Juan
+    // lo pidió dos veces; la primera se entendió mal y se movió la tira de proceso en vez de esto.
+    // Sin el chat a la vista, el cartel va a la esquina.
+    const login=document.getElementById("loginView");
+    let enLogin=false;
+    try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
+    if(chat && !enLogin){
       const r=chat.getBoundingClientRect();
       if(r.width>0 && r.right>window.innerWidth-60) right=Math.round(window.innerWidth-r.left)+14;
     }
@@ -4448,7 +4461,11 @@ window._retiroParcialInfo = function(s){
     // escribe el panel). Si un pago quedó registrado en uno solo, los números no coinciden y el
     // retiro se ve "a medio pagar" aunque esté saldado. Guardamos el otro para poder avisarlo.
     pagadoAlt = Math.abs(Number(m.monto_pagado!=null ? m.monto_pagado : pagado)||0);
-    total = Number(rp.total)||0;
+    // Si el operador CORRIGIÓ el monto ("pagarle todo lo que tiene"), esa es la deuda. La RPC
+    // guardaba el total viejo y la caja decía "falta $45.000 de $50.000" con la solicitud ya
+    // corregida a $35.019 (D-86). La corrección manda; la RPC ya se arregló igual.
+    const _corr = Number(m.monto_corregido)||0;
+    total = _corr > 0 ? _corr : (Number(rp.total)||0);
   }catch(_e){}
   if(!(total>0)) total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
   if(total>0 && pagado>total) pagado=total;
@@ -5169,6 +5186,32 @@ window.setHistorialPeriodo = async function(clave){
   await cargarHistorial();
 };
 
+// ── Operaciones de hoy desde las 00 (centro de control) ──────────────────────
+// Cuenta con head:true (no trae filas) y con el MISMO filtro de oficina que el historial. No sale
+// del historial ya cargado porque esa ventana es "el turno" o "12 h", no "desde las 00".
+window.solOpsHoyRefrescar = async function(){
+  const el = document.getElementById('solOpsHoy'); if(!el) return;
+  try{
+    // Sin operador logueado no se cuenta: pcAliasesHist() cae a ["P1"] y contaría otra oficina.
+    const op = (window.operador && (window.operador.usuario||window.operador.nombre))
+            || (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre));
+    if(!op) return;
+    const pcs = (typeof pcAliasesHist === 'function') ? pcAliasesHist() : [];
+    if(!pcs || !pcs.length) return;
+    const desde = inicioDiaArgentina().toISOString();
+    const contar = function(tipo){
+      return supabaseClient.from('historial_ops').select('id', { count:'exact', head:true })
+        .in('pc_codigo', pcs).gte('created_at', desde).eq('estado','OK').eq('tipo', tipo);
+    };
+    const res = await Promise.all([contar('CARGA'), contar('RETIRO')]);
+    if((res[0] && res[0].error) || (res[1] && res[1].error)) return;
+    const c = Number(res[0] && res[0].count)||0, r = Number(res[1] && res[1].count)||0;
+    el.innerHTML = '📊 <b>'+(c+r)+'</b> operaciones desde las 00'
+      + ' <span class="c">⬆ '+c+'</span> <span class="r">⬇ '+r+'</span>';
+  }catch(_e){}
+};
+try{ setInterval(function(){ try{ window.solOpsHoyRefrescar(); }catch(_e){} }, 60000); }catch(_e){}
+
 async function cargarHistorial(){
   _historialCargado = true;
   const el = document.getElementById("historialTable");
@@ -5194,6 +5237,7 @@ async function cargarHistorial(){
   _historialData = data || [];
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
+  try{ window.solOpsHoyRefrescar(); }catch(_e){}
 
   // CRM · Sembrar la base LOCAL de JUGADORES desde historial_ops (FUENTE PRINCIPAL).
   // Muchos usuarios cargaron desde OTRA máquina/turno, o su solicitud del portal ya salió de la

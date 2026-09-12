@@ -1412,3 +1412,66 @@ test('Drex · un botón de búsqueda oculto no cuenta como "estás adentro"', ()
   assert.ok(!/const hasSearch = document\.querySelector\(SELECTORS\.searchButton\) \|\|/.test(src),
     'un querySelector pelado encuentra el botón aunque no se vea');
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TERCERA RONDA DEL 12/09
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('versión · en la pantalla de login el cartel va a la esquina, no al medio', () => {
+  const sb = arrancarPanel();
+  sb.innerWidth = 1200;
+  const box = { style: {} }, chip = { style: {} };
+  const login = { classList: { contains: () => false } };
+  const els = {
+    viewChat: { getBoundingClientRect: () => ({ width: 400, left: 800, right: 1200 }) },
+    loginView: login, updaterBox: box, updaterMiniChip: chip
+  };
+  sb.document.getElementById = (id) => els[id] || null;
+  sb.getComputedStyle = () => ({ display: 'flex' });
+
+  sb._updaterAnclar();
+  assert.equal(box.style.right, '12px',
+    'con el login a la vista, el chat está tapado: engancharse a su borde lo dejaba en el medio');
+
+  login.classList.contains = (c) => c === 'hidden';     // ya logueado
+  sb._updaterAnclar();
+  assert.equal(box.style.right, (1200 - 800 + 14) + 'px', 'adentro sí se apoya en el borde del chat');
+});
+
+test('parcial · la caja usa el monto CORREGIDO, no el total viejo que guardó la RPC', () => {
+  const sb = arrancarPanel();
+  const info = sb._retiroParcialInfo({ MONTO_REAL: 35019, MONTO_DECLARADO: 50000,
+    METADATA: { monto_corregido: 35019, retiro_parcial: { total: 50000, pagado: 5000 } } });
+  assert.equal(info.total, 35019, 'decía "falta $45.000 de $50.000" con la solicitud ya corregida');
+  assert.equal(info.restante, 30019);
+});
+
+test('BET300 · la búsqueda no se rinde en el primer instante', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'agent-preload-bet300.js'), 'utf8');
+  assert.ok(!/checking your browser\|502\|503\|504/.test(src),
+    'números sueltos marcaban como "error del servidor" cualquier página con esos dígitos');
+  assert.match(src, /ensureReady-montar/, 'espera a que la pantalla monte antes de decir "bloqueada"');
+  assert.match(src, /if \(ready\.pageError && !ready\.needsLogin\) \{/,
+    'y si arranca con error, vuelve a la búsqueda una vez antes de rendirse');
+});
+
+test('BET300 · el retiro hace una pausa a la vista antes de enviar', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'agent-preload-bet300.js'), 'utf8');
+  assert.match(src, /const PAUSA_ANTES_DE_ENVIAR_RETIRO = \d+;/);
+  assert.match(src, /if \(tipo === 'retiro'\) \{\s*await delay\(PAUSA_ANTES_DE_ENVIAR_RETIRO\)/,
+    'sólo en retiros: en la carga no se agrega (pasan cientos por día)');
+});
+
+test('centro de control · botón de parciales y operaciones de hoy', () => {
+  const htm = fs.readFileSync(path.join(RAIZ, 'NODO · OPERATIVO LITE.htm'), 'utf8');
+  assert.match(htm, /id="solOpsHoy"/, 'el contador va en la barra del centro de control');
+  assert.match(htm, /id="btnParcialesCC"/, 'un parcial de ayer no aparecía en ningún lado de esa sección');
+  const core = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
+  assert.match(core, /window\.solOpsHoyRefrescar = async function/);
+  assert.match(_bundlePortal(), /getElementById\("btnParcialesCC"\)/);
+});
+
+test('blanqueo · el cartel de la clave se copia al tocarlo', () => {
+  const core = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
+  assert.match(core, /etiqueta:'Usuario y clave copiados'/);
+});
