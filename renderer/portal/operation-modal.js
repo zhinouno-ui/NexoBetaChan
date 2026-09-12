@@ -1000,10 +1000,10 @@ ${stepperHtml}
 
   api.abrirExpedienteSolicitud = function(idOrObj, forzarModal){
     api.mostrarExpedienteEnPane(idOrObj);
-    const modalEl = deps.document.getElementById('modalExpedienteOverlay');
     const isMobile = (deps.window?.innerWidth || 1200) < 1080;
+    if(forzarModal || isMobile){ try{ expedienteEnsureModal(); }catch(_e){} }
+    const modalEl = deps.document.getElementById('modalExpedienteOverlay');
     if(modalEl && (forzarModal || isMobile)){
-      expedienteEnsureModal();
       const bodyEl = deps.document.getElementById('expedienteBody');
       if(bodyEl){
         bodyEl.innerHTML = api.construirDossierCompletoHtml(idOrObj) || '';
@@ -1043,14 +1043,10 @@ ${stepperHtml}
       if(chatId && typeof deps.window.abrirChat === 'function'){
         return deps.window.abrirChat(chatId);
       }
-      // No tiene conversación abierta. Hay que DECIRLO: el panel todavía no puede iniciar una
-      // (ver D-73), y quedarse en silencio hace pensar que el botón está roto.
-      const inputFiltro = deps.document.getElementById('filtroTexto');
-      if(inputFiltro){ inputFiltro.value = usuario; }
-      try{
-        deps.toast((usuario||'Ese jugador') + ' no tiene ninguna conversación abierta — todavía '
-          + 'no se puede iniciar una desde el panel', 'yellow');
-      }catch(_e){}
+      // No tiene conversación abierta: se le escribe una nueva (D-73). Antes esto terminaba en un
+      // cartel de "todavía no se puede", que es lo único que el operador no necesitaba leer.
+      if(typeof deps.window.nodoChatNuevo === 'function') return deps.window.nodoChatNuevo(usuario);
+      try{ deps.toast((usuario||'Ese jugador') + ' no tiene ninguna conversación abierta', 'yellow'); }catch(_e){}
     };
 
     deps.window.expedienteToggleBloqueoTitular = function(usuario, titular){

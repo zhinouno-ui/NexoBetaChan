@@ -2641,3 +2641,111 @@ en esos meses.
 **Prioridad real: la caída de jugadores activos.** Es un 34% en dos meses, confirmado por dos
 fuentes, y no tiene nada que ver con si NODO levanta o no operaciones. Eso es lo que hay que
 mirar primero.
+
+
+## D-84 · La ronda de pruebas del 12/09 · RESUELTO salvo la búsqueda
+
+Juan probó el panel con un usuario de prueba y dejó el retiro parcial en *"inutilizable de manera
+directa"*. Tenía razón, y varias fallas eran arreglos anteriores que no terminaron de arreglar:
+el chat se "resolvió" en D-82 con un cartel en vez de resolverse, y el parcial se dio por
+verificado en D-66 sin estarlo.
+
+### Retiro parcial
+
+**Escribías un dígito y el modal se redibujaba.** `_rv2InputTotal` estaba definida **dos
+veces** en `withdrawals-view.js`. La segunda pisaba a la primera y terminaba en `_rv2Render()`,
+que reescribe el modal entero —incluido el campo donde se está tipeando—: se perdía el foco y
+había que volver a hacer clic para cada dígito. Se sacó la segunda. (La lectura de saldo en
+Agentes NO redibuja el modal: sólo repinta el veredicto y el botón. Se verificó.)
+
+**"Las billeteras no cubren el total · se puede pagar $0 ahora"** con $160.870 en una billetera.
+El modal arranca sin billetera elegida **a propósito** (pre-elegir hizo pagar de más una vez), y
+el veredicto leía "elegido = $0" como "no hay plata". Ahora distingue tres casos: no elegiste
+("elegí de qué billetera pagar"), no alcanza entre todas, y lo elegido no cubre.
+
+**"Retirar todo lo que tiene" no funcionaba.** Sí abría el modal, pero el reparto sugerido
+(`recomendarRepartoRetiro`) sólo mira billeteras de **$200.000 o más**. En una oficina chica —o
+en el entorno de prueba— ninguna llega, el reparto volvía vacío, y el modal quedaba en $0 con el
+cartel de arriba. Como acá el operador PIDIÓ pagar ese monto, si el reparto no encuentra nada se
+reparte entre las billeteras que haya, de mayor a menor. Además esperaba 350 ms a ciegas a que el
+modal montara; ahora espera a que exista el estado del retiro.
+
+**"Se perdió el estado del retiro antes de cerrarlo".** Es la continuación de D-64. `_rv2Confirmar`
+tiene el estado en la mano mientras extrae las fichas, anota en Chunior y debita; pero al
+terminar llamaba al cierre **sin pasárselo**, y el cierre lo volvía a buscar en el global, que
+cerrar el modal pone en `null`. Resultado: la plata salía y la solicitud no se actualizaba. D-64
+lo hizo **visible**; esto lo **arregla**: el cierre usa el estado que ya se tenía.
+
+### "Ver" en solicitudes
+
+`abrirExpedienteSolicitud` pintaba el expediente en un panel que vive abajo de todo, en el centro
+de control, y sólo abría el modal en pantallas de **menos de 1080 px**. En un monitor normal,
+"Ver" dibujaba algo fuera de la vista. Además buscaba el modal **antes** de crearlo, así que la
+primera vez no aparecía aunque se lo pidiera. Desde pendientes ahora siempre abre el modal.
+
+### Editar un movimiento en Chunior bloqueaba a TODOS
+
+`expedienteEditarMovimiento` comparaba el operador de la fila contra `String(operador)`. Pero
+`operador` es un **objeto**: eso da `"[object Object]"`, que no coincide con nadie. Bloqueaba la
+edición a todos —incluido el que hizo el movimiento— y como el mismo valor viajaba a
+`panel_mov_editar`, el servidor también rebotaba. Ahora compara contra el usuario **logueado en
+Chunior en este momento**, leído en vivo con `refrescarOperadorDesdeChunior(true)` — lo mismo que
+ya hacían las billeteras, que es lo que Juan había pedido.
+
+### El chat: D-73 RESUELTO
+
+El panel sólo podía **responder**. `nodoEnviarMensajePortal` devuelve `"sin-ticket"` si el
+jugador nunca escribió, y en D-82 eso se tapó con un cartel de *"todavía no se puede"*.
+
+Se investigó cómo lo lee el portal antes de escribir nada. `landing_portal_chat_thread_get` toma
+**la última solicitud de SOPORTE del jugador que tenga `chat_thread`**, sin importar quién la
+creó, y el portal la pide cuando el jugador abre el widget. Así que iniciar un chat es crear esa
+fila. Las dos funciones que ya existían para "crear chat" no servían:
+
+- `landing_crear_chat_v2` y `nodo_chat_whaticket_accept_v2` escriben en `chat_sesiones` /
+  `chat_mensajes`: la generación de chat **congelada** (D-74). El portal no lee eso.
+- `landing_portal_v16_crear_solicitud` es la del portal: firmaría el mensaje como del jugador.
+
+Se creó `panel_chat_iniciar(p_secret, p_pc_codigo, p_usuario, p_mensaje, p_operador)`. Tres
+condiciones que no son arbitrarias:
+
+- **`origen = 'PORTAL_V16'` y estado `EN_REVISION`**: es lo único que lista la bandeja del panel.
+  Con otro origen, la conversación existiría y no se vería nunca.
+- **La grafía del usuario del portal.** El portal busca con `usuario = p_usuario` exacto; se toma
+  la del último pedido del jugador, no la que tipee el operador.
+- **Si ya hay conversación en esta oficina, se suma ahí** y se reabre. Si la última es de otra
+  oficina, se crea una acá.
+
+Se verificó: la función existe, con clave incorrecta devuelve `NO_AUTORIZADO` sin escribir
+nada, y `anon` la puede ejecutar (que es como la llama el panel).
+
+Puertas para escribirle a alguien: **"Chat Jugador"** en el expediente (ahora abre el cuadro para
+escribir en vez del cartel) y **"💬 Mensaje"** en la ficha del jugador, que se abre desde el CRM,
+el historial y el expediente.
+
+**Lo que no se pudo verificar desde acá:** que el portal *pinte* un mensaje cuyo primer renglón es
+del operador. Lee el hilo sin filtrar por origen y ya muestra las respuestas del operador, así que
+debería — pero se confirma mandándole un mensaje a un usuario de prueba y abriendo su portal.
+
+**Seguridad.** La función usa la misma clave de datos que está filtrada (D-63). No abre una clase
+de riesgo nueva —esa clave ya permitía escribir `chat_thread` en cualquier solicitud vía
+`panel_v15_5_actualizar_solicitud_portal`, que mezcla el metadata sin lista de campos—, pero
+**mandarle un mensaje a cualquier jugador** es exactamente lo que buscaría alguien que quiera
+estafarlos. Otro motivo para rotar la clave.
+
+### Los carteles repetidos NO eran un bug
+
+Se vieron 2 y 4 carteles idénticos apilados. Los botones tienen un solo `onclick` cada uno: eran
+**clics repetidos sobre un botón que no hacía nada visible**. Arreglado lo de abajo, no aparecen.
+
+### La búsqueda · ABIERTO
+
+Dos cosas distintas en las capturas, ninguna tocada:
+
+- *"Sesión de Agentes caída — 'buscar usuario' no se ejecutó. Se abrió el login"* es el panel
+  avisando **bien** que se cayó la sesión del casino. Hay que entrar en la ventana que abre.
+- *"«usuario de prueba» NO existe en Agentes"* a los 10,8 s, en BET300. Ese preload sólo concluye "no
+  existe" si la lista **se refrescó, quedó estable y el texto buscado se verificó** (regla
+  anti-falso-negativo); si no, reintenta y termina en error técnico. O sea que el casino dijo que
+  no está. Lo más probable es que el usuario de prueba exista en el **otro** entorno (Juan
+  alternó entre BET300 y Drex). No se puede confirmar sin el casino.

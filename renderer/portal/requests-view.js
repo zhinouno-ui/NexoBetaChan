@@ -154,12 +154,12 @@ const api = {};
           ? ((_colaCorre
                 ? `<button class="v154p-btn" disabled style="opacity:.55;cursor:default">⚙ Cargando…</button>`
                 : `<button class="v154p-btn" onclick="colaCargaQuitar('${_cola.cid}')" style="background:transparent;border:1px solid #7f1d1d;color:#fca5a5">Sacar de la cola</button>`)
-             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`)
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`)
           : ((tomada ? `<button class="v154p-btn yellow" disabled>Tomada</button>`
                      : `<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`)
              + `<button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>`
              + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
-             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
+             + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`
              + `<button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`);
         const _dup = _abiertasPorJugador[String(s.USUARIO||'').toLowerCase().trim() + '|'
                    + String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()] || 0;

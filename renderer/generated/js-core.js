@@ -4061,6 +4061,7 @@ window.abrirPerfilJugador = function(usuario){
     +       ' <span title="Push" style="opacity:'+(fl.push?1:.25)+'">🔔</span><span title="App" style="opacity:'+(fl.app?1:.25)+'">📱</span>'+segChip+'</div>'
     +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es · '+esc(crm.accion||'')+'</div></div>'
     +     '<button class="mini-btn yellow" title="Usuario, clave y teléfono para que pueda entrar a la plataforma" onclick="pjDatosIngreso(\''+uEsc+'\')">🔑 Ingreso</button>'
+    +     '<button class="mini-btn green" title="Escribirle por el chat del portal, aunque nunca haya escrito" onclick="nodoChatNuevo(\''+uEsc+'\')">💬 Mensaje</button>'
     +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
     +     '<button class="mini-btn green" onclick="crmPushIndividual(\''+uEsc+'\')">📲 Push</button>'
     +     '<button class="mini-btn blue" title="Copia un enlace que lo mete al portal ya validado, en Cargar. Vale 30 min y un solo uso." onclick="crmEnlaceAcceso(\''+uEsc+'\',\'CARGAR\')">🔗 Cargar</button>'
@@ -12367,7 +12368,18 @@ window.expedienteEditarMovimiento = async function(historialId){
   if(!fila){ toast('No tengo la operación cargada. Ampliá el período y probá de nuevo.','yellow'); return; }
 
   const opFila = String(fila.operador||'').trim();
-  const opActual = String((typeof operador !== 'undefined' ? operador : '') || '').trim();
+  // Quién opera AHORA: el usuario logueado en Chunior en este momento, leído en vivo — igual que
+  // hacen las billeteras. Antes esto era String(operador), y operador es un OBJETO: daba
+  // "[object Object]", no coincidía con nadie, y bloqueaba la edición a todos, incluido el que
+  // hizo el movimiento. Y como el mismo valor viajaba al servidor, allá también rebotaba.
+  let opActual = '';
+  try{
+    if(typeof refrescarOperadorDesdeChunior === 'function')
+      opActual = String((await refrescarOperadorDesdeChunior(true)) || '').trim();
+  }catch(_e){}
+  if(!opActual){
+    try{ opActual = String((typeof operador !== 'undefined' && operador && (operador.usuario || operador.nombre)) || '').trim(); }catch(_e){}
+  }
   // Aviso temprano y claro. La regla la aplica igual el servidor (panel_mov_editar).
   if(opFila && opActual && opFila.toLowerCase() !== opActual.toLowerCase()){
     toast('Este movimiento lo hizo '+opFila+'. Sólo esa cuenta puede editarlo.','orange');

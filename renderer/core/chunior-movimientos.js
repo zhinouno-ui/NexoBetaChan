@@ -298,7 +298,18 @@ window.expedienteEditarMovimiento = async function(historialId){
   if(!fila){ toast('No tengo la operación cargada. Ampliá el período y probá de nuevo.','yellow'); return; }
 
   const opFila = String(fila.operador||'').trim();
-  const opActual = String((typeof operador !== 'undefined' ? operador : '') || '').trim();
+  // Quién opera AHORA: el usuario logueado en Chunior en este momento, leído en vivo — igual que
+  // hacen las billeteras. Antes esto era String(operador), y operador es un OBJETO: daba
+  // "[object Object]", no coincidía con nadie, y bloqueaba la edición a todos, incluido el que
+  // hizo el movimiento. Y como el mismo valor viajaba al servidor, allá también rebotaba.
+  let opActual = '';
+  try{
+    if(typeof refrescarOperadorDesdeChunior === 'function')
+      opActual = String((await refrescarOperadorDesdeChunior(true)) || '').trim();
+  }catch(_e){}
+  if(!opActual){
+    try{ opActual = String((typeof operador !== 'undefined' && operador && (operador.usuario || operador.nombre)) || '').trim(); }catch(_e){}
+  }
   // Aviso temprano y claro. La regla la aplica igual el servidor (panel_mov_editar).
   if(opFila && opActual && opFila.toLowerCase() !== opActual.toLowerCase()){
     toast('Este movimiento lo hizo '+opFila+'. Sólo esa cuenta puede editarlo.','orange');

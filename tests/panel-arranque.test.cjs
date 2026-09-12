@@ -1123,17 +1123,17 @@ test('chat · "Chat Jugador" abre la conversación del jugador, no sólo el apar
   assert.equal(abierto, 'tk9', 'tiene que abrir la conversación de ese jugador, buscándola por usuario');
 });
 
-test('chat · si el jugador no tiene conversación, lo dice en vez de quedarse mudo', async () => {
+test('chat · si el jugador no tiene conversación, se abre para escribirle (no un cartel)', async () => {
   const sb = arrancarPanel();
   sb.mostrarVista = () => {};
   sb.ticketsAgrupados = () => [];
-  let dicho = '';
-  sb.toast = (m) => { dicho = m; };
+  let paraQuien = null;
+  sb.nodoChatNuevo = (u) => { paraQuien = u; };
 
   await sb.expedienteAbrirChatJugador('jugadorsinchat', '');
 
-  assert.match(dicho, /no tiene ninguna conversación abierta/i,
-    'el panel todavía no puede iniciar una: callarse hace pensar que el botón está roto');
+  assert.equal(paraQuien, 'jugadorsinchat',
+    'antes terminaba en "todavía no se puede iniciar una": ahora se le escribe');
 });
 
 test('ficha · la que se le manda al jugador trae el titular y no trae vocabulario interno', () => {
@@ -1179,4 +1179,148 @@ test('lista · dos solicitudes abiertas del mismo jugador quedan marcadas', () =
   sb.v154pRenderSolicitudesPortalEnInicio();
   assert.ok(!/solicitudes abiertas de este jugador/.test(caja.innerHTML),
     'y no puede gritar cuando hay una sola');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EL RETIRO PARCIAL, USABLE
+// Juan: "esta versión es inutilizable de manera directa". Escribías un dígito y el modal se
+// redibujaba; el cartel decía "no cubren, $0" con plata de sobra; y al terminar de pagar se perdía
+// el estado y la solicitud no se cerraba.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const _bundlePortal = () => fs.readFileSync(
+  path.join(RAIZ, 'renderer', 'generated', 'js-portal-modules.js'), 'utf8');
+
+test('parcial · el total del retiro se define UNA sola vez (la segunda redibujaba todo)', () => {
+  const b = _bundlePortal();
+  const n = (b.match(/api\._rv2InputTotal = function/g) || []).length;
+  assert.equal(n, 1, 'con dos definiciones gana la segunda, y esa hacía _rv2Render() en cada tecla');
+});
+
+test('parcial · tipear en el total NO reescribe el modal (el campo no pierde el foco)', () => {
+  const sb = arrancarPanel();
+  const modal = { innerHTML: '<<intacto>>', style: {} };
+  const deuda = { innerHTML: '' };
+  sb.document.getElementById = (id) => (id === 'retiroV2Modal' ? modal : id === 'rv2Deuda' ? deuda : null);
+  sb._retiroV2 = { id: 900001, usuario: 'jugadordeprueba', objetivo: 50000, totalReal: 50000,
+    yaPagado: 0, sel: {}, montos: {}, hechas: {}, fase: 'setup', saldoReal: 45820 };
+
+  const campo = { value: '45.820' };
+  sb._rv2InputTotal(campo);
+
+  assert.equal(modal.innerHTML, '<<intacto>>', 'si el modal se reescribe, el campo se recrea y se pierde el foco');
+  assert.equal(sb._retiroV2.totalReal, 45820);
+  assert.equal(campo.value, '45.820', 'y el número queda con el formato de miles');
+});
+
+test('parcial · sin billetera elegida dice "elegí", no "las billeteras no cubren"', () => {
+  const b = _bundlePortal();
+  assert.match(b, /ELEGÍ DE QUÉ BILLETERA PAGAR/,
+    'con $0 elegido y plata en las billeteras, el problema es que falta elegir — no que no alcance');
+  assert.ok(!/tit:'LAS BILLETERAS NO CUBREN EL TOTAL'/.test(b),
+    'el cartel viejo leía "nada elegido" como "no hay plata"');
+});
+
+test('parcial · el cierre usa el estado que ya tenía, aunque el global se haya vaciado', async () => {
+  const sb = arrancarPanel();
+  sb.toast = () => {};
+  const alertas = [];
+  sb.alert = (m) => { alertas.push(String(m)); };
+  sb._retiroV2 = null;                       // lo que pasa si algo cerró el modal mientras se pagaba
+
+  const st = { id: 900001, usuario: 'jugadordeprueba', titular: 'Titular Demo', cbu: 'alias.demo',
+    declarado: 50000, objetivo: 50000, totalReal: 50000, yaPagado: 0, totalPagar: 25000,
+    modoParcial: true, sel: {}, montos: {}, hechas: {}, fase: 'confirmar', chuMovs: [],
+    pagar: [{ id: 'b1', nombre: 'BILLETERA DEMO', monto: 25000, chunior: null }] };
+
+  try{ await sb._rv2Finalizar(st); }catch(_e){}
+
+  assert.ok(!alertas.some(a => /Se perdió el estado/.test(a)),
+    'con el estado en la mano no puede decir que lo perdió: la plata ya salió y la solicitud tiene que cerrarse');
+});
+
+test('Ver · desde pendientes abre el modal (el panel de abajo no está a la vista)', () => {
+  const b = _bundlePortal();
+  const n = (b.match(/v154pDetalleSolicitud\(\$\{id\},true\)/g) || []).length;
+  assert.equal(n, 2, 'los dos "Ver" de la tarjeta (normal y encolada) fuerzan el modal');
+  assert.match(b, /if\(forzarModal \|\| isMobile\)\{ try\{ expedienteEnsureModal\(\); \}catch\(_e\)\{\} \}/,
+    'y el modal se crea ANTES de buscarlo — si no, la primera vez no aparecía nunca');
+});
+
+test('Chunior · editar compara contra el usuario activo en Chunior, no contra "[object Object]"', () => {
+  const b = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
+  assert.ok(!/String\(\(typeof operador !== 'undefined' \? operador : ''\) \|\| ''\)/.test(b),
+    'operador es un objeto: String(operador) da "[object Object]" y bloqueaba a todos');
+  assert.match(b, /await refrescarOperadorDesdeChunior\(true\)/,
+    'se lee en vivo quién está logueado en Chunior, como hacen las billeteras');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EL PANEL PUEDE EMPEZAR LA CONVERSACION
+// "No puede ser que nosotros no podamos enviarle un mensaje a los usuarios tal cual ellos sí
+// pueden enviarnos uno" (D-73). El portal lee la última solicitud de SOPORTE del jugador que tenga
+// chat_thread; panel_chat_iniciar crea esa solicitud con nuestro mensaje como primero del hilo.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _panelConChat(respuesta) {
+  const llamadas = [];
+  const sb = arrancarPanel({ rpc: (fn, args) => {
+    llamadas.push({ fn, args });
+    if (fn === 'panel_chat_iniciar') return Promise.resolve({ data: respuesta, error: null });
+    return Promise.resolve({ data: null, error: null });
+  }});
+  sb.pcOperativa = 'P4';
+  sb.operador = { usuario: 'operadordemo' };
+  return { sb, llamadas };
+}
+
+test('chat · a quien nunca escribió se le crea la conversación en el servidor', async () => {
+  const { sb, llamadas } = _panelConChat({ ok: true, solicitud_id: 900010, usuario: 'jugadordeprueba', creada: true });
+  sb.nodoEnviarMensajePortal = async () => ({ ok: false, error: 'sin-ticket' });
+
+  const r = await sb.nodoIniciarChat('jugadordeprueba', 'Hola, te escribimos por tu retiro');
+
+  const c = llamadas.find(x => x.fn === 'panel_chat_iniciar');
+  assert.ok(c, 'sin ticket tiene que ir a crear la conversación, no devolver "sin-ticket"');
+  assert.equal(c.args.p_pc_codigo, 'P4', 'en la oficina que está operando');
+  assert.equal(c.args.p_usuario, 'jugadordeprueba');
+  assert.equal(c.args.p_mensaje, 'Hola, te escribimos por tu retiro');
+  assert.equal(c.args.p_operador, 'operadordemo', 'queda registrado quién le escribió');
+  assert.equal(r.ok, true);
+  assert.equal(r.creada, true);
+});
+
+test('chat · si ya tiene conversación, el mensaje va por el camino de siempre', async () => {
+  const { sb, llamadas } = _panelConChat({ ok: true });
+  sb.nodoEnviarMensajePortal = async () => ({ ok: true });
+
+  const r = await sb.nodoIniciarChat('jugadordeprueba', 'Hola');
+
+  assert.equal(r.ok, true);
+  assert.ok(!llamadas.some(x => x.fn === 'panel_chat_iniciar'),
+    'no hay que crear otra conversación si ya existe una');
+});
+
+test('chat · si el servidor rechaza, lo dice (no canta "enviado")', async () => {
+  const { sb } = _panelConChat({ ok: false, error: 'NO_AUTORIZADO' });
+  sb.nodoEnviarMensajePortal = async () => ({ ok: false, error: 'sin-ticket' });
+
+  const r = await sb.nodoIniciarChat('jugadordeprueba', 'Hola');
+
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'NO_AUTORIZADO');
+});
+
+test('chat · sin texto no manda nada', async () => {
+  const { sb, llamadas } = _panelConChat({ ok: true });
+  const r = await sb.nodoIniciarChat('jugadordeprueba', '   ');
+  assert.equal(r.ok, false);
+  assert.ok(!llamadas.some(x => x.fn === 'panel_chat_iniciar'));
+});
+
+test('chat · la ficha del jugador tiene la puerta para escribirle', () => {
+  // Hasta ahora la única entrada era "Chat Jugador" en el historial, y ni así andaba.
+  const b = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
+  assert.match(b, /💬 Mensaje<\/button>/);
+  assert.match(b, /onclick="nodoChatNuevo\(/);
 });

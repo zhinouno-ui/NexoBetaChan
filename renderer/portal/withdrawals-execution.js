@@ -305,7 +305,7 @@ api._rv2Confirmar = async function(bid){
   // en el historial ni la solicitud actualizada: el retiro existía en Chunior y en ningún lado más.
   // Pasó de verdad con un parcial. Ahora cierra solo.
   if(st.pagar.every(function(x){ return st.hechas[x.id]===true; })){
-    try{ await deps._rv2Finalizar(); }catch(e){
+    try{ await deps._rv2Finalizar(st); }catch(e){
       try{ deps.toast('⚠ Se transfirió todo pero falló el cierre: '+(e.message||'')+' — revisá el historial','red'); }catch(_e){}
     }
   }
@@ -318,8 +318,10 @@ api._rv2Confirmar = async function(bid){
 // todas SIN número de Chunior: la transferencia fue una sola, el registro se disparó once
 // veces. Si además cada clic ajustó el saldo de la billetera, ese saldo quedó mal (D-64).
 let _rv2Cerrando = false;
-const _rv2FinalizarInterno = async function(){
-  const st = deps.withdrawalState.current;
+const _rv2FinalizarInterno = async function(stCapturado){
+  // El cierre automático le pasa el estado que ya tenía; el botón manual no pasa nada y usa el global.
+  const st = (stCapturado && typeof stCapturado === 'object' && stCapturado.id != null)
+    ? stCapturado : deps.withdrawalState.current;
   // Este return existía y era silencioso. Se llega acá DESPUÉS de haber extraído las fichas y
   // debitado la billetera: irse sin hacer nada y sin decir nada deja la plata afuera y la
   // solicitud intacta, que es como quedó el parcial de $500.000 (sol. #198680).

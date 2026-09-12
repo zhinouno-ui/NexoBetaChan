@@ -246,7 +246,15 @@ api._retiroAjustarASaldo = function(id){
   if(typeof deps.abrirModalRetiroV2!=='function'){ deps.toast('Modal de retiro no disponible.','red'); return; }
   deps.abrirModalRetiroV2(id);
   // Cuando el modal terminó de montar, fijamos el objetivo al monto sugerido.
-  deps.setTimeout(function(){ try{ if(deps.withdrawalState.current){ deps.withdrawalState.current.saldoReal=saldo; deps.window._rv2AjustarASaldo(sug.monto); } }catch(_e){} }, 350);
+  let _intentos = 0;
+  (function _ajustar(){
+    const st = deps.withdrawalState.current;
+    if(st && String(st.id) === String(id)){
+      try{ st.saldoReal = saldo; deps.window._rv2AjustarASaldo(sug.monto); }catch(_e){}
+      return;
+    }
+    if(++_intentos < 30) deps.setTimeout(_ajustar, 100);
+  })();
 };
 api._rv2AjustarASaldo = function(montoFijo){
   const st=deps.withdrawalState.current; if(!st) return;
@@ -262,6 +270,16 @@ api._rv2AjustarASaldo = function(montoFijo){
     const rep = deps.recomendarRepartoRetiro(nuevo);
     (rep.reparto||[]).forEach(function(x){ st.sel[String(x.id)]=true; st.montos[String(x.id)]=x.usar; });
   }catch(_e){}
+  if(!Object.keys(st.sel).length){
+    let falta = nuevo, usadas = 0;
+    _rv2BilsUsables(nuevo).forEach(function(b){
+      if(falta <= 0.5 || usadas >= 3) return;
+      const usar = Math.min(Math.max(0, Number(b.SALDO||0)), falta);
+      if(usar <= 0) return;
+      st.sel[String(b.ID_BILLETERA)] = true; st.montos[String(b.ID_BILLETERA)] = usar;
+      falta -= usar; usadas++;
+    });
+  }
   _rv2Render();
   try{ deps.toast('Retiro ajustado a '+deps.money(nuevo)+' (lo que el usuario tiene)','blue'); }catch(_e){}
   deps._rv2LeerSaldo();
@@ -298,16 +316,10 @@ function _rv2FmtMiles(n){
 }
 api._rv2InputObjetivo = function(el){ const st=deps.withdrawalState.current; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.objetivo=raw; el.value=_rv2FmtMiles(raw); _rv2ActualizarTotal(); };
 api._rv2InputMonto = function(el, bid){ const st=deps.withdrawalState.current; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.montos[String(bid)]=raw; el.value=_rv2FmtMiles(String(raw)); _rv2ActualizarTotal(); };
-// Corregir el TOTAL de la deuda (solicitud cargada con monto equivocado). Al cambiarlo se
-// recalcula lo que falta = total − ya pagado. NO es "lo que pago ahora": eso va en la billetera.
-api._rv2InputTotal = function(el){
-  const st=deps.withdrawalState.current; if(!st) return;
-  const raw = Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0);
-  st.totalReal = raw;
-  st.objetivo  = Math.max(0, raw - (Number(st.yaPagado)||0));
-  el.value = _rv2FmtMiles(String(raw));
-  _rv2Render();
-};
+// (Acá había una SEGUNDA definición de _rv2InputTotal que pisaba a la de arriba y llamaba a
+// _rv2Render(): redibujaba el modal entero en cada tecla y el campo perdía el foco — había que
+// hacer clic de nuevo para escribir cada dígito. Se sacó; queda la de arriba, que actualiza sólo
+// lo que cambia.)
 function _rv2ActualizarTotal(){
   const st=deps.withdrawalState.current; if(!st) return;
   const tot=_rv2TotalSel(); const el=deps.document.getElementById('rv2Total');
@@ -401,8 +413,17 @@ function _rv2Veredicto(){
       tit: st.yaPagado>0 ? 'SE PUEDE CERRAR EL RETIRO' : 'SE PUEDE PAGAR COMPLETO',
       det: st.yaPagado>0 ? ('Pagando '+deps.money(tot)+' queda saldado. Tiene '+deps.money(st.saldoReal)+' en fichas.')
                          : ('Tiene '+deps.money(st.saldoReal)+' en fichas.')};
-  return {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LAS BILLETERAS NO CUBREN EL TOTAL',
-    det:'Se puede pagar '+deps.money(tot)+' ahora · quedan '+deps.money(falta)+' para después.'};
+  if(tot <= 0.5){
+    const disp = _rv2BilsUsables(st.objetivo)
+      .reduce(function(a,b){ return a + Math.max(0, Number(b.SALDO||0)); }, 0);
+    return (disp >= falta - 0.5)
+      ? {n:'medio', c:'#58a6ff', ico:'👇', tit:'ELEGÍ DE QUÉ BILLETERA PAGAR',
+         det:'Hay '+deps.money(disp)+' en billeteras. Elegí abajo de cuál sale.'}
+      : {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LAS BILLETERAS NO ALCANZAN',
+         det:'Entre todas hay '+deps.money(disp)+' y faltan '+deps.money(falta)+'. Se puede pagar una parte.'};
+  }
+  return {n:'medio', c:'#f5c518', ico:'⚠️', tit:'LO ELEGIDO NO CUBRE EL TOTAL',
+    det:'Se paga '+deps.money(tot)+' ahora · quedan '+deps.money(falta)+' para después.'};
 }
 // Conviven dos modales de retiro segun de donde se abra el retiro: uno tiene #rv2Veredicto y el
 // otro #rv2SaldoReal. Hay que pintar en el que exista — buscando solo el primero, en el modal que

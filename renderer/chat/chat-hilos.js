@@ -582,6 +582,72 @@
     }catch(e){ return {ok:false,error:e.message||String(e)}; }
   };
 
+  // ── Escribirle a un jugador que no tiene conversación abierta (D-73) ─────────────────────
+  // nodoEnviarMensajePortal sólo sabe RESPONDER: sin ticket devuelve "sin-ticket", y el panel no
+  // tenía ninguna forma de empezar una conversación. panel_chat_iniciar crea la solicitud de
+  // SOPORTE —la misma que lee el portal— con nuestro mensaje como primero del hilo, o lo suma a la
+  // que ya exista en esta oficina.
+  window.nodoIniciarChat=async function(usuario,texto){
+    const u=S(usuario).trim(); texto=S(texto).trim();
+    if(!u||!texto) return {ok:false,error:"faltan-datos"};
+    // Si ya tiene conversación en la bandeja, va por el camino de siempre.
+    try{
+      const r0=await window.nodoEnviarMensajePortal(u,texto,false);
+      if(r0&&r0.ok) return {ok:true,existente:true};
+      if(r0&&r0.error&&r0.error!=="sin-ticket") return r0;
+    }catch(_e){}
+    const op=(window.operador?.usuario||window.operador?.nombre||"panel");
+    const pc=((typeof pcOperativa!=="undefined"&&pcOperativa)||window.pcOperativa||"");
+    const {data,error}=await supabaseClient.rpc("panel_chat_iniciar",{
+      p_secret:window.PANEL_DATA_SECRET, p_pc_codigo:pc, p_usuario:u, p_mensaje:texto, p_operador:op });
+    if(error) return {ok:false,error:error.message||String(error)};
+    if(!data||data.ok!==true) return {ok:false,error:(data&&data.error)||"sin-detalle"};
+    // El portal muestra el hilo cuando el jugador abre el chat: el push es lo que le avisa que hay algo.
+    try{
+      if(window.PUSH_API_URL){
+        fetch(window.PUSH_API_URL,{method:"POST",headers:{"Content-Type":"application/json","x-push-secret":window.PUSH_SECRET},
+          body:JSON.stringify({usuario:S(data.usuario||u).toLowerCase(),title:"BET300 · Operador",body:texto.substring(0,120),url:"/",tag:"bet300-op"})}).catch(()=>{});
+      }
+    }catch(_p){}
+    try{ if(typeof window.cargarSolicitudesPortal==="function") await window.cargarSolicitudesPortal(true); }catch(_e){}
+    return {ok:true,solicitudId:data.solicitud_id,usuario:data.usuario||u,creada:!!data.creada};
+  };
+
+  window.nodoChatNuevo=function(usuario){
+    const u=S(usuario).trim();
+    if(!u){ try{ toast("Falta el usuario","red"); }catch(_e){} return; }
+    abrirModal("💬 Escribirle a "+escapeHtml(u),
+      '<div class="small" style="color:#8b949e;margin-bottom:8px">Le llega al chat del portal y como notificación. Si ya tiene una conversación, se suma ahí.</div>'
+      +'<textarea id="chatNuevoTxt" rows="4" maxlength="2000" style="width:100%;border-radius:10px;padding:10px;background:#0e1525;color:#fff;border:1px solid #2d3342;resize:vertical" placeholder="Escribí el mensaje…"></textarea>'
+      +'<div id="chatNuevoRes" class="small" style="min-height:16px;margin-top:6px"></div>',
+      async function(){
+        const txt=S((document.getElementById("chatNuevoTxt")||{}).value).trim();
+        const res=document.getElementById("chatNuevoRes");
+        if(!txt){ if(res) res.innerHTML='<span style="color:#f87171">Escribí algo.</span>'; return; }
+        const btn=document.getElementById("modalSaveBtn");
+        if(btn){ btn.disabled=true; btn.textContent="Enviando…"; }
+        let r=null;
+        try{ r=await window.nodoIniciarChat(u,txt); }catch(e){ r={ok:false,error:e.message||String(e)}; }
+        if(!r||!r.ok){
+          if(btn){ btn.disabled=false; btn.textContent="Enviar"; }
+          if(res) res.innerHTML='<span style="color:#f87171">No se pudo enviar: '+escapeHtml(String((r&&r.error)||"sin detalle"))+'</span>';
+          return;
+        }
+        try{ cerrarModal(); }catch(_e){}
+        try{ toast("✉ Mensaje enviado a "+u,"green"); }catch(_e){}
+        // Y abrir la conversación, que ya existe.
+        try{
+          const lista=(typeof window.ticketsAgrupados==="function"?window.ticketsAgrupados():ticketsAgrupadosFinal())||[];
+          const t=lista.find(x=>U(x.usuario)===U(r.usuario||u));
+          if(t && typeof window.aceptarTicketLocalStep2==="function"){
+            if(typeof window.mostrarVista==="function") window.mostrarVista("chat");
+            window.aceptarTicketLocalStep2(t.id);
+          }
+        }catch(_e){}
+      }, "Enviar");
+    setTimeout(function(){ try{ const t=document.getElementById("chatNuevoTxt"); if(t) t.focus(); }catch(_e){} }, 60);
+  };
+
   window.cerrarConsultaWq2=async function(){
     const ticket=window.__nodoChatCurrentTicket;
     if(!ticket)return;
