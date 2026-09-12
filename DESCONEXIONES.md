@@ -2937,3 +2937,43 @@ total guardado o lo declarado y nunca `monto_corregido`. Se arregló en tres tra
 
 **El archivo `Portal` cambió en este repo: hay que publicarlo** para que los jugadores lo vean.
 Mientras tanto, el portal publicado ya recibe el total corregido (la columna nueva la ignora).
+
+
+## D-89 · "COINCIDEN · en sistema" para alguien sin cuenta, y otros de la ronda del 12/09 · RESUELTO
+
+### El cotejo se encontraba a sí mismo
+
+Un cliente escribió *"soy nuevo, quiero registrarme, apodo guti, tel …"*. La tarjeta de cotejo dijo
+**"COINCIDEN · guti ✓ en sistema · ✓ mismo dueño"**, y justo abajo la prevalidación del servidor
+dijo **"sin antecedentes, ese teléfono no figura"**. Juan: *"el chabón declaró eso y no había
+usuario, el desplegable de coinciden debe decir 'sin usuario'"*.
+
+Causa: `cargarSolicitudesPortal` "cosecha" en la base LOCAL de jugadores el usuario y teléfono de
+**cada** solicitud del portal — incluidas las de SOPORTE, o sea el propio pedido de alta. La base
+local no guarda de dónde salió cada dato, así que ese alta quedaba igual que un jugador real, y
+después `altaCotejarDatos` comparaba la declaración contra sí misma.
+
+- Las consultas de SOPORTE **ya no se cosechan**.
+- Para lo que ya quedó guardado en cada PC: un jugador local sólo cuenta como "en sistema" con
+  algún respaldo — teléfono validado por un operador, CBU de retiro, bono cobrado u operación en el
+  historial. Lo que viene del servidor (CRM, vínculos) cuenta siempre.
+- Sin usuario ni teléfono en ninguna cuenta, la tarjeta dice **"Sin usuario"** y el pie: *"No hay
+  ninguna cuenta con este usuario ni con este teléfono. Es un alta nueva: creala en Agentes y validá
+  con el usuario que creaste."*
+
+### El expediente, el titular del bono y la carga que no se podía abrir
+
+- **Formato** como lo pidió Juan: sin "Origen", "Titular: No pudo ser extraído." si no hay, y el N°
+  es el de la **solicitud** (el que ve el jugador).
+- **El titular no salía** porque Juan copió desde la fila del **bono de PROMOS**, cuyas notas dicen
+  "Bono primer ingreso…". Ahora se toma de la solicitud o de la carga original (mismo solicitud_id).
+- **La carga original no se podía abrir**: la selección y la apertura usan el N° de solicitud, que
+  la carga y su bono comparten, y ganaba el primero de la lista — el bono, más nuevo. Ahora gana la
+  carga original. (No se cambió la clave de selección: la usa también el cambio de billetera en lote.)
+
+### El chat
+
+- **Desplegable de operaciones** al lado de "Respuestas rápidas": lista las del jugador de ese chat
+  (la carga y su bono por separado) y al elegir una **escribe** el expediente en el cuadro, para
+  editarlo antes de mandarlo.
+- **El cuadro crece con el texto** hasta casi media pantalla (antes, 110 px fijos).

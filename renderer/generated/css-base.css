@@ -98,7 +98,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .macro-btn.bil{background:#1a2a1a;border-color:#2d6a2d;color:#7ee07e}
 .macro-btn.bil:hover{background:#1e321e}
 .macro-edit-row{grid-column:1/-1;display:flex;justify-content:flex-end;padding-top:4px;border-top:1px solid #2e3444}
-#chatInput{min-height:42px;max-height:110px;margin:0;padding:11px 12px;resize:none;border-radius:14px;font-size:15px;background:#fff;color:#111}
+/* Crece con el texto hasta casi media pantalla (nodoChatInputAjustar); antes se quedaba en 110 px y
+   editar un mensaje largo —un expediente— antes de mandarlo era imposible (Juan, 12/09). */
+#chatInput{min-height:42px;max-height:45vh;overflow-y:auto;margin:0;padding:11px 12px;resize:none;border-radius:14px;font-size:15px;background:#fff;color:#111}
 /* Avisos en cascada. Antes cada toast era position:fixed en top/right:20px → se apilaban
    EXACTAMENTE uno encima del otro (solo se leía el último) y caían justo sobre el panel de chat.
    Ahora van arriba al centro, en columna, y entran/salen con fade. */

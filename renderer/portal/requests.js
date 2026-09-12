@@ -68,6 +68,11 @@ async function cargarSolicitudesPortal(silencioso=false){
           deps.window.__jugHarvested = deps.window.__jugHarvested || new Set();
           deps.V154P.solicitudes.forEach(function(s){
             const sid = String(s.ID||s.SOLICITUD_ID||''); if(!sid || deps.window.__jugHarvested.has(sid)) return;
+            // Una consulta de SOPORTE —y sobre todo un alta nueva ("soy nuevo, apodo X, tel Y")— es lo
+            // que el cliente DECLARA, no un dato del sistema. Guardarla como jugador hacía que el cotejo
+            // comparara la declaración contra sí misma y dijera "COINCIDEN · en sistema · mismo dueño"
+            // para alguien sin cuenta (Juan, 12/09).
+            if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='SOPORTE') return;
             const u = String(s.USUARIO||s.USUARIO_JUGADOR||'').trim(); if(!u) return;
             deps.window.__jugHarvested.add(sid);
             let meta = s.METADATA!==undefined?s.METADATA:(s.metadata||{});

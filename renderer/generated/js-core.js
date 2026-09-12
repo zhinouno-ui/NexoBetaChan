@@ -8405,6 +8405,21 @@ function _altaDist(a, b){
 }
 function _altaNormU(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,''); }
 function _altaNormTel(s){ return String(s||'').replace(/\D/g,''); }
+// Un jugador de la base LOCAL cuenta como "en sistema" sólo si hay algo más que su propia palabra:
+// un teléfono validado por un operador, un CBU de retiro (operó), un bono cobrado, o una operación
+// en el historial. La base local también tenía guardado lo que DECLARABAN los pedidos del portal
+// (ver requests.js): un alta nueva quedaba como jugador y el cotejo después decía "COINCIDEN" para
+// alguien que no tenía cuenta. Esto limpia lo que ya quedó guardado en cada PC.
+function _jugLocalConfiable(k, j){
+  try{
+    if(Object.values(j.telefonos||{}).some(function(p){ return p && p.verificado; })) return true;
+    if(Object.keys(j.cbus||{}).length) return true;
+    if(Array.isArray(j.bonos) && j.bonos.length) return true;
+    const H = window._historialData || [];
+    for(let i = 0; i < H.length; i++){ if(String(H[i].usuario||'').toLowerCase().trim() === k) return true; }
+  }catch(_e){}
+  return false;
+}
 // Devuelve { usuario:{exacto, similares[]}, telefono:{exacto, similares[]} }
 window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
   const uD=_altaNormU(usuarioDecl), tD=_altaNormTel(telefonoDecl);
@@ -8416,7 +8431,8 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     Object.keys(jug).forEach(function(k){
       const j=jug[k]||{};
       cand[k]={ usuario:j.usuario||k, telefonos:Object.keys(j.telefonos||{}),
-        titular:(Object.values(j.titulares||{})[0]||{}).raw||'', fuente:'local' };
+        titular:(Object.values(j.titulares||{})[0]||{}).raw||'', fuente:'local',
+        confiable:_jugLocalConfiable(k, j) };
     });
   }catch(_e){}
   // Índice CRM ya cargado (sin llamada extra)
@@ -8424,6 +8440,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     (window._crmJugadoresData||[]).forEach(function(x){
       const k=String(x.usuario||'').toLowerCase(); if(!k) return;
       if(!cand[k]) cand[k]={ usuario:x.usuario, telefonos:[], titular:x.titular||'', fuente:'crm' };
+      cand[k].confiable = true;   // viene del servidor
       if(x.telefono && cand[k].telefonos.indexOf(String(x.telefono))<0) cand[k].telefonos.push(String(x.telefono));
     });
   }catch(_e){}
@@ -8440,6 +8457,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
           // TUYA. Sin esto la tarjeta te nombraba al dueño del teléfono en otra oficina y el
           // confirm te nombraba a otro distinto: dos veredictos para el mismo dato.
           if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk', pc:String(v.pc_codigo||'') };
+          cand[k].confiable = true;   // viene del servidor
           if(!cand[k].pc && v.pc_codigo) cand[k].pc=String(v.pc_codigo);
           const t=_altaNormTel(v.telefono_canon||v.telefono);
           if(t && cand[k].telefonos.indexOf(t)<0) cand[k].telefonos.push(t);
@@ -8448,7 +8466,8 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
       }
     }
   }catch(_e){}
-  const lista=Object.values(cand);
+  // Sólo lo que tiene respaldo. Una declaración suelta no es "una cuenta en el sistema".
+  const lista=Object.values(cand).filter(function(c){ return c.confiable; });
   // ── USUARIO ──
   if(uD){
     lista.forEach(function(c){
@@ -8686,7 +8705,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
         '<div>'+r.usuario.similares.map(function(c){ const tl=telsDe(c);
           return chip(c.usuario, tl[0]||tN, esc(c.usuario)+(tl.length?(' · '+esc(tl[0])):''), 'ambar'); }).join('')+'</div>');
     } else {
-      filas+=fila('Usuario', esc(uDecl), '🆕 sin antecedentes', '#8b949e', '');
+      filas+=fila('Usuario', esc(uDecl), '✗ no hay cuenta con este usuario', '#8b949e', '');
     }
   }
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
@@ -8724,7 +8743,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
         + '<div>'+r.telefono.similares.map(function(c){
             return chip(c.usuario, c._tel, esc(c.usuario)+' · '+esc(c._tel), 'ambar'); }).join('')+'</div>');
     } else {
-      filas+=fila('Teléfono', esc(tN), '🆕 sin antecedentes', '#8b949e', '');
+      filas+=fila('Teléfono', esc(tN), '✗ no figura en ninguna cuenta', '#8b949e', '');
     }
   }
   // ── 3) CRUCE: ¿el usuario y el teléfono son de la MISMA persona? ──
@@ -8757,6 +8776,14 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
     }
   }
 
+  // Ni el usuario ni el teléfono están en ninguna cuenta: decirlo con todas las letras. Juan (12/09):
+  // "el chabón declaró eso y no había usuario, el desplegable de coinciden debe decir 'sin usuario'".
+  const _sinNada = !uOk && !tOk && !(r.usuario.similares||[]).length && !(r.telefono.similares||[]).length
+                   && (uDecl || tN.length >= 6);
+  if(!pie && _sinNada){
+    pie = 'No hay ninguna cuenta con ' + (uDecl ? 'este usuario' : '') + (uDecl && tN.length >= 6 ? ' ni con ' : '')
+        + (tN.length >= 6 ? 'este teléfono' : '') + '. Es un alta nueva: creala en Agentes y validá con el usuario que creaste.';
+  }
   const nivel = conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
   const T = {
     ok:        { c:'#3fb950', bg:'rgba(63,185,80,.10)',  bd:'rgba(63,185,80,.38)',  ico:'✅' },
@@ -8767,7 +8794,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
   const etiqueta = nivel==='conflicto' ? 'No coinciden'
                  : (nivel==='revisar' && _typoPropio) ? 'Teléfono mal tipeado'
                  : nivel==='revisar'   ? 'Revisar'
-                 : nivel==='nuevo'     ? 'Alta nueva'
+                 : nivel==='nuevo'     ? 'Sin usuario'
                  : (uOk&&tOk)          ? 'Coinciden'
                  : uOk                 ? 'Usuario en sistema' : 'Teléfono en sistema';
 

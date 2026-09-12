@@ -575,6 +575,11 @@ async function cargarSolicitudesPortal(silencioso=false){
           deps.window.__jugHarvested = deps.window.__jugHarvested || new Set();
           deps.V154P.solicitudes.forEach(function(s){
             const sid = String(s.ID||s.SOLICITUD_ID||''); if(!sid || deps.window.__jugHarvested.has(sid)) return;
+            // Una consulta de SOPORTE —y sobre todo un alta nueva ("soy nuevo, apodo X, tel Y")— es lo
+            // que el cliente DECLARA, no un dato del sistema. Guardarla como jugador hacía que el cotejo
+            // comparara la declaración contra sí misma y dijera "COINCIDEN · en sistema · mismo dueño"
+            // para alguien sin cuenta (Juan, 12/09).
+            if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='SOPORTE') return;
             const u = String(s.USUARIO||s.USUARIO_JUGADOR||'').trim(); if(!u) return;
             deps.window.__jugHarvested.add(sid);
             let meta = s.METADATA!==undefined?s.METADATA:(s.metadata||{});
@@ -2647,32 +2652,46 @@ const api = {};
 
   deps.window.cerrarExpedienteSolicitud = api.cerrarExpedienteSolicitud;
 
+  // El expediente que se le MANDA al jugador, con el formato que pidió Juan (12/09): sin "Origen"
+  // (vocabulario nuestro que del otro lado no significa nada), y sin titular → "No pudo ser extraído."
+  // en vez de un "—" que parece un error. El número es el de la solicitud: es el que ve el jugador.
+  function _textoExpediente(d){
+    const tit = d.titular || 'No pudo ser extraído.';
+    const rechTxt = d.rechazo
+      ? ('\n⛔ RECHAZO / INCIDENCIA: [' + d.rechazo.codigo + '] ' + d.rechazo.titulo
+         + '\n📝 Mensaje enviado: ' + d.rechazo.mensajeCliente)
+      : '';
+    return '📋 EXPEDIENTE #' + (d.solicitudId || d.id) + ' · ' + d.tipo + '\n'
+      + '━━━━━━━━━━━━━━━━━━━━\n'
+      + '👤 Jugador: ' + (d.usuario || '—') + '\n'
+      + '📱 Teléfono: ' + (d.telefono || 'No informado') + '\n'
+      + '💰 Monto: ' + fmtMoney(d.montoDeclarado) + '\n'
+      + '📊 Estado: ' + d.estado + '\n'
+      + '🏢 Billetera: ' + (d.billeteraNombre || '—') + '\n'
+      + (d.tipo === 'RETIRO' ? ('💳 CBU/Destino: ' + (d.destino || '—') + '\n') : '')
+      + '👤 Titular: ' + tit
+      + (d.mensaje ? ('\n💬 Mensaje: "' + d.mensaje + '"') : '')
+      + rechTxt + '\n'
+      + '━━━━━━━━━━━━━━━━━━━━\n'
+      + 'Fecha: ' + fmtFecha(d.fecha);
+  }
+  // El mismo texto para CUALQUIER operación, sin tocar el expediente que esté abierto en pantalla.
+  // Lo usa el desplegable del chat.
+  deps.window.expedienteTextoDe = function(row){
+    const _prev = _expedienteActualData;
+    try{
+      api.construirDossierCompletoHtml(row);
+      return _expedienteActualData ? _textoExpediente(_expedienteActualData) : '';
+    }catch(_e){ return ''; }
+    finally{ _expedienteActualData = _prev; }
+  };
+
   deps.window.copiarResumenExpediente = function(){
     if(!_expedienteActualData){
       try{ deps.toast('No hay datos de la solicitud cargados', 'red'); }catch(_e){}
       return;
     }
-    const d = _expedienteActualData;
-    const rechTxt = d.rechazo ? `\n⛔ RECHAZO / INCIDENCIA: [${d.rechazo.codigo}] ${d.rechazo.titulo}\n📝 Mensaje enviado: ${d.rechazo.mensajeCliente}` : '';
-    // Esta ficha SE LE MANDA al jugador cuando reclama, así que no puede llevar vocabulario
-    // nuestro: "Mov. Chunior" y "Origen: LANDING" no significan nada del otro lado y lo único que
-    // generan es otra pregunta. El N° de Chunior no se pierde — sigue en la ficha en pantalla,
-    // que es donde lo usa el operador.
-    const _origen = String(d.origen||'');
-    const _origenLegible = /LANDING|PORTAL/i.test(_origen) ? 'Portal'
-                         : /MANUAL|PANEL/i.test(_origen) ? 'Carga manual'
-                         : (_origen || '—');
-    const txt = `📋 EXPEDIENTE #${d.id} · ${d.tipo}
-━━━━━━━━━━━━━━━━━━━━
-👤 Jugador: ${d.usuario || '—'}
-📱 Teléfono: ${d.telefono || 'No informado'}
-💰 Monto: ${fmtMoney(d.montoDeclarado)}
-📊 Estado: ${d.estado}
-🏢 Billetera: ${d.billeteraNombre || '—'}
-${d.tipo === 'RETIRO' ? `💳 CBU/Destino: ${d.destino || '—'}\n👤 Titular: ${d.titular || '—'}` : `👤 Titular: ${d.titular || '—'}`}
-${d.mensaje ? `💬 Mensaje: "${d.mensaje}"` : ''}${rechTxt}
-━━━━━━━━━━━━━━━━━━━━
-Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
+    const txt = _textoExpediente(_expedienteActualData);
 
     // Por nodoCopiar: recupera el foco antes de copiar (el panel puede estar operando en la
     // ventana del backoffice) y, si aun así no puede, muestra el texto en vez de perderlo.
@@ -2689,7 +2708,11 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
     } else {
       const idStr = String(idOrObj);
       if(deps.window && deps.window._histUnificadoCache){
-        itemUnified = deps.window._histUnificadoCache.find(x => String(x.solicitud_id || x.id || x.historial_id) === idStr);
+        // La carga y su bono de PROMOS comparten solicitud_id. Ganaba el PRIMERO de la lista —el bono,
+        // que se registra después y el historial viene de más nuevo a más viejo— y la carga original
+        // no se podía abrir (Juan, 12/09). Gana la original; el bono se elige aparte desde el chat.
+        const _cands = deps.window._histUnificadoCache.filter(x => String(x.solicitud_id || x.id || x.historial_id) === idStr);
+        itemUnified = _cands.find(x => String((x._raw && x._raw.origen) || '').toUpperCase() !== 'PROMO_BONO') || _cands[0];
         if(itemUnified) s = itemUnified._raw || itemUnified;
       }
       if(!s && deps.V154P && deps.V154P.solicitudes){
@@ -2699,7 +2722,8 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
         s = deps.window.solicitudes.find(x => String(x.ID || x.SOLICITUD_ID || x.id) === idStr);
       }
       if(!s && deps.window && deps.window._historialData){
-        s = deps.window._historialData.find(x => String(x.solicitud_id || x.id) === idStr);
+        const _hs = deps.window._historialData.filter(x => String(x.solicitud_id || x.id) === idStr);
+        s = _hs.find(x => String(x.origen || '').toUpperCase() !== 'PROMO_BONO') || _hs[0];
       }
     }
 
@@ -2722,8 +2746,30 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
     // Una operación MANUAL no tiene columna TITULAR: el titular viaja DENTRO de notas, tal como
     // lo escribe portalNotasBase ("#206911 · Titular: Fulano De Tal · Alias: ..."). Sin leerlo de
     // ahí, la ficha mostraba "Titular: —" con el dato a la vista dos renglones más abajo.
-    const titular = String(s.TITULAR || s.NOMBRE_COMPLETO || s.titular || (meta && meta.titular)
+    let titular = String(s.TITULAR || s.NOMBRE_COMPLETO || s.titular || (meta && meta.titular)
       || ((notas.match(/Titular:\s*([^·\n]+)/i) || [])[1] || '')).trim();
+    // Una fila sin titular propio —el bono de PROMOS, cuyas notas dicen "Bono primer ingreso…"— lo
+    // toma de su solicitud o de la carga original, que comparten solicitud_id. Juan copió un
+    // expediente desde la fila del bono y salió sin titular.
+    if(!titular){
+      const _sidT = String(s.solicitud_id || s.SOLICITUD_ID || '');
+      if(_sidT){
+        try{
+          const _S = (deps.V154P && deps.V154P.solicitudes) || [];
+          const _sol = _S.find(function(x){ return String(x.ID || x.SOLICITUD_ID || '') === _sidT; });
+          if(_sol) titular = String(_sol.TITULAR || _sol.NOMBRE_COMPLETO || '').trim();
+        }catch(_e){}
+        if(!titular){
+          try{
+            for(const _h of ((deps.window && deps.window._historialData) || [])){
+              if(String(_h.solicitud_id || '') !== _sidT) continue;
+              const _m = String(_h.notas || '').match(/Titular:\s*([^·\n]+)/i);
+              if(_m){ titular = _m[1].trim(); break; }
+            }
+          }catch(_e){}
+        }
+      }
+    }
     const destino = String(s.DESTINO || s.CBU || s.cbu || s.destino || (meta && (meta.destino || meta.cbu)) || '').trim();
     const montoDecl = Number(s.MONTO_DECLARADO != null ? s.MONTO_DECLARADO : (s.monto != null ? s.monto : (itemUnified ? itemUnified.monto : 0)));
     const montoReal = Number(s.MONTO_REAL != null ? s.MONTO_REAL : (meta.monto_corregido != null ? meta.monto_corregido : montoDecl));
@@ -2803,6 +2849,7 @@ Fecha: ${fmtFecha(d.fecha)} · Origen: ${_origenLegible}`;
     }
 
     _expedienteActualData = {
+      solicitudId: (s.solicitud_id || s.SOLICITUD_ID || s.ID || null),
       id, tipo, usuario, titular, destino, montoDeclarado: montoDecl, montoReal, estado,
       fecha: fechaCreacion, telefono, operador, origen, pc: 'Local', mensaje, billeteraNombre: bilNombre,
       billeteraAlias: bilAlias, billeteraCbu: bilCbu, billeteraTitular: bilTitular,

@@ -1153,7 +1153,7 @@ test('ficha · la que se le manda al jugador trae el titular y no trae vocabular
     'el titular estaba en las notas y la ficha mostraba "—"');
   assert.ok(!/chunior/i.test(texto), 'el jugador no tiene por qué leer "Chunior"');
   assert.ok(!/landing/i.test(texto), 'ni "LANDING"');
-  assert.match(texto, /Origen: Portal/, 'se dice en castellano de dónde salió');
+  assert.ok(!/Origen/.test(texto), 'Juan pidió sacar la línea de origen (12/09)');
 });
 
 test('lista · dos solicitudes abiertas del mismo jugador quedan marcadas', () => {
@@ -1569,4 +1569,128 @@ test('portal · muestra el monto ajustado y el motivo, aunque todavía no haya p
   assert.match(src, /Ajustamos el monto a/);
   assert.match(src, /\(!\(pagado>0\) && !ajusteHtml\)/, 'sin pagos pero con ajuste, igual se muestra');
   assert.match(src, /\.rp-ajuste\{/);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EL EXPEDIENTE COMO LO QUIERE JUAN, Y DESDE EL CHAT
+// ══════════════════════════════════════════════════════════════════════════════
+
+const _cargaDemo = { id: 91001, tipo: 'CARGA', usuario: 'jugadordeprueba', monto: 2600, estado: 'OK',
+  origen: 'LANDING', billetera_nombre: 'BILLETERA DEMO', solicitud_id: 900050,
+  notas: '#900050 · Titular: Fulano De Tal · Alias: alias.demo', created_at: '2026-09-12T13:57:00Z' };
+const _bonoDemo = { id: 91002, tipo: 'CARGA', usuario: 'jugadordeprueba', monto: 520, estado: 'OK',
+  origen: 'PROMO_BONO', billetera_nombre: 'PROMOS', solicitud_id: 900050,
+  notas: 'Bono primer ingreso 20% sobre $ 2.600 · solicitud #900050', created_at: '2026-09-12T13:57:10Z' };
+
+test('expediente · el formato que pidió Juan: sin origen, con el N° de solicitud', () => {
+  const sb = arrancarPanel();
+  sb._historialData = [_bonoDemo, _cargaDemo];
+  const txt = sb.expedienteTextoDe(_cargaDemo);
+  assert.match(txt, /EXPEDIENTE #900050 · CARGA/, 'el número es el de la solicitud: el que ve el jugador');
+  assert.match(txt, /Titular: Fulano De Tal/);
+  assert.ok(!/Origen/.test(txt), 'Juan lo sacó: es vocabulario nuestro');
+  assert.match(txt, /\nFecha: /);
+});
+
+test('expediente · la fila del BONO toma el titular de la carga original', () => {
+  const sb = arrancarPanel();
+  sb._historialData = [_bonoDemo, _cargaDemo];
+  const txt = sb.expedienteTextoDe(_bonoDemo);
+  assert.match(txt, /Titular: Fulano De Tal/,
+    'las notas del bono dicen "Bono primer ingreso…": el titular está en la carga con el mismo N° de solicitud');
+});
+
+test('expediente · sin titular en ningún lado dice "No pudo ser extraído."', () => {
+  const sb = arrancarPanel();
+  sb._historialData = [];
+  const manual = { id: 91003, tipo: 'CARGA', usuario: 'jugadordeprueba', monto: 1000, estado: 'OK',
+    origen: 'MANUAL', notas: 'ARS 1.000', created_at: '2026-09-12T14:00:00Z' };
+  assert.match(sb.expedienteTextoDe(manual), /Titular: No pudo ser extraído\./);
+});
+
+test('chat · el desplegable lista las operaciones del jugador, la carga y su bono por separado', () => {
+  const sb = arrancarPanel();
+  sb.__nodoChatCurrentUser = 'jugadordeprueba';
+  sb._historialData = [_bonoDemo, _cargaDemo];
+  const sel = { innerHTML: '' };
+  sb.nodoChatCargasLlenar(sel);
+  assert.match(sel.innerHTML, /⬆ Carga/, 'la carga original');
+  assert.match(sel.innerHTML, /🎁 Bono/, 'y el bono, aparte: antes no se podía elegir la original');
+});
+
+test('chat · elegir una operación ESCRIBE el expediente en el cuadro, no lo manda', () => {
+  const sb = arrancarPanel();
+  sb.__nodoChatCurrentUser = 'jugadordeprueba';
+  sb._historialData = [_bonoDemo, _cargaDemo];
+  const inp = { value: '', style: {}, scrollHeight: 240, focus: () => {} };
+  sb.document.getElementById = (id) => (id === 'chatInput' ? inp : null);
+  sb.nodoChatCargaElegida(String(_cargaDemo.id));
+  assert.match(inp.value, /EXPEDIENTE #900050/, 'queda en el cuadro para editarlo antes de mandarlo');
+  assert.equal(inp.style.height, '242px', 'y el cuadro crece para mostrarlo entero');
+});
+
+test('chat · el cuadro crece con el texto pero no pasa de casi media pantalla', () => {
+  const sb = arrancarPanel();
+  sb.innerHeight = 1000;
+  const chico = { style: {}, scrollHeight: 80 };
+  sb.nodoChatInputAjustar(chico);
+  assert.equal(chico.style.height, '82px');
+  const enorme = { style: {}, scrollHeight: 2000 };
+  sb.nodoChatInputAjustar(enorme);
+  assert.equal(enorme.style.height, '450px', 'más que eso, scroll adentro del cuadro');
+  const css = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'css-base.css'), 'utf8');
+  assert.match(css, /#chatInput\{min-height:42px;max-height:45vh/, 'el tope de 110 px lo dejaba todo chiquito');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LO QUE DECLARA NO ES UNA CUENTA
+// Juan: "el chabón declaró eso y no había usuario, el desplegable de coinciden debe decir
+// 'sin usuario'". El alta nueva quedaba guardada como jugador y el cotejo se encontraba a sí mismo.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('cotejo · una declaración suelta no es "en sistema": la tarjeta dice SIN USUARIO', async () => {
+  const sb = arrancarPanel();
+  sb._historialData = [];
+  // Lo que dejaba la cosecha de un pedido de alta: usuario + teléfono, sin nada que lo respalde.
+  sb.jugadorRegistrarDato('aliasnuevodemo', { telefono: '1133334444' });
+
+  const r = await sb.altaCotejarDatos('aliasnuevodemo', '1133334444');
+  assert.equal(r.usuario.exacto, null, 'no hay ninguna cuenta: sólo lo que él mismo declaró');
+  assert.equal(r.telefono.exacto, null);
+
+  const out = sb._altaCotejoHtml('aliasnuevodemo', '1133334444', r, '_altaUsarSugerencia', 'declaró el cliente');
+  assert.match(out.html, /Sin usuario/);
+  assert.ok(!/Coinciden/.test(out.html), 'decía COINCIDEN · en sistema · mismo dueño');
+  assert.match(out.html, /Es un alta nueva/);
+});
+
+test('cotejo · un jugador local CON respaldo (teléfono validado) sí cuenta', async () => {
+  const sb = arrancarPanel();
+  sb._historialData = [];
+  sb.jugadorRegistrarDato('jugadorvalidado', { telefono: '1144445555', verificado: true });
+  const r = await sb.altaCotejarDatos('jugadorvalidado', '1144445555');
+  assert.ok(r.usuario.exacto, 'lo validó un operador: es una cuenta');
+});
+
+test('cotejo · las consultas de soporte ya no se guardan como jugadores', () => {
+  const b = _bundlePortal();
+  assert.match(b, /toUpperCase\(\)==='SOPORTE'\) return;/,
+    'un alta nueva es lo que el cliente declara, no un dato del sistema');
+});
+
+test('expediente · con carga y bono en el mismo N° de solicitud, abre la carga ORIGINAL', () => {
+  const sb = arrancarPanel();
+  const carga = { id: 92001, tipo: 'CARGA', usuario: 'jugadordeprueba', monto: 2600, estado: 'OK',
+    origen: 'LANDING', solicitud_id: 900060, notas: '#900060 · Titular: Fulano De Tal', created_at: '2026-09-12T13:57:00Z' };
+  const bono = { id: 92002, tipo: 'CARGA', usuario: 'jugadordeprueba', monto: 520, estado: 'OK',
+    origen: 'PROMO_BONO', solicitud_id: 900060, notas: 'Bono primer ingreso · solicitud #900060', created_at: '2026-09-12T13:57:10Z' };
+  // El bono va PRIMERO, como en el historial (de más nuevo a más viejo).
+  sb._histUnificadoCache = [
+    { fuente: 'OPERACION', _raw: bono, id: 92002, historial_id: 92002, solicitud_id: 900060 },
+    { fuente: 'OPERACION', _raw: carga, id: 92001, historial_id: 92001, solicitud_id: 900060 }
+  ];
+  sb._historialData = [bono, carga];
+
+  const txt = sb.expedienteTextoDe('900060');
+  assert.match(txt, /Monto: .*2\.600/, 'abría el bono ($520) y la carga original no se podía abrir');
 });
