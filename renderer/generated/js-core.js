@@ -8630,6 +8630,22 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
   const duenoTel = tOk?_altaNormU(tOk.usuario):null;
   const uReal    = uOk?_altaNormU(uOk.usuario):null;
   const uDeclN   = _altaNormU(uDecl);
+  // ¿El teléfono declarado es el PROPIO del usuario con un error de tipeo? Es el "REVISAR" más
+  // común, y hay que decirlo en claro: es él, tecleó mal, el bueno es tal. Mismos criterios de
+  // parecido que el cotejo (últimos 8 dígitos iguales, o 2 dígitos de diferencia como mucho).
+  const _telsPropios = uOk ? telsDe(uOk) : [];
+  const _typoPropio = (uOk && !tOk && tN.length >= 6 && _telsPropios.indexOf(tN) < 0)
+    ? (_telsPropios.find(function(t){
+        return (t.length >= 8 && tN.length >= 8 && t.slice(-8) === tN.slice(-8)) || _altaDist(t, tN) <= 2;
+      }) || null)
+    : null;
+  const _dif = _typoPropio ? (tN.length - _typoPropio.length) : 0;
+  const _queTiene = !_typoPropio ? ''
+    : _dif === -1 ? 'le falta un dígito'
+    : _dif < -1   ? 'le faltan ' + (-_dif) + ' dígitos'
+    : _dif === 1  ? 'le sobra un dígito'
+    : _dif > 1    ? 'le sobran ' + _dif + ' dígitos'
+    : 'tiene un dígito cambiado';
 
   // Un chip solo tiene sentido si CAMBIA algo: si sugiere lo mismo que ya declaró el cliente era
   // ruido puro (el caso más común mostraba "✔ usar aylinssf" justo debajo de "aylinssf").
@@ -8662,7 +8678,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       // El teléfono del usuario solo se muestra si NO es el declarado; si no, se repite en la fila de abajo.
       const otroTel = tl.filter(function(x){ return x!==tN; })[0];
       filas+=fila('Usuario', esc(uDecl), '✓ en sistema', '#3fb950',
-        otroTel ? sub('registrado con 📱 '+esc(otroTel))
+        (otroTel && !_typoPropio) ? sub('registrado con 📱 '+esc(otroTel))
                 : (tl.length ? '' : sub('sin teléfono registrado')));
     } else if(r.usuario.similares.length){
       alerta=true;
@@ -8695,6 +8711,12 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
           (_esOtraOfi ? sub('Está tomado en OTRA oficina — vincular acá no lo libera allá') : '')
           + '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
       }
+    } else if(_typoPropio){
+      alerta=true;
+      filas+=fila('Teléfono', esc(tN), '⚠ '+_queTiene, '#e3b341',
+        sub('El de <b style="color:#f0f6fc">'+esc(uOk.usuario)+'</b> es <b style="color:#f0f6fc">'+esc(_typoPropio)+'</b>'
+          + (tN.length !== 10 ? ' · un número argentino tiene 10 dígitos y este tiene '+tN.length : ''))
+        + '<div>'+chip(uOk.usuario, _typoPropio, 'usar '+esc(_typoPropio), 'ambar', true)+'</div>');
     } else if(r.telefono.similares.length){
       alerta=true;
       filas+=fila('Teléfono', esc(tN), '⚠ no figura', '#e3b341',
@@ -8728,7 +8750,10 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       }
     } else if(uReal && !duenoTel && telsDe(uOk).length && telsDe(uOk).indexOf(tN)<0){
       alerta=true;
-      pie='<b>'+esc(uOk.usuario)+'</b> figura con otro teléfono — el declarado no coincide.';
+      pie = _typoPropio
+        ? 'Es el mismo jugador — sólo tecleó mal el teléfono. Validá con el registrado.'
+        : '<b>'+esc(uOk.usuario)+'</b> tiene registrado otro teléfono, que no se parece al declarado. '
+          + 'Preguntale cuál usa ahora antes de validar.';
     }
   }
 
@@ -8740,6 +8765,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
     conflicto: { c:'#ff7b72', bg:'rgba(248,81,73,.12)',  bd:'rgba(248,81,73,.50)',  ico:'🚨' }
   }[nivel];
   const etiqueta = nivel==='conflicto' ? 'No coinciden'
+                 : (nivel==='revisar' && _typoPropio) ? 'Teléfono mal tipeado'
                  : nivel==='revisar'   ? 'Revisar'
                  : nivel==='nuevo'     ? 'Alta nueva'
                  : (uOk&&tOk)          ? 'Coinciden'

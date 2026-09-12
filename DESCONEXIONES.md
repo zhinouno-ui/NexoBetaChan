@@ -2890,3 +2890,21 @@ en la barra del centro de control, igual que en la pantalla de inicio.
 - **Operaciones desde las 00** en el medio de la barra del centro de control: cargas y retiros OK
   de la oficina desde las 00:00, contados en el servidor con el mismo filtro que el historial.
 - **El cartel de la clave blanqueada se copia al tocarlo** (usuario y clave, listos para el jugador).
+
+
+## D-87 · La tarjeta de cotejo decía "REVISAR" sin decir qué revisar · RESUELTO
+
+Juan mandó una tarjeta y escribió: *"si yo no entiendo, vos tampoco vas a entender por qué esto"*.
+El caso era simple: el teléfono declarado era **el propio teléfono registrado del jugador con el
+último dígito de menos** (9 dígitos en vez de 10). La tarjeta tenía el dato pero lo decía en tres
+lugares que no se conectaban: "registrado con X" en la fila del usuario, "no figura · ¿un dígito de
+más o de menos?" (como pregunta) en la del teléfono, y *"figura con otro teléfono — el declarado no
+coincide"* en el pie. Nunca decía lo único que importa: **es él, tecleó mal, el bueno es este**.
+
+Ahora `_altaCotejoHtml` reconoce ese caso (mismo criterio de parecido que el cotejo) y lo dice en
+claro: etiqueta **"Teléfono mal tipeado"**, qué le pasa al número (le falta / le sobra / tiene un
+dígito cambiado, y si no tiene 10 dígitos), cuál es el registrado, un botón para usarlo, y el pie
+*"Es el mismo jugador — sólo tecleó mal el teléfono. Validá con el registrado."*
+
+Y cuando el teléfono de verdad **no se parece** al registrado, el pie ya no dice "no coincide": dice
+que tiene otro teléfono registrado y que hay que **preguntarle cuál usa ahora antes de validar**.

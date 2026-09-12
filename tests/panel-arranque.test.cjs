@@ -1475,3 +1475,41 @@ test('blanqueo · el cartel de la clave se copia al tocarlo', () => {
   const core = fs.readFileSync(path.join(RAIZ, 'renderer', 'generated', 'js-core.js'), 'utf8');
   assert.match(core, /etiqueta:'Usuario y clave copiados'/);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LA TARJETA DE COTEJO DICE QUE PASA
+// Juan: "si yo no entiendo, vos tampoco vas a entender por qué esto". El caso: el teléfono declarado
+// era el del propio jugador con un dígito de menos, y la tarjeta lo decía de tres maneras sueltas.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _cotejoPropio(telDeclarado, telRegistrado) {
+  return {
+    usuario:  { exacto: { usuario: 'jugadordeprueba', telefonos: [telRegistrado] }, similares: [] },
+    telefono: { exacto: null, similares: [{ usuario: 'jugadordeprueba', telefonos: [telRegistrado], _tel: telRegistrado, _d: 1 }] }
+  };
+}
+
+test('cotejo · el teléfono propio con un dígito de menos se dice así, en claro', () => {
+  const sb = arrancarPanel();
+  const out = sb._altaCotejoHtml('jugadordeprueba', '112233445', _cotejoPropio('112233445', '1122334455'), '_altaUsarSugerencia', '');
+
+  assert.match(out.html, /Teléfono mal tipeado/, 'la etiqueta nombra lo que pasa, no un "REVISAR" genérico');
+  assert.match(out.html, /le falta un dígito/);
+  assert.match(out.html, /1122334455/, 'y dice cuál es el bueno');
+  assert.match(out.html, /usar 1122334455/, 'con un botón para usarlo');
+  assert.match(out.html, /un número argentino tiene 10 dígitos y este tiene 9/);
+  assert.match(out.html, /Es el mismo jugador/);
+  assert.ok(!/figura con otro teléfono/.test(out.html), 'el pie viejo contradecía todo lo de arriba');
+  assert.ok(!/registrado con/.test(out.html), 'el teléfono no se repite en la fila del usuario');
+});
+
+test('cotejo · un teléfono que NO se parece al registrado dice qué hacer', () => {
+  const sb = arrancarPanel();
+  const r = {
+    usuario:  { exacto: { usuario: 'jugadordeprueba', telefonos: ['1122334455'] }, similares: [] },
+    telefono: { exacto: null, similares: [] }
+  };
+  const out = sb._altaCotejoHtml('jugadordeprueba', '3519876543', r, '_altaUsarSugerencia', '');
+  assert.ok(!/mal tipeado/i.test(out.html), 'no es un error de tipeo: son números distintos');
+  assert.match(out.html, /Preguntale cuál usa ahora antes de validar/);
+});
